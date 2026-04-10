@@ -112,7 +112,7 @@ impl PeerSensor {
             }
         }
 
-        let own_prefix = self.own_session_id.as_deref().unwrap_or("---none---");
+        let own_session_id = self.own_session_id.as_deref().unwrap_or("---none---");
 
         for dir in &scan_dirs {
             let entries = match fs::read_dir(dir) {
@@ -126,11 +126,6 @@ impl PeerSensor {
                     Some(f) if f.ends_with(".signal") => f.to_string(),
                     _ => continue,
                 };
-
-                // Skip our own signals
-                if filename.starts_with(own_prefix) {
-                    continue;
-                }
 
                 // Skip already-seen (use full path to avoid collisions across dirs)
                 let key = format!("{}:{}", dir.display(), filename);
@@ -147,6 +142,15 @@ impl PeerSensor {
                 let parts: Vec<&str> = content.splitn(4, '|').collect();
                 if parts.len() == 4 {
                     let from = parts[0];
+
+                    // Skip our own signals — check the from field, not filename.
+                    // from is "claude:session-id" or "external:user@terminal"
+                    if let Some((_kind, identity)) = from.split_once(':') {
+                        if identity == own_session_id {
+                            self.seen_signals.insert(key);
+                            continue;
+                        }
+                    }
                     let project = parts[1];
                     let message = parts[3];
 
