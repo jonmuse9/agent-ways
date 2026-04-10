@@ -32,6 +32,7 @@ pub struct PeerSensor {
     baseline_established: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct PeerSummary {
     pid: u32,
