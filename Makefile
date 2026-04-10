@@ -79,7 +79,7 @@ ways:
 		echo "No pre-built binary, building from source..."; \
 		cargo build --release --manifest-path tools/ways-cli/Cargo.toml; \
 		mkdir -p bin; \
-		rm -f $(WAYS_BIN); cp tools/ways-cli/target/release/ways $(WAYS_BIN); \
+		ln -sf $(CURDIR)/tools/ways-cli/target/release/ways $(WAYS_BIN); \
 		echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: No pre-built binary and cargo not found."; \
@@ -95,8 +95,7 @@ ways-rebuild:
 	fi
 	cargo build --release --manifest-path tools/ways-cli/Cargo.toml
 	@mkdir -p bin
-	@rm -f $(WAYS_BIN)
-	@cp tools/ways-cli/target/release/ways $(WAYS_BIN)
+	@ln -sf $(CURDIR)/tools/ways-cli/target/release/ways $(WAYS_BIN)
 	@echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"
 
 # Build attend binary from workspace.
@@ -107,7 +106,7 @@ attend:
 		echo "Building attend..."; \
 		cargo build --release --manifest-path tools/Cargo.toml -p attend; \
 		mkdir -p bin; \
-		rm -f $(ATTEND_BIN); cp tools/target/release/attend $(ATTEND_BIN); \
+		ln -sf $(CURDIR)/tools/target/release/attend $(ATTEND_BIN); \
 		echo "Built: $(ATTEND_BIN) ($$(ls -lh $(ATTEND_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: cargo not found. Install Rust: https://rustup.rs/"; \
@@ -122,8 +121,7 @@ attend-rebuild:
 	fi
 	cargo build --release --manifest-path tools/Cargo.toml -p attend
 	@mkdir -p bin
-	@rm -f $(ATTEND_BIN)
-	@cp tools/target/release/attend $(ATTEND_BIN)
+	@ln -sf $(CURDIR)/tools/target/release/attend $(ATTEND_BIN)
 	@echo "Built: $(ATTEND_BIN) ($$(ls -lh $(ATTEND_BIN) | awk '{print $$5}'))"
 
 # --- Test ---

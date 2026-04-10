@@ -316,8 +316,14 @@ impl PeerSensor {
         let mut last_cache_read: u64 = 0;
         let mut last_cache_create: u64 = 0;
 
-        // Only parse lines from near the end
-        let start_byte = if read_from > 0 { read_from as usize } else { 0 };
+        // Only parse lines from near the end.
+        // Find the nearest char boundary to avoid panicking on multi-byte UTF-8.
+        let mut start_byte = if read_from > 0 { read_from as usize } else { 0 };
+        if start_byte < content.len() {
+            while start_byte < content.len() && !content.is_char_boundary(start_byte) {
+                start_byte += 1;
+            }
+        }
         let tail = if start_byte < content.len() { &content[start_byte..] } else { &content };
 
         for line in tail.lines() {
