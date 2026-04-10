@@ -7,7 +7,7 @@ mod cmd;
 mod frontmatter;
 mod scanner;
 pub mod session;
-pub mod table;
+pub use agent_fmt as table;
 pub mod util;
 
 #[derive(Parser)]

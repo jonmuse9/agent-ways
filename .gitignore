@@ -125,6 +125,8 @@ hooks/ways/.obsidian/
 !tools/way-embed/llama.cpp
 !tools/mmaid/
 !tools/mmaid/*
+!tools/agent-fmt/
+!tools/agent-fmt/**
 !tools/ways-cli/
 !tools/ways-cli/**
 # ways-cli build artifacts (tracked via .gitignore inside ways-cli/)

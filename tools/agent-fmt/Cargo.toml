@@ -1,0 +1,9 @@
+[package]
+name = "agent-fmt"
+version = "0.1.0"
+edition = "2021"
+description = "Shared terminal formatting for agent-ways tools"
+license = "MIT"
+
+[dependencies]
+libc = "0.2.184"
