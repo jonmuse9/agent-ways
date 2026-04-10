@@ -262,22 +262,46 @@ fn cmd_inbox() {
         }
     }
 
-    let mut count = 0;
+    // Collect all messages with mtime for chronological ordering
+    struct InboxEntry {
+        mtime: std::time::SystemTime,
+        scope: String,
+        sender: String,
+        message: String,
+        source: String,
+    }
+    let mut entries: Vec<InboxEntry> = Vec::new();
+
     for dir in &scan_dirs {
-        let entries = match std::fs::read_dir(dir) {
+        let dir_entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => continue,
         };
-        for entry in entries.flatten() {
+
+        let dir_name = dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
+        let scope = if dir_name == "_broadcast" { "broadcast" }
+            else if dir_name == own_encoded { "project" }
+            else { "focus" };
+
+        for entry in dir_entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("signal") {
                 continue;
             }
+
+            let mtime = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::UNIX_EPOCH);
+
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            let content = content.trim();
+            let content = content.trim().to_string();
             let parts: Vec<&str> = content.splitn(4, '|').collect();
             if parts.len() != 4 { continue; }
 
@@ -298,23 +322,27 @@ fn cmd_inbox() {
                 _ => format!("{} ({})", project, from),
             };
 
-            // Determine which scope this came from
-            let dir_name = dir.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
-            let scope = if dir_name == "_broadcast" { "broadcast" }
-                else if dir_name == own_encoded { "project" }
-                else { "focus" };
-
-            println!("[{}] from {}: {} (source: {})", scope, sender, message, source_cwd);
-            count += 1;
+            entries.push(InboxEntry {
+                mtime,
+                scope: scope.to_string(),
+                sender,
+                message: message.to_string(),
+                source: source_cwd.to_string(),
+            });
         }
     }
 
-    if count == 0 {
+    // Sort chronologically — oldest first (ledger order)
+    entries.sort_by_key(|e| e.mtime);
+
+    for entry in &entries {
+        println!("[{}] from {}: {} (source: {})", entry.scope, entry.sender, entry.message, entry.source);
+    }
+
+    if entries.is_empty() {
         println!("no messages");
     } else {
-        println!("--- {} message(s)", count);
+        println!("--- {} message(s)", entries.len());
     }
 }
 
