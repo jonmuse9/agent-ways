@@ -90,8 +90,7 @@ This way activates when the user or agent is working with:
             .enumerate()
             .map(|(i, c)| if i == 0 { c.to_uppercase().next().unwrap() } else { c })
             .collect::<String>()
-            .replace('-', " ")
-            .replace('_', " "),
+            .replace(['-', '_'], " "),
     );
 
     std::fs::write(&way_file, md_content)?;

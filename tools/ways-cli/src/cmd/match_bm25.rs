@@ -104,7 +104,7 @@ pub fn run(query: String, corpus: Option<String>) -> Result<()> {
         }
     }
 
-    if t.len() == 0 {
+    if t.is_empty() {
         eprintln!("no matches above threshold (BM25)");
         std::process::exit(1);
     }

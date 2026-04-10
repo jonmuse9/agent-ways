@@ -215,7 +215,7 @@ fn detect_session() -> Option<String> {
         let dir = format!("{}/{sid}", crate::session::sessions_root());
         if let Ok(meta) = std::fs::metadata(&dir) {
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            if newest.as_ref().map_or(true, |(t, _)| mtime > *t) {
+            if newest.as_ref().is_none_or(|(t, _)| mtime > *t) {
                 newest = Some((mtime, sid));
             }
         }

@@ -83,6 +83,7 @@ pub fn generate_manifest(ways_dir: Option<String>) -> Result<Value> {
     }))
 }
 
+#[allow(clippy::type_complexity)]
 fn scan_provenance(root: &Path) -> Result<(HashMap<String, serde_json::Value>, Vec<String>, Vec<String>)> {
     let mut ways: HashMap<String, serde_json::Value> = HashMap::new();
     let mut with_prov = Vec::new();
@@ -100,7 +101,7 @@ fn scan_provenance(root: &Path) -> Result<(HashMap<String, serde_json::Value>, V
         if path
             .file_name()
             .and_then(|n| n.to_str())
-            .map_or(false, |n| n.contains(".check."))
+            .is_some_and(|n| n.contains(".check."))
         {
             continue;
         }

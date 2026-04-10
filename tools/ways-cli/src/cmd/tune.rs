@@ -208,7 +208,7 @@ pub fn run(
 
         let any_changed = wr.tuned_entries.iter().any(|e| {
             let orig = wr.original_entries.iter().find(|o| o.lang == e.lang);
-            orig.map_or(false, |o| o.embed_threshold != e.embed_threshold)
+            orig.is_some_and(|o| o.embed_threshold != e.embed_threshold)
         });
         if any_changed {
             files_to_update.insert(wr.locale_path.clone(), wr.tuned_entries.clone());
@@ -502,7 +502,7 @@ fn tune_way(
             0.15
         };
 
-        let optimal = optimal.max(0.10).min(0.90);
+        let optimal = optimal.clamp(0.10, 0.90);
         let optimal = (optimal * 100.0).round() / 100.0;
 
         let current = entry.embed_threshold.unwrap_or(0.25);

@@ -678,7 +678,7 @@ fn list_sessions(content: &str, project_filter: Option<&str>) -> Result<()> {
     for s in sessions.iter().rev().take(50) {
         let short_id = &s.id[..s.id.len().min(12)];
         let date = &s.ts[..s.ts.len().min(16)];
-        let project_short = s.project.split('/').last().unwrap_or(&s.project);
+        let project_short = s.project.split('/').next_back().unwrap_or(&s.project);
         let duration = format_duration(s.duration_secs);
         println!(
             "  {:<12} {:<20} {:<30} {:>6} {:>6} {:>8}",
@@ -712,13 +712,13 @@ fn pick_session(content: &str, project_filter: Option<&str>) -> Option<String> {
     loop {
         let (tw, th) = terminal::size().unwrap_or((120, 40));
         let mut out = String::new();
-        let _ = writeln!(out, "");
+        let _ = writeln!(out);
         let _ = writeln!(
             out,
             "\x1b[1m  Select a session to replay\x1b[0m  \x1b[2m({} sessions)\x1b[0m",
             sessions.len()
         );
-        let _ = writeln!(out, "");
+        let _ = writeln!(out);
         let _ = writeln!(
             out,
             "  \x1b[1m{:<14} {:<18} {:<28} {:>5} {:>5} {:>8}\x1b[0m",
@@ -729,11 +729,10 @@ fn pick_session(content: &str, project_filter: Option<&str>) -> Option<String> {
         let page_start = (selected / page_size) * page_size;
         let page_end = (page_start + page_size).min(sessions.len());
 
-        for i in page_start..page_end {
-            let s = sessions[i];
+        for (i, s) in sessions.iter().enumerate().skip(page_start).take(page_end - page_start) {
             let short_id = &s.id[..s.id.len().min(12)];
             let date = &s.ts[..s.ts.len().min(16)];
-            let project_short = s.project.split('/').last().unwrap_or(&s.project);
+            let project_short = s.project.split('/').next_back().unwrap_or(&s.project);
             let duration = format_duration(s.duration_secs);
 
             let (prefix, suffix) = if i == selected {
@@ -749,14 +748,14 @@ fn pick_session(content: &str, project_filter: Option<&str>) -> Option<String> {
             );
         }
 
-        let _ = writeln!(out, "");
+        let _ = writeln!(out);
         let _ = writeln!(
             out,
             "  \x1b[2mPage {}/{}\x1b[0m",
             selected / page_size + 1,
-            (sessions.len() + page_size - 1) / page_size
+            sessions.len().div_ceil(page_size)
         );
-        let _ = writeln!(out, "");
+        let _ = writeln!(out);
         let _ = writeln!(out, "\x1b[2m{}\x1b[0m", "─".repeat(85));
         let _ = write!(
             out,
@@ -781,9 +780,7 @@ fn pick_session(content: &str, project_filter: Option<&str>) -> Option<String> {
 
                 KeyEvent { code: KeyCode::Up, .. }
                 | KeyEvent { code: KeyCode::Char('k'), .. } => {
-                    if selected > 0 {
-                        selected -= 1;
-                    }
+                    selected = selected.saturating_sub(1);
                 }
 
                 KeyEvent { code: KeyCode::Down, .. }
@@ -856,16 +853,14 @@ fn parse_ts_secs(ts: &str) -> u64 {
 /// Uses \r\n because raw mode requires explicit carriage return.
 fn fit_to_terminal(output: &str, width: usize, height: usize) -> String {
     let mut result = String::new();
-    let mut line_count = 0;
     let max_lines = height.saturating_sub(1);
 
-    for line in output.lines() {
+    for (line_count, line) in output.lines().enumerate() {
         if line_count >= max_lines {
             break;
         }
         result.push_str(&truncate_visible(line, width));
         result.push_str("\r\n");
-        line_count += 1;
     }
     result
 }

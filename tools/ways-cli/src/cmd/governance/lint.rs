@@ -14,6 +14,7 @@ pub fn run(manifest: &Value, json_out: bool) -> Result<()> {
 
     let mut errors: Vec<(String, String)> = Vec::new();
     let mut warnings: Vec<(String, String)> = Vec::new();
+    let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
 
     for (way_id, data) in ways {
         let prov = &data["provenance"];
@@ -86,8 +87,7 @@ pub fn run(manifest: &Value, json_out: bool) -> Result<()> {
                 warnings.push((way_id.clone(), "no verified date".to_string()));
             }
             Some(v) => {
-                let re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
-                if !re.is_match(v) {
+                if !date_re.is_match(v) {
                     errors.push((
                         way_id.clone(),
                         format!("invalid verified date: {v}"),
