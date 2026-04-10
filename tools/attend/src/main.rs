@@ -3,7 +3,7 @@ mod delta;
 mod emit;
 mod sensors;
 
-use sensors::{Focus, GitSensor, PeerSensor, ProcessSensor, SensorSlot};
+use sensors::{Focus, GitSensor, PeerSensor, ProcessSensor, Sensor, SensorSlot};
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
@@ -98,16 +98,14 @@ impl PartialOrd for ScheduledSensor {
     }
 }
 
-// --- Main loop ---
+// --- Subcommands ---
 
-fn main() {
+fn cmd_run() {
     emit::log("starting attend");
 
-    // Focus can be adjusted at runtime via stdin commands or state file
     let focus = Focus::default_focus();
     emit::log(&format!("focus: {} ({})", focus.description, focus.working_dir));
 
-    // Register sensors
     let mut slots: Vec<SensorSlot> = vec![
         SensorSlot::new(Box::new(ProcessSensor::new())),
         SensorSlot::new(Box::new(GitSensor::new())),
@@ -115,12 +113,11 @@ fn main() {
     ];
 
     let mut governor = DisclosureGovernor::new(
-        Duration::from_secs(15),  // base cooldown
-        3,                         // max 3 disclosures per window
-        Duration::from_secs(120),  // 2-minute rate window
+        Duration::from_secs(15),
+        3,
+        Duration::from_secs(120),
     );
 
-    // Initialize priority queue
     let mut queue: BinaryHeap<ScheduledSensor> = BinaryHeap::new();
     for (i, slot) in slots.iter().enumerate() {
         queue.push(ScheduledSensor { fire_at: slot.next_fire, index: i });
@@ -218,6 +215,183 @@ fn main() {
                 governor.window_disclosures,
                 governor.max_disclosures_per_window,
             ));
+        }
+    }
+}
+
+fn cmd_peers() {
+    let focus = Focus::default_focus();
+    let mut sensor = PeerSensor::new();
+    let observations = sensor.poll(&focus);
+    // First poll returns empty (baseline). The baseline info goes to stderr.
+    // Poll again to get the actual state — but since nothing changed, just
+    // show the baseline that was printed to stderr.
+    if observations.is_empty() {
+        // Baseline was printed to stderr by the sensor. For the CLI, also
+        // list what we found by doing a second poll (which will show no deltas).
+        let _ = sensor.poll(&focus);
+    }
+}
+
+fn cmd_send(message: &str) {
+    let signals_dir = signals_dir();
+    std::fs::create_dir_all(&signals_dir).ok();
+
+    let session_id = own_session_id().unwrap_or_else(|| "unknown".to_string());
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let project = cwd.rsplit('/').next().unwrap_or("?");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let filename = format!("{}-{}.signal", session_id, ts);
+    let path = signals_dir.join(&filename);
+    let tmp_path = signals_dir.join(format!("{}.tmp", filename));
+
+    // Simple line format: from|project|cwd|message
+    // Atomic write: write to .tmp, then rename. Readers skip .tmp files.
+    let content = format!("{}|{}|{}|{}\n", session_id, project, cwd, message);
+    match std::fs::write(&tmp_path, &content) {
+        Ok(_) => {
+            match std::fs::rename(&tmp_path, &path) {
+                Ok(_) => eprintln!("[attend] signal written: {}", filename),
+                Err(e) => {
+                    eprintln!("[attend] error renaming signal: {}", e);
+                    std::fs::remove_file(&tmp_path).ok();
+                }
+            }
+        }
+        Err(e) => eprintln!("[attend] error writing signal: {}", e),
+    }
+}
+
+fn cmd_status() {
+    // Check if attend run is already active
+    let output = std::process::Command::new("ps")
+        .args(["--no-headers", "-eo", "pid,args"])
+        .output()
+        .ok();
+
+    let mut found = false;
+    if let Some(out) = output {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let own_pid = std::process::id();
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.contains("attend run") && !line.contains(&own_pid.to_string()) {
+                println!("{}", line);
+                found = true;
+            }
+        }
+    }
+
+    if !found {
+        println!("no attend instances running");
+    }
+
+    // Show signals dir
+    let signals_dir = signals_dir();
+    let count = std::fs::read_dir(&signals_dir)
+        .map(|entries| entries.filter_map(|e| e.ok()).count())
+        .unwrap_or(0);
+    println!("signals: {} pending ({})", count, signals_dir.display());
+}
+
+// --- Helpers ---
+
+fn signals_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home)
+        .join(".cache")
+        .join("attend")
+        .join("signals")
+}
+
+/// Try to find our own session ID by walking up the process tree to find
+/// the claude parent, then matching it against ~/.claude/sessions/*.json
+fn own_session_id() -> Option<String> {
+    let own_pid = std::process::id();
+    // Walk up to find claude PID
+    let mut pid = own_pid;
+    let mut claude_pid = None;
+    for _ in 0..10 {
+        if pid <= 1 { break; }
+        let output = std::process::Command::new("ps")
+            .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid,comm"])
+            .output()
+            .ok()?;
+        let line = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        if parts.len() >= 2 && parts[1].contains("claude") {
+            claude_pid = Some(pid);
+            break;
+        }
+        pid = parts.first()?.parse().ok()?;
+    }
+
+    let claude_pid = claude_pid?;
+
+    // Scan session files for matching PID
+    let home = std::env::var("HOME").ok()?;
+    let sessions_dir = std::path::PathBuf::from(&home).join(".claude").join("sessions");
+    for entry in std::fs::read_dir(&sessions_dir).ok()?.flatten() {
+        let content = std::fs::read_to_string(entry.path()).ok()?;
+        // Quick check for PID match
+        let pid_pattern = format!("\"pid\":{}", claude_pid);
+        if content.contains(&pid_pattern) {
+            // Extract session ID
+            if let Some(start) = content.find("\"sessionId\":\"") {
+                let rest = &content[start + 14..];
+                if let Some(end) = rest.find('"') {
+                    return Some(rest[..end].to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+// --- Entry point ---
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    match args.first().map(|s| s.as_str()) {
+        Some("run") => cmd_run(),
+        Some("peers") => cmd_peers(),
+        Some("status") => cmd_status(),
+        Some("send") => {
+            let message = args[1..].join(" ");
+            if message.is_empty() {
+                eprintln!("usage: attend send <message>");
+                std::process::exit(1);
+            }
+            cmd_send(&message);
+        }
+        Some("help") | Some("--help") | Some("-h") | None => {
+            println!("\x1b[2m\x1b[4mA G E N T\x1b[0m\n");
+            println!("\x1b[38;5;73m █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ \x1b[0m");
+            println!("\x1b[38;5;79m██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗\x1b[0m");
+            println!("\x1b[38;5;80m███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║\x1b[0m");
+            println!("\x1b[38;5;116m██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║\x1b[0m");
+            println!("\x1b[38;5;109m██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝\x1b[0m");
+            println!("\x1b[38;5;66m╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ \x1b[0m");
+            println!();
+            println!("  \x1b[2mactive awareness for Claude Code sessions\x1b[0m\n");
+            println!("usage: attend <command>\n");
+            println!("commands:");
+            println!("  run       Start the sensor loop (use with Monitor for async delivery)");
+            println!("  peers     List active Claude Code sessions");
+            println!("  send      Send a signal to peer sessions");
+            println!("  status    Show running attend instances and pending signals");
+            println!("  help      Show this help");
+        }
+        Some(unknown) => {
+            eprintln!("attend: unknown command '{}' — try 'attend help'", unknown);
+            std::process::exit(1);
         }
     }
 }

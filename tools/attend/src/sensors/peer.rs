@@ -1,5 +1,5 @@
 use super::{Focus, Sensor};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -7,6 +7,8 @@ use std::time::Duration;
 
 /// Discovers peer Claude Code sessions by reading ~/.claude/sessions/*.json
 /// and their transcript files. Same discovery pattern as abtop.
+///
+/// Also reads signal files from ~/.cache/attend/signals/ for peer messages.
 ///
 /// Reports deltas when peers appear, disappear, or change state.
 /// Filters through focus: only surfaces peers in the same working directory
@@ -18,8 +20,14 @@ pub struct PeerSensor {
     sessions_dir: PathBuf,
     /// Projects dir (for transcripts)
     projects_dir: PathBuf,
+    /// Signals dir
+    signals_dir: PathBuf,
     /// Previous snapshot: session_id → summary
     prior: HashMap<String, PeerSummary>,
+    /// Signal files we've already seen (by filename)
+    seen_signals: HashSet<String>,
+    /// Our own session ID (to skip our own signals)
+    own_session_id: Option<String>,
     /// First poll establishes baseline
     baseline_established: bool,
 }
@@ -63,13 +71,77 @@ struct SessionFile {
 impl PeerSensor {
     pub fn new() -> Self {
         let home = home_dir();
+        let own_pid = std::process::id();
+        let own_session_id = find_own_session_id(own_pid);
         Self {
-            own_pid: std::process::id(),
+            own_pid,
             sessions_dir: home.join(".claude").join("sessions"),
             projects_dir: home.join(".claude").join("projects"),
+            signals_dir: home.join(".cache").join("attend").join("signals"),
             prior: HashMap::new(),
+            seen_signals: HashSet::new(),
+            own_session_id,
             baseline_established: false,
         }
+    }
+
+    /// Read signal files from peers. Returns observations for new signals.
+    fn read_signals(&mut self) -> Vec<(f64, String)> {
+        let mut observations = Vec::new();
+
+        let entries = match fs::read_dir(&self.signals_dir) {
+            Ok(e) => e,
+            Err(_) => return observations,
+        };
+
+        let own_prefix = self.own_session_id.as_deref().unwrap_or("---none---");
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let filename = match path.file_name().and_then(|f| f.to_str()) {
+                Some(f) if f.ends_with(".signal") => f.to_string(),
+                _ => continue,
+            };
+
+            // Skip our own signals
+            if filename.starts_with(own_prefix) {
+                continue;
+            }
+
+            // Skip already-seen signals
+            if self.seen_signals.contains(&filename) {
+                continue;
+            }
+
+            // Read and parse the signal: session_id|project|cwd|message
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let content = content.trim();
+            let parts: Vec<&str> = content.splitn(4, '|').collect();
+            if parts.len() == 4 {
+                let project = parts[1];
+                let message = parts[3];
+                // Peer messages are high magnitude — they should punch through
+                observations.push((5.0, format!(
+                    "peer message from {}: {}", project, message
+                )));
+            }
+
+            self.seen_signals.insert(filename);
+
+            // Clean up stale signals (older than 5 minutes)
+            if let Ok(metadata) = fs::metadata(&path) {
+                if let Ok(modified) = metadata.modified() {
+                    if modified.elapsed().unwrap_or_default().as_secs() > 300 {
+                        fs::remove_file(&path).ok();
+                    }
+                }
+            }
+        }
+
+        observations
     }
 
     fn discover_peers(&self) -> HashMap<String, PeerSummary> {
@@ -286,6 +358,9 @@ impl Sensor for PeerSensor {
             }
         }
 
+        // Check for peer signals (messages from other sessions)
+        observations.extend(self.read_signals());
+
         self.prior = current;
         observations
     }
@@ -403,4 +478,38 @@ fn extract_json_u64(json: &str, key: &str) -> Option<u64> {
         return None;
     }
     rest[..end].parse().ok()
+}
+
+/// Find our own session ID by walking up the process tree to the claude parent,
+/// then matching against ~/.claude/sessions/*.json.
+fn find_own_session_id(own_pid: u32) -> Option<String> {
+    let mut pid = own_pid;
+    let mut claude_pid = None;
+    for _ in 0..10 {
+        if pid <= 1 { break; }
+        let output = Command::new("ps")
+            .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid,comm"])
+            .output()
+            .ok()?;
+        let line = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        if parts.len() >= 2 && parts[1].contains("claude") {
+            claude_pid = Some(pid);
+            break;
+        }
+        pid = parts.first()?.parse().ok()?;
+    }
+
+    let claude_pid = claude_pid?;
+    let home = home_dir();
+    let sessions_dir = home.join(".claude").join("sessions");
+    for entry in fs::read_dir(&sessions_dir).ok()?.flatten() {
+        if let Ok(content) = fs::read_to_string(entry.path()) {
+            let pid_pattern = format!("\"pid\":{}", claude_pid);
+            if content.contains(&pid_pattern) {
+                return extract_json_string(&content, "sessionId");
+            }
+        }
+    }
+    None
 }

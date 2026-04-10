@@ -18,16 +18,16 @@ If not found, tell the user to run `make attend` or `make install` from the agen
 
 ## Step 2: Launch via Monitor
 
-**CRITICAL: You MUST use the Monitor tool, NOT Bash.** Running attend via Bash blocks the tool call and discards notifications. Monitor is the only correct way to launch attend.
+**CRITICAL: You MUST use the Monitor tool, NOT Bash.** Running attend via Bash blocks the tool call and discards notifications. Monitor is the only correct way to launch the sensor loop.
 
 Call the Monitor tool with exactly these parameters:
 
-- **command**: `attend`
+- **command**: `attend run`
 - **description**: `attend: git, peers, processes`
 - **persistent**: `true`
 - **timeout_ms**: `3600000`
 
-Do NOT run `attend` with the Bash tool. Do NOT use `run_in_background`. Only Monitor delivers stdout lines as async notifications into the conversation.
+Do NOT run `attend run` with the Bash tool. Do NOT use `run_in_background`. Only Monitor delivers stdout lines as async notifications into the conversation.
 
 ## What happens next
 
@@ -35,11 +35,29 @@ Attend polls three sensors on adaptive schedules:
 
 - **processes** — application presence (not PID churn)
 - **git** — dirty files, branch changes, upstream divergence
-- **peers** — other Claude Code sessions via `~/.claude/sessions/`
+- **peers** — other Claude Code sessions via `~/.claude/sessions/`, plus signal files from peers
 
 Baselines are established silently on first poll (stderr only, not surfaced). Notifications arrive only when sensors detect meaningful state changes, rate-limited to ~3 per 2-minute window by the disclosure governor.
 
 Each notification is a single line: `[attend sensor=NAME priority=LEVEL] description`
+
+## Peer messaging
+
+To send a message to peer sessions, use Bash (not Monitor):
+
+```bash
+attend send "your message here"
+```
+
+The message is written as a signal file. Peer attend instances pick it up on their next poll and surface it as a high-priority notification.
+
+## Other CLI commands
+
+These are one-shot commands — run with Bash, not Monitor:
+
+- `attend peers` — list active Claude Code sessions
+- `attend status` — show running attend instances and pending signals
+- `attend help` — show all commands
 
 ## Stopping
 
@@ -47,5 +65,5 @@ Use TaskStop with the Monitor's task ID. Attend exits cleanly on signal.
 
 ## Arguments
 
-- `/attend` — start attend (default)
-- `/attend status` — check if attend is already running: `ps -eo pid,comm | grep attend`
+- `/attend` — start the sensor loop via Monitor (default)
+- `/attend status` — run `attend status` via Bash
