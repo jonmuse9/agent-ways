@@ -341,7 +341,18 @@ impl PeerSensor {
         }
 
         let context_tokens = last_input + last_cache_read + last_cache_create;
-        let context_window: u64 = if model.contains("[1m]") { 1_000_000 } else { 200_000 };
+        // Model string may include context window hint like "claude-opus-4-6[1m]"
+        // Default to 1M for opus/sonnet 4.x, 200K for older models
+        let context_window: u64 = if model.contains("[1m]") || model.contains("1m]") {
+            1_000_000
+        } else if model.contains("opus-4") || model.contains("sonnet-4") {
+            1_000_000
+        } else if model == "-" {
+            // Unknown model — can't compute meaningful percentage
+            0
+        } else {
+            200_000
+        };
         let context_percent = if context_window > 0 {
             (context_tokens as f64 / context_window as f64) * 100.0
         } else {
