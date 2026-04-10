@@ -21,11 +21,17 @@ The consequence of that gap is well-defined: Claude operates in a partially blin
 
 This ADR proposes the missing layer as a new binary, separate from `ways`, co-resident in the agent-ways workspace.
 
+### The delivery primitive: `Monitor`
+
+An additional and load-bearing reason this ADR is possible *now* rather than earlier is the recent release of the `Monitor` tool in Claude Code. Before `Monitor`, there was no standardized channel by which a background process could surface observations into Claude's conversation as asynchronous events. The hook system delivers synchronous injections at event boundaries (`PreToolUse`, `Stop`, `SessionStart`, `PostCompact`, `context-threshold`), but it has no mechanism for signals that occur *between* those boundaries. A persistent process that detected something meaningful had nowhere to send it until Claude's next hook event fired — which could be minutes later or entirely the wrong moment.
+
+`Monitor` closes that gap by treating a background script's stdout as an async event stream, delivering each line as a notification in Claude's chat. With `persistent: true`, a single `Monitor` invocation covers the duration of a Claude Code session. This turns the architectural requirement "an observation channel that works between turns" into a concrete tool invocation. The design note discusses `Monitor` in detail as the *delivery primitive* the awareness layer depends on; this ADR commits `attend` to that delivery model.
+
 ### Why a new binary (and not a ways subcommand)
 
 The `ways` binary is a matcher, scorer, and disclosure gate — a stateless (or near-stateless) computation engine invoked by hooks. It responds to events; it does not observe between them. Adding a durable, restartable, turn-reactive executive layer to `ways` would conflate two different lifecycles: the short-lived per-hook invocation of `ways` and the long-lived per-session lifetime of the executive layer. The two share concepts (disclosure, scoring, signal routing) but not lifecycles, and fusing them would compromise `ways`'s simplicity as a pure computation binary.
 
-A sibling crate in the same workspace preserves the integration surface while keeping lifetimes clean. `attend` runs as a separate process, reads the shared configuration tree, and routes its emissions through `ways` by calling it the same way hooks do — through the normal disclosure pipeline. There is no new IPC protocol and no new hook event class; there is a new *source* of signals that the existing machinery already knows how to handle.
+A sibling crate in the same workspace preserves the integration surface while keeping lifetimes clean. `attend` runs as a separate process and writes single-line observations to stdout. `Monitor` delivers those lines to Claude as asynchronous notifications. For higher-salience observations, `attend` formats the emission as an affordance that Claude can invoke through the existing `ways` command (covered in ADR-114), routing deeper engagement through the normal disclosure pipeline. There is no new IPC protocol and no new hook event class; stdout is the primary delivery channel, and the ways system is the optional deeper-engagement path.
 
 ### Prior attempts
 
@@ -103,7 +109,8 @@ attend/
 │   ├── install.rs                # Write required entries (with explicit user consent)
 │   └── sensor_requirements.rs    # Aggregate what sensors need to be allowed to run
 └── emit/
-    └── ways_bridge.rs            # Routes attend emissions through the ways/disclosure pipeline
+    ├── stdout.rs                 # Writes single-line notifications to stdout for Monitor delivery (the primary channel); handles formatting, line buffering, and 200ms batching awareness
+    └── ways_affordance.rs        # For high-salience events, formats affordance strings that Claude can invoke via `ways show attend/<signal>` for deeper engagement through the normal disclosure pipeline
 ```
 
 ### Turn-boundary processor
@@ -289,26 +296,64 @@ The goal is **zero permission prompts during normal operation** with **full user
 
 ### Invocation and integration
 
-Attend is started explicitly by the user at the beginning of a work session:
+`attend` is invoked as the **command argument to Claude Code's `Monitor` tool** at session start. The user does not start `attend` at the shell directly; Claude invokes it through `Monitor`, and `Monitor` handles the lifecycle and delivery. This is the load-bearing integration point — see the [design note](../../design-notes/cognitive-loop-and-awareness-layer.md) for the Monitor-as-delivery-primitive discussion.
+
+#### The invocation flow
+
+1. A SessionStart way (shipped with `attend`) fires when a new Claude Code session begins
+2. The way guides Claude to invoke the `Monitor` tool with:
+   - `command: "attend stream --session=<session-id>"`
+   - `persistent: true` (keeps `attend` alive for the session's lifetime)
+   - `description: "active awareness module"` (appears in each delivered notification)
+3. Claude invokes `Monitor` as instructed
+4. `Monitor` starts `attend` as a background process
+5. `attend` reads configuration from `~/.config/attend/config.toml`, audits permissions (refusing to proceed if required entries are missing and `auto_install` is false), discovers sensors from `~/.config/attend/sensors/`, restores prior state from `~/.local/state/attend/<session-id>/state.json` if it exists, begins the turn-boundary processor loop, and logs to `~/.local/state/attend/<session-id>/attend.log` (stderr, so Monitor does not deliver log lines as notifications)
+6. As `attend` detects events and computes emissions, it writes single-line observations to stdout
+7. `Monitor` delivers each stdout line to Claude as an asynchronous chat notification
+8. Claude reads notifications between turns, acts or dismisses per the notification's salience
+9. When the session ends (or Claude calls `TaskStop`), `Monitor` terminates `attend`; `attend` catches the signal, flushes final state to disk, and exits cleanly
+
+#### Emission is stdout, not IPC
+
+`attend`'s only output mechanism to Claude is stdout. Every meaningful emission is a single line (or at most a short multiline block within 200ms to benefit from `Monitor`'s batching). Lines follow the canonical format:
 
 ```
-$ attend start
+disclosed at turn 47, currently turn 52, projected critical at turn 58 (6 turns remaining)
 ```
 
-This:
+or as affordances for deeper engagement through the ways system:
 
-1. Reads configuration from `~/.config/attend/config.toml`
-2. Audits permissions (reports issues, refuses to proceed if required entries are missing and `auto_install` is false)
-3. Discovers sensors from `~/.config/attend/sensors/`
-4. Restores prior state if a session is already in progress (restart case)
-5. Begins the turn-boundary processor loop
-6. Logs to `~/.local/state/attend/<session-id>/attend.log`
+```
+peer session active in ~/Projects/foo-mcp (last activity 3m ago) — use `ways show attend/peer-session-active` for coordination guidance
+```
 
-Claude Code runs independently — attend does not wrap it. Attend observes Claude Code's session state by reading the session state files under `~/.claude/projects/<project-slug>/<session-id>/` and routes emissions through `ways` by calling it the same way hooks do. There is no wrapping, no child-process management, no ownership inversion.
+`attend` honors `Monitor`'s discipline rigorously:
 
-When attend is not running, **Claude functions exactly as it does today**. Ways still fire on their reactive triggers. Ledger entries are still captured. Compaction still works. Nothing is required to change in Claude Code or in the `ways` binary for attend to be absent — the awareness layer is additive, never required.
+- **Selective filtering.** `Monitor` auto-stops any script that produces too many events. `attend`'s insistence engine computes whether each candidate observation warrants emission; only those that do ever reach stdout. Everything else is held silently in the deferred intent store or dropped.
+- **Line-buffered output.** `attend` writes one observation per line and flushes immediately. No buffered writes that would delay notifications beyond the 200ms batching window.
+- **Stderr is for diagnostics only.** Debug logs, trace information, sensor output that shouldn't become notifications — all go to stderr. `Monitor` writes stderr to a file rather than delivering as notifications. The log file is accessible via the normal `Read` tool if Claude needs to inspect it.
+- **Multiline batching awareness.** `Monitor` groups stdout lines emitted within 200ms into a single notification. `attend` uses this deliberately when emitting related observations (signal text, affordance, metadata) — three lines flushed together become one coherent notification rather than three fragmentary ones.
 
-This is a load-bearing property. The design note calls it *presence as additive*. It is honored architecturally: attend is never invoked implicitly, never wired into default install flows, and never imposes dependencies on the rest of the system.
+#### Two delivery paths: Monitor primary, ways affordance secondary
+
+`Monitor` notifications are the **primary** delivery channel. Every `attend` observation arrives via `Monitor` as an asynchronous notification in Claude's conversation. For most emissions, this is sufficient: Claude reads the notification, integrates it into its working model, and acts or dismisses based on the observation's urgency as expressed in the notification text itself.
+
+For higher-salience emissions, `attend` additionally formats the notification as an **affordance** — a string naming a specific `ways show attend/<signal-type>` command Claude can invoke if the observation warrants deeper engagement. When Claude invokes that command, the ways system runs the matcher and ADR-104 disclosure gate normally, injecting the full way body through the standard guidance pipeline. This is covered by [ADR-114](./ADR-114-attend-as-insistent-way-trigger-type.md).
+
+The two paths compose:
+
+- **Low/medium salience:** `Monitor` notification only. Claude reads the one-line observation, acknowledges peripherally, moves on. No ways invocation, no additional token cost beyond the notification.
+- **High salience (insistent/critical):** `Monitor` notification + affordance. Claude reads the notification, recognizes the stakes, invokes the named ways command, receives the full guidance body, acts deliberately. The notification raises awareness; the ways command provides the deeper context Claude uses to act on it.
+
+`attend` may *suggest* the affordance, but Claude retains agency over whether to invoke it. `attend` does not invoke ways directly; it invites Claude to do so. This preserves the "awareness layer never overrides Claude" invariant even at critical salience.
+
+#### When `Monitor` or `attend` is not running
+
+When `attend` is not running — whether because the SessionStart way was not installed, because `Monitor` was not invoked, or because the process exited early — **Claude functions exactly as it does today**. Ways still fire on their reactive triggers. Ledger entries are still captured. Compaction still works. The baseline Claude Code experience is unchanged.
+
+Ways with `trigger.type: attend` (see ADR-114) still *load* when `attend` is absent; they are simply inert until `Monitor` delivers a notification that invokes them. They are never broken, only dormant.
+
+This is a load-bearing property. The design note calls it *presence as additive*. It is honored architecturally: `attend` is never invoked implicitly, never wired into default install flows, and never imposes dependencies on the rest of the system. The SessionStart way that drives `Monitor` invocation is itself opt-in, and removing it is all that's required to disable the awareness layer entirely.
 
 ### Hard invariants
 
@@ -334,11 +379,13 @@ These constraints are non-negotiable and any future change to attend must preser
 - **Sensor toolkit composability.** Adding a new capability means adding a shell script to the sensors directory. No framework changes, no binary recompile (for shell sensors).
 - **Durable, restartable operation.** State is checkpointed at every turn boundary. Process death is recoverable.
 - **Cleanly additive.** Sessions that don't need active awareness don't pay any cost. The awareness layer is explicitly opt-in and imposes nothing on the baseline Claude Code experience.
+- **Uses the standard `Monitor` delivery primitive.** No new hook event class, no new IPC protocol, no parallel notification channel. `attend` is architecturally a well-behaved `Monitor` client — its integration surface is "write lines to stdout when you have something to say," which is exactly what `Monitor` was built to consume. Noise control is enforced by `Monitor` itself (auto-stop on excess).
 
 ### Negative
 
 - **New binary to maintain.** A sibling crate adds compilation, testing, release, and documentation surface. Mitigation: the crate is kept minimal and shares as much as possible with `ways` (configuration loading, logging, error handling) where those are already solved.
-- **Cross-crate coupling at the integration surface.** Attend calls `ways` to route emissions. Changes to the ways CLI or matcher interface may require coordinated updates. Mitigation: the integration surface is defined as a stable subset (the same interface hooks use) and versioned if it needs to change.
+- **Dependency on the `Monitor` tool.** `attend`'s primary delivery channel is `Monitor`-delivered stdout notifications. If `Monitor` is unavailable (because the running Claude Code version doesn't ship it, or because the user has disabled it), the awareness layer cannot deliver emissions. Mitigation: the dependency is explicit and documented; the SessionStart way that drives invocation checks for `Monitor` availability and reports clearly if absent rather than failing silently; `attend` itself still runs and maintains state, so the moment `Monitor` becomes available the existing state resumes without loss.
+- **Cross-crate coupling at the ways affordance surface.** The secondary deeper-engagement path (affordance → `ways show attend/<signal>`) couples `attend`'s emission format to the ways CLI. Changes to the `ways show` command interface may require coordinated updates. Mitigation: the affordance format is a short documented subset (command name + signal type); both sides version the subset if it needs to change.
 - **Permission model complexity.** The permission management subsystem adds a layer users must understand. Mitigation: sensible defaults, `attend init` auto-configures, `attend permissions audit` reports clearly, explicit consent required for any write.
 - **Sensor discipline required.** The "metadata, not content" invariant is a rule sensor authors must honor. Mitigation: schema validation in the sensor loader rejects sensors that declare content-bearing emissions; documentation and examples show the right pattern.
 - **Potential for insistence noise if misconfigured.** Poorly tuned escalation curves or over-eager sensors could generate noise. Mitigation: configuration includes `max_emissions_per_turn` debounce, salience floors, and a "do not disturb" mode for focused work. The default configuration is conservative.

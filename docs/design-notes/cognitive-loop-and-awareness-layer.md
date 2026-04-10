@@ -79,6 +79,40 @@ With substrate separation and turn accounting in place, the cognitive loop can b
 
 This is structurally an active-inference loop. The awareness layer is the *perception* stage — the piece that turns raw environmental and internal signal into the discrete observations that downstream stages consume.
 
+## Monitor as the delivery primitive
+
+The awareness layer requires a mechanism by which observations produced between Claude's turns can reach Claude's conversation as discrete asynchronous events. Until recently, no such mechanism existed in the Claude Code tool surface. The hook system delivers synchronous injections at event boundaries (`PreToolUse`, `Stop`, `SessionStart`, `PostCompact`, `context-threshold`), but it has no channel for events that occur *between* those boundaries or that originate outside Claude's own loop. A background process that detected something meaningful had no standardized way to surface it into Claude's attention until Claude next fired a hook event, which could be minutes later or at the wrong moment entirely.
+
+Anthropic's **`Monitor` tool**, shipped as part of the same recent Claude Code release wave that makes the configurations described in this note newly buildable, provides exactly that channel. Its behavior:
+
+- Claude invokes `Monitor` with a shell command and a description
+- The command runs as a background process for the duration of the call
+- **Each line the command writes to stdout becomes a notification in Claude's conversation**
+- Notifications arrive asynchronously on the script's schedule, not as replies to Claude or the user
+- `persistent: true` keeps the monitor alive for the session's lifetime (rather than a capped timeout)
+- The monitor ends cleanly when the session ends, when `TaskStop` is called, or when the command exits
+- Stdout lines within 200ms are batched into a single notification, so related observations emitted together arrive together
+- Stderr goes to an output file (readable via `Read`) rather than becoming notifications, giving the script a clean diagnostic channel separate from its event channel
+- Monitors that produce too many events are automatically stopped — the tool enforces its own noise ceiling as a safeguard
+
+`Monitor` is the missing primitive the awareness layer requires. It turns "a background process that sees things" into "a stream of peripheral observations Claude can read between turns" with no additional infrastructure. Substrate separation lands cleanly: the cheap substrate (a background script) does observation, filtering, consequence computation, and insistence tracking, and only emits a stdout line when surfacing is warranted. The expensive substrate (inference) receives only compressed single-line observations, and only incurs cost when reading a notification that arrived asynchronously.
+
+From the awareness layer's perspective, `Monitor` is the delivery channel. The awareness module (`attend`, introduced in ADR-113) is invoked as the command argument to `Monitor` at session start: `Monitor(command: "attend stream --session=<id>", persistent: true, description: "active awareness module")`. It runs for the session's lifetime, watches the world, computes consequences, tracks insistence, and emits single-line stdout observations when something warrants Claude's attention. Claude reads those lines as they arrive and decides what to act on.
+
+This arrangement has several load-bearing properties that the previous hand-waving about "emission delivery" did not enable:
+
+- **Zero new delivery infrastructure.** `Monitor` is the delivery channel. The awareness layer does not need a new hook event class, a new IPC protocol, or a parallel notification system. A script writing to stdout is the entire integration surface.
+- **Lifecycle matches the session naturally.** `persistent: true` ties the awareness process to the Claude session. When the session ends, the process ends. No daemon to manage, no orphaned sidecars, no shutdown dance.
+- **Discipline is enforced by the tool.** `Monitor`'s auto-stop behavior when a script produces too many events means the awareness layer's "selective filtering is mandatory" principle is not just a design intent — it's a hard requirement imposed by the delivery substrate. A noisy awareness script literally cannot survive; the tool kills it.
+- **Two-channel separation between events and diagnostics.** Stdout for notifications Claude reads, stderr for logs Claude doesn't see unless it explicitly asks. The awareness script's diagnostic output never pollutes the event stream.
+
+This also clarifies the relationship between the awareness layer and the existing hook/way system:
+
+- **Hooks and ways** remain the reactive layer: they fire on Claude's own events (prompts, tool calls, session lifecycle, context-threshold crossings) and inject synchronous guidance at the hook boundary.
+- **`Monitor` + the awareness layer** is the proactive layer: it surfaces asynchronous observations triggered by external state changes, approaching consequences, or sensor events that occur *between* hook boundaries.
+
+The two layers compose cleanly because they operate at different timescales and on different signal sources, and both deliver through Claude's attention surface without competing. Hooks inject at hook events; `Monitor` notifications arrive in the gaps. Together they cover the synchronous and asynchronous sides of the same unified attention surface. Neither replaces the other; they complement.
+
 ## Interoception and exteroception
 
 The awareness layer senses in two directions, and the distinction is useful because it clarifies what the layer is watching when:
