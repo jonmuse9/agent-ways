@@ -85,70 +85,90 @@ impl PeerSensor {
         }
     }
 
-    /// Read signal files from peers. Returns observations for new signals.
-    fn read_signals(&mut self) -> Vec<(f64, String)> {
+    /// Read signal files from peers. Scans own project dir, broadcast dir,
+    /// and any dirs in the focus list. Returns observations for new signals.
+    fn read_signals(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let mut observations = Vec::new();
+        let base = signals_base();
 
-        let entries = match fs::read_dir(&self.signals_dir) {
-            Ok(e) => e,
-            Err(_) => return observations,
-        };
+        // Directories to scan: own project + broadcast + focus group
+        let own_encoded = encode_cwd(&focus.working_dir);
+        let mut scan_dirs = vec![
+            base.join(&own_encoded),
+            base.join("_broadcast"),
+        ];
+
+        // Add focus group dirs
+        let focus_file = base.join("focus");
+        if let Ok(content) = fs::read_to_string(&focus_file) {
+            for line in content.lines() {
+                let line = line.trim();
+                if !line.is_empty() {
+                    scan_dirs.push(base.join(encode_cwd(line)));
+                }
+            }
+        }
 
         let own_prefix = self.own_session_id.as_deref().unwrap_or("---none---");
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let filename = match path.file_name().and_then(|f| f.to_str()) {
-                Some(f) if f.ends_with(".signal") => f.to_string(),
-                _ => continue,
-            };
-
-            // Skip our own signals
-            if filename.starts_with(own_prefix) {
-                continue;
-            }
-
-            // Skip already-seen signals
-            if self.seen_signals.contains(&filename) {
-                continue;
-            }
-
-            // Read and parse the signal: from|project|cwd|message
-            // from is "source:identity" (e.g. "claude:abc123" or "external:aaron@kitty")
-            let content = match fs::read_to_string(&path) {
-                Ok(c) => c,
+        for dir in &scan_dirs {
+            let entries = match fs::read_dir(dir) {
+                Ok(e) => e,
                 Err(_) => continue,
             };
-            let content = content.trim();
-            let parts: Vec<&str> = content.splitn(4, '|').collect();
-            if parts.len() == 4 {
-                let from = parts[0];
-                let project = parts[1];
-                let message = parts[3];
 
-                // Parse source kind from "kind:identity" format
-                let (kind, identity) = from.split_once(':')
-                    .unwrap_or(("unknown", from));
-
-                let sender = match kind {
-                    "claude" => format!("claude/{}", project),
-                    "external" => identity.to_string(),
-                    _ => format!("{} ({})", project, from),
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let filename = match path.file_name().and_then(|f| f.to_str()) {
+                    Some(f) if f.ends_with(".signal") => f.to_string(),
+                    _ => continue,
                 };
 
-                // Peer messages are high magnitude — they should punch through
-                observations.push((5.0, format!(
-                    "message from {}: {}", sender, message
-                )));
-            }
+                // Skip our own signals
+                if filename.starts_with(own_prefix) {
+                    continue;
+                }
 
-            self.seen_signals.insert(filename);
+                // Skip already-seen (use full path to avoid collisions across dirs)
+                let key = format!("{}:{}", dir.display(), filename);
+                if self.seen_signals.contains(&key) {
+                    continue;
+                }
 
-            // Clean up stale signals (older than 5 minutes)
-            if let Ok(metadata) = fs::metadata(&path) {
-                if let Ok(modified) = metadata.modified() {
-                    if modified.elapsed().unwrap_or_default().as_secs() > 300 {
-                        fs::remove_file(&path).ok();
+                // Read and parse: from|project|cwd|message
+                let content = match fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let content = content.trim();
+                let parts: Vec<&str> = content.splitn(4, '|').collect();
+                if parts.len() == 4 {
+                    let from = parts[0];
+                    let project = parts[1];
+                    let message = parts[3];
+
+                    let (kind, identity) = from.split_once(':')
+                        .unwrap_or(("unknown", from));
+
+                    let sender = match kind {
+                        "claude" => format!("claude/{}", project),
+                        "external" => identity.to_string(),
+                        _ => format!("{} ({})", project, from),
+                    };
+
+                    observations.push((5.0, format!(
+                        "message from {}: {}", sender, message
+                    )));
+                }
+
+                self.seen_signals.insert(key);
+
+                // Clean up stale signals (older than 5 minutes)
+                if let Ok(metadata) = fs::metadata(&path) {
+                    if let Ok(modified) = metadata.modified() {
+                        if modified.elapsed().unwrap_or_default().as_secs() > 300 {
+                            fs::remove_file(&path).ok();
+                        }
                     }
                 }
             }
@@ -372,7 +392,7 @@ impl Sensor for PeerSensor {
         }
 
         // Check for peer signals (messages from other sessions)
-        observations.extend(self.read_signals());
+        observations.extend(self.read_signals(focus));
 
         self.prior = current;
         observations
@@ -401,6 +421,10 @@ fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
+}
+
+fn signals_base() -> PathBuf {
+    home_dir().join(".cache").join("attend").join("signals")
 }
 
 /// Encode a cwd path to match Claude Code's project directory naming.

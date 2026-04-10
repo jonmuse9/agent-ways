@@ -233,9 +233,48 @@ fn cmd_peers() {
     }
 }
 
-fn cmd_send(message: &str) {
-    let signals_dir = signals_dir();
-    std::fs::create_dir_all(&signals_dir).ok();
+fn cmd_send(args: &[String]) {
+    // Parse flags: --broadcast, --to <project-path>
+    let mut broadcast = false;
+    let mut target_dir: Option<String> = None;
+    let mut message_parts: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--broadcast" => broadcast = true,
+            "--to" => {
+                i += 1;
+                if i < args.len() {
+                    target_dir = Some(args[i].clone());
+                } else {
+                    eprintln!("attend send: --to requires a project path");
+                    std::process::exit(1);
+                }
+            }
+            _ => message_parts.push(&args[i]),
+        }
+        i += 1;
+    }
+
+    let message = message_parts.join(" ");
+    if message.is_empty() {
+        eprintln!("usage: attend send [--broadcast] [--to <path>] <message>");
+        std::process::exit(1);
+    }
+
+    // Determine target signals directory
+    let dest_dir = if broadcast {
+        signals_base().join("_broadcast")
+    } else if let Some(ref path) = target_dir {
+        signals_base().join(encode_project(path))
+    } else {
+        // Default: send to own project's signals dir
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        signals_base().join(encode_project(&cwd))
+    };
+    std::fs::create_dir_all(&dest_dir).ok();
 
     let (sender_id, source_kind) = identify_sender();
     let cwd = std::env::current_dir()
@@ -247,19 +286,21 @@ fn cmd_send(message: &str) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // Use source kind in the display name: "claude:session-id" or "user:aaron@konsole"
     let from = format!("{}:{}", source_kind, sender_id);
     let filename = format!("{}-{}.signal", sender_id.replace('/', "-"), ts);
-    let path = signals_dir.join(&filename);
-    let tmp_path = signals_dir.join(format!("{}.tmp", filename));
+    let path = dest_dir.join(&filename);
+    let tmp_path = dest_dir.join(format!("{}.tmp", filename));
 
-    // Line format: from|project|cwd|message
-    // Atomic write: write to .tmp, then rename. Readers skip .tmp files.
     let content = format!("{}|{}|{}|{}\n", from, project, cwd, message);
     match std::fs::write(&tmp_path, &content) {
         Ok(_) => {
             match std::fs::rename(&tmp_path, &path) {
-                Ok(_) => eprintln!("[attend] signal written: {}", filename),
+                Ok(_) => {
+                    let scope = if broadcast { "broadcast" }
+                        else if target_dir.is_some() { "directed" }
+                        else { "project" };
+                    eprintln!("[attend] signal written ({scope}): {filename}");
+                }
                 Err(e) => {
                     eprintln!("[attend] error renaming signal: {}", e);
                     std::fs::remove_file(&tmp_path).ok();
@@ -294,12 +335,45 @@ fn cmd_status() {
         println!("no attend instances running");
     }
 
-    // Show signals dir
-    let signals_dir = signals_dir();
-    let count = std::fs::read_dir(&signals_dir)
-        .map(|entries| entries.filter_map(|e| e.ok()).count())
-        .unwrap_or(0);
-    println!("signals: {} pending ({})", count, signals_dir.display());
+    // Show signals
+    let base = signals_base();
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let own_dir = base.join(encode_project(&cwd));
+    let broadcast_dir = base.join("_broadcast");
+
+    let own_count = count_signals(&own_dir);
+    let broadcast_count = count_signals(&broadcast_dir);
+
+    println!("signals:");
+    println!("  project:   {} pending ({})", own_count, own_dir.display());
+    println!("  broadcast: {} pending ({})", broadcast_count, broadcast_dir.display());
+
+    // Show focus file if it exists
+    let focus_file = base.join("focus");
+    if focus_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&focus_file) {
+            let peers: Vec<&str> = content.lines()
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            println!("focus: {} peers", peers.len());
+            for p in &peers {
+                println!("  {}", p);
+            }
+        }
+    } else {
+        println!("focus: project only (no focus file)");
+    }
+}
+
+fn count_signals(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("signal"))
+            .count())
+        .unwrap_or(0)
 }
 
 // --- Helpers ---
@@ -362,12 +436,22 @@ fn detect_terminal() -> String {
     String::new()
 }
 
-fn signals_dir() -> std::path::PathBuf {
+fn signals_base() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     std::path::PathBuf::from(home)
         .join(".cache")
         .join("attend")
         .join("signals")
+}
+
+/// Encode a project path the same way Claude Code does: '/', '_', '.' → '-'
+fn encode_project(path: &str) -> String {
+    path.chars()
+        .map(|c| match c {
+            '/' | '_' | '.' => '-',
+            _ => c,
+        })
+        .collect()
 }
 
 /// Try to find our own session ID by walking up the process tree to find
@@ -416,6 +500,85 @@ fn own_session_id() -> Option<String> {
 
 // --- Entry point ---
 
+fn cmd_focus(args: &[String]) {
+    let focus_file = signals_base().join("focus");
+
+    match args.first().map(|s| s.as_str()) {
+        Some("add") => {
+            // attend focus add /path/to/project [/path/to/other ...]
+            if args.len() < 2 {
+                eprintln!("usage: attend focus add <project-path> [...]");
+                std::process::exit(1);
+            }
+            let mut existing = read_focus_list(&focus_file);
+            for path in &args[1..] {
+                let resolved = std::fs::canonicalize(path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| path.clone());
+                if !existing.contains(&resolved) {
+                    existing.push(resolved.clone());
+                    eprintln!("[attend] focus: added {}", resolved);
+                }
+            }
+            write_focus_list(&focus_file, &existing);
+        }
+        Some("remove") | Some("rm") => {
+            if args.len() < 2 {
+                eprintln!("usage: attend focus remove <project-path> [...]");
+                std::process::exit(1);
+            }
+            let mut existing = read_focus_list(&focus_file);
+            for path in &args[1..] {
+                let resolved = std::fs::canonicalize(path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| path.clone());
+                existing.retain(|p| p != &resolved);
+                eprintln!("[attend] focus: removed {}", resolved);
+            }
+            write_focus_list(&focus_file, &existing);
+        }
+        Some("clear") => {
+            std::fs::remove_file(&focus_file).ok();
+            eprintln!("[attend] focus: cleared (project-only mode)");
+        }
+        Some("list") | None => {
+            let list = read_focus_list(&focus_file);
+            if list.is_empty() {
+                println!("focus: project only (no peers in focus group)");
+            } else {
+                println!("focus: {} peers", list.len());
+                for p in &list {
+                    let name = p.rsplit('/').next().unwrap_or(p);
+                    println!("  {} ({})", name, encode_project(p));
+                }
+            }
+        }
+        Some(unknown) => {
+            eprintln!("attend focus: unknown subcommand '{}' — try add, remove, clear, list", unknown);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn read_focus_list(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+fn write_focus_list(path: &std::path::Path, list: &[String]) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let content = list.join("\n") + "\n";
+    std::fs::write(path, content).ok();
+}
+
+// --- Entry point ---
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -424,12 +587,10 @@ fn main() {
         Some("peers") => cmd_peers(),
         Some("status") => cmd_status(),
         Some("send") => {
-            let message = args[1..].join(" ");
-            if message.is_empty() {
-                eprintln!("usage: attend send <message>");
-                std::process::exit(1);
-            }
-            cmd_send(&message);
+            cmd_send(&args[1..]);
+        }
+        Some("focus") => {
+            cmd_focus(&args[1..]);
         }
         Some("help") | Some("--help") | Some("-h") | None => {
             println!("\x1b[2m\x1b[4mA G E N T\x1b[0m\n");
@@ -446,8 +607,13 @@ fn main() {
             println!("  run       Start the sensor loop (use with Monitor for async delivery)");
             println!("  peers     List active Claude Code sessions");
             println!("  send      Send a signal to peer sessions");
-            println!("  status    Show running attend instances and pending signals");
+            println!("  focus     Manage focus group (add/remove/clear/list peer projects)");
+            println!("  status    Show running instances, signals, and focus state");
             println!("  help      Show this help");
+            println!();
+            println!("send flags:");
+            println!("  --broadcast     Send to all projects, not just your own");
+            println!("  --to <path>     Send to a specific project's signals dir");
         }
         Some(unknown) => {
             eprintln!("attend: unknown command '{}' — try 'attend help'", unknown);
