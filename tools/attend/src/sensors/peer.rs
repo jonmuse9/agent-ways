@@ -204,16 +204,30 @@ impl PeerSensor {
                         _ => format!("{} ({})", project, from),
                     };
 
-                    // Include reply hint only on first peer message
                     let source_cwd = parts[2];
+
+                    // Directed messages (in own project dir) get highest priority.
+                    // Broadcast and focus group messages are important but less urgent.
+                    let dir_name = dir.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    let magnitude = if dir_name == own_encoded {
+                        7.0 // directed to us — someone used --to
+                    } else if dir_name == "_broadcast" {
+                        4.0 // broadcast — important but not targeted
+                    } else {
+                        5.0 // focus group — relevant peer
+                    };
+
+                    // Include reply hint only on first peer message
                     if !self.reply_hint_shown {
-                        observations.push((5.0, format!(
+                        observations.push((magnitude, format!(
                             "message from {}: {} (reply: attend send --to {} <msg>)",
                             sender, message, source_cwd
                         )));
                         self.reply_hint_shown = true;
                     } else {
-                        observations.push((5.0, format!(
+                        observations.push((magnitude, format!(
                             "message from {}: {}", sender, message
                         )));
                     }
