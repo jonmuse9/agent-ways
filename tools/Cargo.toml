@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "ways-cli",
+    "attend",
+]
+resolver = "2"
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"
+codegen-units = 1
+panic = "abort"

@@ -6,11 +6,13 @@ Map of the documentation tree. For the project overview, see the [main README](.
 
 | Path | What's there |
 |------|-------------|
-| [hooks-and-ways/README.md](hooks-and-ways/README.md) | **Start here** — how the system works, reading paths by role |
+| [cognitive-loop.md](cognitive-loop.md) | **Start here for the whole system** — narrative explainer of how ways, progressive disclosure, memory, and the awareness layer compose as one cognitive loop (with diagrams) |
+| [hooks-and-ways/README.md](hooks-and-ways/README.md) | **Start here for ways specifically** — how ways work, reading paths by role |
 | [hooks-and-ways/](hooks-and-ways/) | Guides: creating ways, matching, macros, provenance, teams |
 | [hooks-and-ways.md](hooks-and-ways.md) | Reference: hook lifecycle, state management, session gating |
-| [architecture.md](architecture.md) | System architecture diagrams (Mermaid) |
+| [architecture.md](architecture.md) | System architecture diagrams (Mermaid) for the ways mechanics |
 | [architecture/](architecture/) | Architecture Decision Records (managed by `docs/scripts/adr`) |
+| [design-notes/](design-notes/) | Prose-first framing documents that justify multiple related decisions (complement to ADRs) |
 
 ## Guides vs Reference
 

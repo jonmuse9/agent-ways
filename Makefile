@@ -6,9 +6,10 @@
 # Update:        make update
 
 .DEFAULT_GOAL := help
-.PHONY: setup install uninstall update clean help ways ways-rebuild test test-unit test-sim test-lang test-locales test-multilingual release
+.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild test test-unit test-sim test-lang test-locales test-multilingual release
 
 WAYS_BIN = bin/ways
+ATTEND_BIN = bin/attend
 XDG_BIN = $(or $(XDG_BIN_HOME),$(HOME)/.local/bin)
 
 # --- Primary targets ---
@@ -16,11 +17,13 @@ XDG_BIN = $(or $(XDG_BIN_HOME),$(HOME)/.local/bin)
 help:
 	@echo "claude-code-config"
 	@echo ""
-	@echo "  make setup        Build ways CLI + fetch embedding model + corpus"
+	@echo "  make setup        Build ways CLI + attend + fetch embedding model + corpus"
 	@echo "  make install      Full first-time setup (hooks + tools + PATH)"
 	@echo "  make update       Pull latest changes and re-run install"
 	@echo "  make ways         Get ways binary (download or build from source)"
 	@echo "  make ways-rebuild Force rebuild ways from source"
+	@echo "  make attend       Build attend binary"
+	@echo "  make attend-rebuild Force rebuild attend from source"
 	@echo "  make test         Run all tests (smoke + unit + sim + lang)"
 	@echo "  make test-unit    Run Rust unit tests"
 	@echo "  make test-sim     Run session simulator (8 scenarios)"
@@ -33,7 +36,7 @@ help:
 	@echo ""
 
 # Build ways CLI + set up embedding engine + generate initial corpus.
-setup: ways
+setup: ways attend
 	@echo "Setting up embedding engine..."
 	$(MAKE) -C tools/way-embed setup
 	@echo ""
@@ -47,15 +50,17 @@ setup: ways
 install: hooks-executable setup
 	@mkdir -p $(XDG_BIN)
 	@ln -sf $(CURDIR)/$(WAYS_BIN) $(XDG_BIN)/ways
+	@ln -sf $(CURDIR)/$(ATTEND_BIN) $(XDG_BIN)/attend
 	@echo ""
 	@echo "Install complete."
-	@echo "  ways binary: $(XDG_BIN)/ways → $(CURDIR)/$(WAYS_BIN)"
+	@echo "  ways binary:   $(XDG_BIN)/ways → $(CURDIR)/$(WAYS_BIN)"
+	@echo "  attend binary: $(XDG_BIN)/attend → $(CURDIR)/$(ATTEND_BIN)"
 	@echo "  Restart Claude Code for ways to take effect."
 
 # Remove symlink from PATH.
 uninstall:
-	@rm -f $(XDG_BIN)/ways
-	@echo "Removed $(XDG_BIN)/ways"
+	@rm -f $(XDG_BIN)/ways $(XDG_BIN)/attend
+	@echo "Removed $(XDG_BIN)/ways $(XDG_BIN)/attend"
 
 # Pull upstream and re-setup.
 update:
@@ -74,7 +79,7 @@ ways:
 		echo "No pre-built binary, building from source..."; \
 		cargo build --release --manifest-path tools/ways-cli/Cargo.toml; \
 		mkdir -p bin; \
-		cp tools/ways-cli/target/release/ways $(WAYS_BIN); \
+		ln -sf $(CURDIR)/tools/ways-cli/target/release/ways $(WAYS_BIN); \
 		echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: No pre-built binary and cargo not found."; \
@@ -90,8 +95,34 @@ ways-rebuild:
 	fi
 	cargo build --release --manifest-path tools/ways-cli/Cargo.toml
 	@mkdir -p bin
-	@cp tools/ways-cli/target/release/ways $(WAYS_BIN)
+	@ln -sf $(CURDIR)/tools/ways-cli/target/release/ways $(WAYS_BIN)
 	@echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"
+
+# Build attend binary from workspace.
+attend:
+	@if [ -x $(ATTEND_BIN) ] && $(ATTEND_BIN) --help >/dev/null 2>&1; then \
+		echo "attend already built."; \
+	elif command -v cargo >/dev/null 2>&1; then \
+		echo "Building attend..."; \
+		cargo build --release --manifest-path tools/Cargo.toml -p attend; \
+		mkdir -p bin; \
+		ln -sf $(CURDIR)/tools/target/release/attend $(ATTEND_BIN); \
+		echo "Built: $(ATTEND_BIN) ($$(ls -lh $(ATTEND_BIN) | awk '{print $$5}'))"; \
+	else \
+		echo "error: cargo not found. Install Rust: https://rustup.rs/"; \
+		exit 1; \
+	fi
+
+# Force rebuild attend from source.
+attend-rebuild:
+	@if ! command -v cargo >/dev/null 2>&1; then \
+		echo "error: cargo not found. Install Rust: https://rustup.rs/"; \
+		exit 1; \
+	fi
+	cargo build --release --manifest-path tools/Cargo.toml -p attend
+	@mkdir -p bin
+	@ln -sf $(CURDIR)/tools/target/release/attend $(ATTEND_BIN)
+	@echo "Built: $(ATTEND_BIN) ($$(ls -lh $(ATTEND_BIN) | awk '{print $$5}'))"
 
 # --- Test ---
 
@@ -154,4 +185,5 @@ hooks-executable:
 clean:
 	$(MAKE) -C tools/way-embed clean
 	cargo clean --manifest-path tools/ways-cli/Cargo.toml 2>/dev/null || true
+	cargo clean --manifest-path tools/Cargo.toml 2>/dev/null || true
 	rm -rf dist/

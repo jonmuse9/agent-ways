@@ -47,6 +47,8 @@
 !docs/architecture/*.md
 !docs/architecture/*/
 !docs/architecture/**/*.md
+!docs/design-notes/
+!docs/design-notes/*.md
 !docs/scripts/
 !docs/scripts/*
 !docs/hooks-and-ways/
@@ -92,6 +94,9 @@ hooks/ways/.obsidian/
 !scripts/install.sh
 !scripts/project-pulse
 !scripts/test-locales.py
+!scripts/attend-demo.sh
+!scripts/attend-format-probe.sh
+!scripts/hook-fire-detector.sh
 
 # Governance traceability (separable)
 # CLI tools (root symlinks to implementation scripts)
@@ -124,6 +129,13 @@ hooks/ways/.obsidian/
 !tools/ways-cli/**
 # ways-cli build artifacts (tracked via .gitignore inside ways-cli/)
 tools/ways-cli/target/
+!tools/attend/
+!tools/attend/**
+# attend build artifacts
+tools/attend/target/
+# Workspace-level Cargo files
+!tools/Cargo.toml
+!tools/Cargo.lock
 
 # Standalone tools (user-facing CLI utilities)
 !tools/
