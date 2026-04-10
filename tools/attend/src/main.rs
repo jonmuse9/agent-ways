@@ -237,7 +237,7 @@ fn cmd_send(message: &str) {
     let signals_dir = signals_dir();
     std::fs::create_dir_all(&signals_dir).ok();
 
-    let session_id = own_session_id().unwrap_or_else(|| "unknown".to_string());
+    let (sender_id, source_kind) = identify_sender();
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -247,13 +247,15 @@ fn cmd_send(message: &str) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let filename = format!("{}-{}.signal", session_id, ts);
+    // Use source kind in the display name: "claude:session-id" or "user:aaron@konsole"
+    let from = format!("{}:{}", source_kind, sender_id);
+    let filename = format!("{}-{}.signal", sender_id.replace('/', "-"), ts);
     let path = signals_dir.join(&filename);
     let tmp_path = signals_dir.join(format!("{}.tmp", filename));
 
-    // Simple line format: from|project|cwd|message
+    // Line format: from|project|cwd|message
     // Atomic write: write to .tmp, then rename. Readers skip .tmp files.
-    let content = format!("{}|{}|{}|{}\n", session_id, project, cwd, message);
+    let content = format!("{}|{}|{}|{}\n", from, project, cwd, message);
     match std::fs::write(&tmp_path, &content) {
         Ok(_) => {
             match std::fs::rename(&tmp_path, &path) {
@@ -301,6 +303,64 @@ fn cmd_status() {
 }
 
 // --- Helpers ---
+
+/// Determine who is sending this signal.
+/// Returns (identity_string, source_kind) where source_kind is "claude" or "external".
+fn identify_sender() -> (String, &'static str) {
+    // First, try to find a Claude session ID (we're inside a Claude session)
+    if let Some(sid) = own_session_id() {
+        return (sid, "claude");
+    }
+
+    // Not inside Claude — build identity from environment
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // Detect terminal: check common terminal-specific env vars
+    let terminal = detect_terminal();
+
+    let identity = if !terminal.is_empty() {
+        format!("{}@{}", user, terminal)
+    } else {
+        user
+    };
+
+    (identity, "external")
+}
+
+/// Best-effort terminal detection from environment variables.
+fn detect_terminal() -> String {
+    // Specific terminal emulators set their own env vars
+    if std::env::var("KITTY_PID").is_ok() {
+        return "kitty".to_string();
+    }
+    if std::env::var("ALACRITTY_SOCKET").is_ok() {
+        return "alacritty".to_string();
+    }
+    if std::env::var("WEZTERM_PANE").is_ok() {
+        return "wezterm".to_string();
+    }
+    if std::env::var("TMUX").is_ok() {
+        return "tmux".to_string();
+    }
+    if std::env::var("STY").is_ok() {
+        return "screen".to_string();
+    }
+    // TERM_PROGRAM is set by some terminals (macOS Terminal, iTerm2, VS Code)
+    if let Ok(tp) = std::env::var("TERM_PROGRAM") {
+        return tp.to_lowercase();
+    }
+    // SSH session
+    if std::env::var("SSH_CONNECTION").is_ok() {
+        return "ssh".to_string();
+    }
+    // Fallback: try TERMINAL or just use the shell
+    if let Ok(t) = std::env::var("TERMINAL") {
+        return t.rsplit('/').next().unwrap_or(&t).to_string();
+    }
+    String::new()
+}
 
 fn signals_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());

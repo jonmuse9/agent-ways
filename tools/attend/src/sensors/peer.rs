@@ -113,7 +113,8 @@ impl PeerSensor {
                 continue;
             }
 
-            // Read and parse the signal: session_id|project|cwd|message
+            // Read and parse the signal: from|project|cwd|message
+            // from is "source:identity" (e.g. "claude:abc123" or "external:aaron@kitty")
             let content = match fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -121,11 +122,23 @@ impl PeerSensor {
             let content = content.trim();
             let parts: Vec<&str> = content.splitn(4, '|').collect();
             if parts.len() == 4 {
+                let from = parts[0];
                 let project = parts[1];
                 let message = parts[3];
+
+                // Parse source kind from "kind:identity" format
+                let (kind, identity) = from.split_once(':')
+                    .unwrap_or(("unknown", from));
+
+                let sender = match kind {
+                    "claude" => format!("claude/{}", project),
+                    "external" => identity.to_string(),
+                    _ => format!("{} ({})", project, from),
+                };
+
                 // Peer messages are high magnitude — they should punch through
                 observations.push((5.0, format!(
-                    "peer message from {}: {}", project, message
+                    "message from {}: {}", sender, message
                 )));
             }
 
