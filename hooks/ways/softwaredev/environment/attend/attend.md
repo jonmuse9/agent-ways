@@ -1,8 +1,9 @@
 ---
-description: Active awareness layer — environmental sensing and peer signaling for Claude Code sessions
-vocabulary: attend awareness monitor sensor peer signal focus notify observe process watch session
+description: attend binary — active awareness sensor loop, peer session discovery, inter-session signaling for Claude Code
+vocabulary: attend attend-run attend-send attend-focus attend-peers attend-status sensor-loop awareness-layer focus-group signal-file disclosure-governor peer-session peer-discovery session-awareness environmental-sensing inter-session claude-session another-claude
+embed_threshold: 0.28
 threshold: 2.0
-pattern: attend|awareness|peer.?session|peer.?message|signal|focus.?group
+pattern: attend|awareness.?layer|peer.?session|peer.?discover|signal.?file|focus.?group|sensor.?loop
 commands: attend
 redisclose: 15
 macro: append
