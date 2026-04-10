@@ -234,6 +234,85 @@ fn cmd_run() {
     }
 }
 
+fn cmd_inbox() {
+    let base = signals_base();
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let own_session_id = own_session_id().unwrap_or_default();
+
+    // Scan same dirs as the peer sensor: own project + broadcast + focus group
+    let own_encoded = encode_project(&cwd);
+    let mut scan_dirs = vec![
+        base.join(&own_encoded),
+        base.join("_broadcast"),
+    ];
+    let focus_file = base.join("focus");
+    if let Ok(content) = std::fs::read_to_string(&focus_file) {
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.is_empty() {
+                scan_dirs.push(base.join(encode_project(line)));
+            }
+        }
+    }
+
+    let mut count = 0;
+    for dir in &scan_dirs {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("signal") {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let content = content.trim();
+            let parts: Vec<&str> = content.splitn(4, '|').collect();
+            if parts.len() != 4 { continue; }
+
+            let from = parts[0];
+            let project = parts[1];
+            let source_cwd = parts[2];
+            let message = parts[3];
+
+            // Skip own messages
+            if let Some((_, identity)) = from.split_once(':') {
+                if identity == own_session_id { continue; }
+            }
+
+            let (kind, identity) = from.split_once(':').unwrap_or(("unknown", from));
+            let sender = match kind {
+                "claude" => format!("claude/{}", project),
+                "external" => identity.to_string(),
+                _ => format!("{} ({})", project, from),
+            };
+
+            // Determine which scope this came from
+            let dir_name = dir.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?");
+            let scope = if dir_name == "_broadcast" { "broadcast" }
+                else if dir_name == own_encoded { "project" }
+                else { "focus" };
+
+            println!("[{}] from {}: {} (source: {})", scope, sender, message, source_cwd);
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        println!("no messages");
+    } else {
+        println!("--- {} message(s)", count);
+    }
+}
+
 fn cmd_peers() {
     let focus = Focus::default_focus();
     let mut sensor = PeerSensor::new();
@@ -274,7 +353,20 @@ fn cmd_send(args: &[String]) {
     let message = message_parts.join(" ");
     if message.is_empty() {
         eprintln!("usage: attend send [--broadcast] [--to <path>] <message>");
+        eprintln!("  tip: wrap message in double quotes to avoid shell expansion");
         std::process::exit(1);
+    }
+
+    // Fence: detect probable shell glob expansion.
+    // If any message part is an existing file path, the shell likely
+    // expanded a metachar (e.g. zsh expanded "hello?" into filenames).
+    let suspect_expansion = message_parts.iter().any(|part| {
+        std::path::Path::new(part).exists() && !part.contains(' ')
+    });
+    if suspect_expansion {
+        eprintln!("[attend] warning: message contains existing file paths — shell may have expanded metacharacters");
+        eprintln!("[attend] did you mean: attend send \"{}\"", message);
+        eprintln!("[attend] sending anyway, but wrap in quotes next time");
     }
 
     let base = signals_base();
@@ -618,6 +710,7 @@ fn main() {
     match args.first().map(|s| s.as_str()) {
         Some("run") => cmd_run(),
         Some("peers") => cmd_peers(),
+        Some("inbox") => cmd_inbox(),
         Some("status") => cmd_status(),
         Some("send") => {
             cmd_send(&args[1..]);
@@ -639,6 +732,7 @@ fn main() {
             println!("commands:");
             println!("  run       Start the sensor loop (use with Monitor for async delivery)");
             println!("  peers     List active Claude Code sessions");
+            println!("  inbox     Read pending messages from peers");
             println!("  send      Send a signal to peer sessions");
             println!("  focus     Manage focus group (add/remove/clear/list peer projects)");
             println!("  status    Show running instances, signals, and focus state");
