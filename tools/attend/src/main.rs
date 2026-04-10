@@ -472,7 +472,7 @@ fn cmd_inbox() {
 
             let (kind, identity) = from.split_once(':').unwrap_or(("unknown", from));
             let sender = match kind {
-                "claude" => format!("claude/{}", project),
+                "claude" => format!("claude/{}", source_cwd),
                 "external" => identity.to_string(),
                 _ => format!("{} ({})", project, from),
             };

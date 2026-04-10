@@ -196,13 +196,12 @@ impl PeerSensor {
                     let (kind, identity) = from.split_once(':')
                         .unwrap_or(("unknown", from));
 
+                    let source_cwd = parts[2];
                     let sender = match kind {
-                        "claude" => format!("claude/{}", project),
+                        "claude" => format!("claude/{}", source_cwd),
                         "external" => identity.to_string(),
                         _ => format!("{} ({})", project, from),
                     };
-
-                    let source_cwd = parts[2];
 
                     // Directed messages (in own project dir) get highest priority.
                     // Broadcast and focus group messages are important but less urgent.
@@ -435,8 +434,8 @@ impl Sensor for PeerSensor {
                 };
                 let magnitude = if peer.cwd == focus.working_dir { 3.0 } else { 1.0 };
                 observations.push((magnitude, format!(
-                    "peer session started: {} ({}, {}, ctx {:.0}%)",
-                    peer.project_name, relevance, peer.status, peer.context_percent
+                    "peer session started: {} [{}] ({}, {}, ctx {:.0}%)",
+                    peer.project_name, peer.cwd, relevance, peer.status, peer.context_percent
                 )));
             }
         }
@@ -446,7 +445,7 @@ impl Sensor for PeerSensor {
             if !current.contains_key(sid) {
                 let magnitude = if peer.cwd == focus.working_dir { 2.0 } else { 0.5 };
                 observations.push((magnitude, format!(
-                    "peer session exited: {}", peer.project_name
+                    "peer session exited: {} [{}]", peer.project_name, peer.cwd
                 )));
             }
         }
@@ -462,16 +461,16 @@ impl Sensor for PeerSensor {
                 // Status changed
                 if peer.status != prior.status {
                     observations.push((1.5, format!(
-                        "peer {} now {} (was {})",
-                        peer.project_name, peer.status, prior.status
+                        "peer {} [{}] now {} (was {})",
+                        peer.project_name, peer.cwd, peer.status, prior.status
                     )));
                 }
 
                 // Context pressure — peer approaching limits
                 if peer.context_percent >= 80.0 && prior.context_percent < 80.0 {
                     observations.push((2.0, format!(
-                        "peer {} context at {:.0}% — approaching compaction",
-                        peer.project_name, peer.context_percent
+                        "peer {} [{}] context at {:.0}% — approaching compaction",
+                        peer.project_name, peer.cwd, peer.context_percent
                     )));
                 }
             }
