@@ -262,24 +262,38 @@ fn cmd_send(args: &[String]) {
         std::process::exit(1);
     }
 
-    // Determine target signals directory
-    let dest_dir = if broadcast {
-        signals_base().join("_broadcast")
-    } else if let Some(ref path) = target_dir {
-        signals_base().join(encode_project(path))
-    } else {
-        // Default: send to own project's signals dir
-        let cwd = std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        signals_base().join(encode_project(&cwd))
-    };
-    std::fs::create_dir_all(&dest_dir).ok();
-
-    let (sender_id, source_kind) = identify_sender();
+    let base = signals_base();
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
+
+    // Determine target directories based on current mode:
+    // --broadcast: _broadcast only (reaches everyone)
+    // --to <path>: specific project only
+    // default: own project + focus group (mirrors what we read)
+    let dest_dirs: Vec<std::path::PathBuf> = if broadcast {
+        vec![base.join("_broadcast")]
+    } else if let Some(ref path) = target_dir {
+        let resolved = std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| path.clone());
+        vec![base.join(encode_project(&resolved))]
+    } else {
+        // Default: send to own project + all focus group peers
+        let mut dirs = vec![base.join(encode_project(&cwd))];
+        let focus_file = base.join("focus");
+        if let Ok(content) = std::fs::read_to_string(&focus_file) {
+            for line in content.lines() {
+                let line = line.trim();
+                if !line.is_empty() {
+                    dirs.push(base.join(encode_project(line)));
+                }
+            }
+        }
+        dirs
+    };
+
+    let (sender_id, source_kind) = identify_sender();
     let project = cwd.rsplit('/').next().unwrap_or("?");
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -288,27 +302,30 @@ fn cmd_send(args: &[String]) {
 
     let from = format!("{}:{}", source_kind, sender_id);
     let filename = format!("{}-{}.signal", sender_id.replace('/', "-"), ts);
-    let path = dest_dir.join(&filename);
-    let tmp_path = dest_dir.join(format!("{}.tmp", filename));
-
     let content = format!("{}|{}|{}|{}\n", from, project, cwd, message);
-    match std::fs::write(&tmp_path, &content) {
-        Ok(_) => {
-            match std::fs::rename(&tmp_path, &path) {
-                Ok(_) => {
-                    let scope = if broadcast { "broadcast" }
-                        else if target_dir.is_some() { "directed" }
-                        else { "project" };
-                    eprintln!("[attend] signal written ({scope}): {filename}");
-                }
-                Err(e) => {
+
+    let scope = if broadcast { "broadcast" }
+        else if target_dir.is_some() { "directed" }
+        else if dest_dirs.len() > 1 { "focus group" }
+        else { "project" };
+
+    for dest_dir in &dest_dirs {
+        std::fs::create_dir_all(dest_dir).ok();
+        let path = dest_dir.join(&filename);
+        let tmp_path = dest_dir.join(format!("{}.tmp", filename));
+
+        match std::fs::write(&tmp_path, &content) {
+            Ok(_) => {
+                if let Err(e) = std::fs::rename(&tmp_path, &path) {
                     eprintln!("[attend] error renaming signal: {}", e);
                     std::fs::remove_file(&tmp_path).ok();
                 }
             }
+            Err(e) => eprintln!("[attend] error writing signal to {}: {}", dest_dir.display(), e),
         }
-        Err(e) => eprintln!("[attend] error writing signal: {}", e),
     }
+
+    eprintln!("[attend] signal written ({}, {} dirs): {}", scope, dest_dirs.len(), filename);
 }
 
 fn cmd_status() {
