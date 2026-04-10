@@ -43,12 +43,12 @@ All commands below are one-shot — run with Bash, not Monitor.
 
 ### Peer messaging
 
-Send defaults to your current scope (own project + focus group). No quotes needed around the message.
+Send defaults to your current scope (own project + focus group). Always wrap the message in double quotes to prevent shell metacharacter expansion (`?`, `*`, `!`).
 
 ```bash
-attend send your message here
-attend send --broadcast important announcement for all sessions
-attend send --to /home/user/other-project directed message
+attend send "your message here"
+attend send --broadcast "important announcement for all sessions"
+attend send --to /home/user/other-project "directed message"
 ```
 
 ### Focus groups
