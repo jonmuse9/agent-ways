@@ -129,14 +129,16 @@ impl Sensor for ContextSensor {
 
         let mut observations = Vec::new();
 
-        // Check threshold crossings: 50%, 65%, 75%, 85%, 90%, 95%
+        // Threshold crossings calibrated to 1M context sessions where
+        // real wrap-up window is 500-600k (50-60%). By 75% the session
+        // should already be wrapping up or have reflected.
         let thresholds: &[(u8, f64, &str)] = &[
-            (50, 1.5, "halfway"),
-            (65, 2.0, "two-thirds"),
-            (75, 3.0, "three-quarters — consider reflecting"),
-            (85, 4.0, "compaction approaching"),
-            (90, 5.0, "compaction imminent"),
-            (95, 6.0, "critical — reflect now or lose context"),
+            (40, 1.5, "approaching productive midpoint"),
+            (50, 2.5, "midpoint — start planning wrap-up"),
+            (60, 3.5, "wrap-up window — reflect and consolidate"),
+            (70, 4.5, "past optimal wrap-up — commit and document now"),
+            (80, 5.5, "compaction approaching — finish current task"),
+            (90, 6.0, "critical — compaction imminent, save state now"),
         ];
 
         for &(pct, magnitude, label) in thresholds {
