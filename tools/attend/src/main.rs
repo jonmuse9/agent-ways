@@ -117,7 +117,7 @@ fn cmd_run() {
             .collect();
         format!("project + {}", names.join(", "))
     };
-    println!("[attend] active — sensors: git, peers, processes | focus: {} | commands: attend send <msg>, attend peers, attend focus add <path>", focus_desc);
+    println!("[attend] active — sensors: git, peers, processes | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>", focus_desc);
 
     let mut slots: Vec<SensorSlot> = vec![
         SensorSlot::new(Box::new(ProcessSensor::new())),
