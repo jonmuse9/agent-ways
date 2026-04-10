@@ -134,7 +134,7 @@ fn cmd_run_with_catchup(catchup: bool) {
     // Built-in sensors — check config for enabled/disabled and overrides
     if cfg.sensors.get("context").map(|s| s.enabled).unwrap_or(true) {
         let sc = cfg.sensors.get("context");
-        let mut sensor = ContextSensor::new();
+        let sensor = ContextSensor::new();
         slots.push(SensorSlot::new_with_config(
             Box::new(sensor),
             sc.map(|s| s.interval).unwrap_or(Duration::from_secs(60)),

@@ -20,8 +20,6 @@ pub struct PeerSensor {
     sessions_dir: PathBuf,
     /// Projects dir (for transcripts)
     projects_dir: PathBuf,
-    /// Signals dir
-    signals_dir: PathBuf,
     /// Previous snapshot: session_id → summary
     prior: HashMap<String, PeerSummary>,
     /// Signal files we've already seen (by filename)
