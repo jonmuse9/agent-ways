@@ -6,47 +6,46 @@ allowed-tools: Bash, Monitor, Read
 
 # Attend — Active Awareness
 
-Launch the `attend` binary as a persistent background monitor for this session. Attend polls sensors on adaptive schedules and surfaces environmental deltas as notifications.
+## Step 1: Pre-flight
 
-## Sensors
-
-- **processes** — tracks application presence (not PID churn)
-- **git** — uncommitted changes, branch divergence, upstream updates
-- **peers** — discovers other Claude Code sessions via `~/.claude/sessions/`, reports appear/exit/state changes
-
-## Pre-flight
-
-Before launching, verify attend is available:
+Check that `attend` is installed:
 
 ```bash
-command -v attend && attend --help
+command -v attend
 ```
 
-If attend is not found, tell the user to run `make attend` or `make install` from the agent-ways repo.
+If not found, tell the user to run `make attend` or `make install` from the agent-ways repo. Stop here.
 
-## Launch
+## Step 2: Launch via Monitor
 
-Use the Monitor tool with `persistent: true`:
+**CRITICAL: You MUST use the Monitor tool, NOT Bash.** Running attend via Bash blocks the tool call and discards notifications. Monitor is the only correct way to launch attend.
+
+Call the Monitor tool with exactly these parameters:
 
 - **command**: `attend`
 - **description**: `attend: git, peers, processes`
 - **persistent**: `true`
 - **timeout_ms**: `3600000`
 
-Attend writes diagnostic logs to stderr (visible in the Monitor output file) and notifications to stdout (delivered as chat notifications). The disclosure governor limits notifications to ~3 per 2-minute window to avoid destabilizing the conversation.
+Do NOT run `attend` with the Bash tool. Do NOT use `run_in_background`. Only Monitor delivers stdout lines as async notifications into the conversation.
 
-## What to expect
+## What happens next
 
-1. Baseline messages appear in stderr on first poll (not surfaced as notifications)
-2. Notifications arrive when sensors detect meaningful state changes
-3. Each notification is a single line: `[attend sensor=NAME priority=LEVEL] description`
-4. High-salience notifications may include a `ways show attend/SIGNAL` affordance
+Attend polls three sensors on adaptive schedules:
+
+- **processes** — application presence (not PID churn)
+- **git** — dirty files, branch changes, upstream divergence
+- **peers** — other Claude Code sessions via `~/.claude/sessions/`
+
+Baselines are established silently on first poll (stderr only, not surfaced). Notifications arrive only when sensors detect meaningful state changes, rate-limited to ~3 per 2-minute window by the disclosure governor.
+
+Each notification is a single line: `[attend sensor=NAME priority=LEVEL] description`
 
 ## Stopping
 
-Use TaskStop with the Monitor's task ID to stop attend early. It exits cleanly on signal.
+Use TaskStop with the Monitor's task ID. Attend exits cleanly on signal.
 
 ## Arguments
 
-- `/attend` — start attend with default sensors
-- `/attend status` — check if attend is already running (look for attend in `ps`)
+- `/attend` — start attend (default)
+- `/attend status` — check if attend is already running: `ps -eo pid,comm | grep attend`
