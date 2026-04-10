@@ -40,7 +40,7 @@ flowchart LR
     classDef delivery fill:#6A1B9A,stroke:#4A148C,color:#fff
 
     subgraph CheapSub["<b>cheap substrate</b> — shell, Rust, file I/O — zero reasoning cost"]
-        direction TB
+        direction LR
         Sensors["sensors<br/>(file, git, context, peers)"]:::cheap
         Attend["attend<br/>(salience, insistence, state)"]:::cheap
         Matcher["ways matcher<br/>(embedding + BM25)"]:::cheap
@@ -50,7 +50,7 @@ flowchart LR
     end
 
     subgraph Del["delivery"]
-        direction TB
+        direction LR
         Monitor["Monitor<br/>(async notifications)"]:::delivery
         Hooks["hooks<br/>(sync injections)"]:::delivery
     end
