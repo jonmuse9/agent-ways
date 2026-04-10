@@ -164,6 +164,11 @@ impl Sensor for ContextSensor {
                     }
                 }
 
+                // High-salience thresholds get an affordance (ADR-114)
+                if pct >= 85 {
+                    msg.push_str(". Use `ways show attend context-pressure --session $CLAUDE_SESSION_ID` for reflection guidance");
+                }
+
                 observations.push((magnitude, msg));
                 self.disclosed_thresholds.push(pct);
             }

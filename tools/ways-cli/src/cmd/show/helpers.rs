@@ -108,4 +108,47 @@ pub(crate) fn is_project_trusted(project_dir: &str) -> bool {
     }
 }
 
+/// Extract attend signal types from frontmatter.
+/// Looks for `type: attend` and collects `signals:` list items.
+pub(crate) fn extract_attend_signals(content: &str) -> Vec<String> {
+    let mut in_fm = false;
+    let mut has_attend_type = false;
+    let mut in_signals = false;
+    let mut signals = Vec::new();
+
+    for (i, line) in content.lines().enumerate() {
+        if i == 0 && line == "---" {
+            in_fm = true;
+            continue;
+        }
+        if in_fm && line == "---" {
+            break;
+        }
+        if !in_fm {
+            continue;
+        }
+
+        let trimmed = line.trim();
+
+        if trimmed == "type: attend" {
+            has_attend_type = true;
+        }
+
+        if trimmed == "signals:" {
+            in_signals = true;
+            continue;
+        }
+
+        if in_signals {
+            if let Some(signal) = trimmed.strip_prefix("- ") {
+                signals.push(signal.trim().to_string());
+            } else {
+                in_signals = false;
+            }
+        }
+    }
+
+    if has_attend_type { signals } else { Vec::new() }
+}
+
 pub(crate) use crate::util::home_dir;

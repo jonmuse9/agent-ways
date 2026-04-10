@@ -63,6 +63,17 @@ way:
           required: optional
           role: Only fire in this project directory
 
+  attend:
+    type:
+      type: enum
+      values: [attend]
+      required: optional
+      role: Marks this way as a handler for attend signal types (ADR-114)
+    signals:
+      type: array
+      required: conditional  # required when type is attend
+      role: Signal types this way handles (e.g. context-pressure, build-complete)
+
   state:
     trigger:
       type: enum

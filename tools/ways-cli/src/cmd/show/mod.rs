@@ -10,7 +10,7 @@ use serde_json::json;
 use std::path::Path;
 
 use crate::session;
-use helpers::{extract_field, home_dir, is_project_trusted, body_text, check_sections_text, run_macro};
+use helpers::{extract_field, extract_attend_signals, home_dir, is_project_trusted, body_text, check_sections_text, run_macro};
 use metrics::{compute_tree_metrics, count_siblings, git_version, dirty_status_text, update_status_text};
 
 // ── ways show way ───────────────────────────────────────────────
@@ -294,4 +294,80 @@ pub fn core(session_id: &str) -> Result<String> {
     session::stamp_core(session_id);
 
     Ok(output)
+}
+
+// ── ways show attend/<signal> ──────────────────────────────────
+
+pub fn attend(signal: &str, session_id: &str) -> Result<String> {
+    let ways_dir = home_dir().join(".claude/hooks/ways");
+
+    // Also check project-local ways
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .unwrap_or_else(|_| std::env::var("PWD").unwrap_or_else(|_| ".".to_string()));
+    let project_ways = std::path::PathBuf::from(&project_dir).join(".claude/ways");
+
+    let dirs: Vec<&std::path::Path> = if project_ways.is_dir() {
+        vec![ways_dir.as_path(), project_ways.as_path()]
+    } else {
+        vec![ways_dir.as_path()]
+    };
+
+    // Scan for ways with trigger.type: attend and matching signal
+    let mut matched_ids: Vec<String> = Vec::new();
+
+    for dir in &dirs {
+        for entry in walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if !path.is_file() { continue; }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.ends_with(".md") || name.contains(".check.") { continue; }
+
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let signals = extract_attend_signals(&content);
+                if signals.iter().any(|s| s == signal) {
+                    // Derive way ID from path relative to ways dir
+                    if let Ok(rel) = path.strip_prefix(dir) {
+                        let id = rel.with_extension("")
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        // Remove trailing /way-name if it matches parent dir name
+                        // e.g., "attend/context-pressure/context-pressure" → "attend/context-pressure"
+                        let id = normalize_way_id(&id);
+                        matched_ids.push(id);
+                    }
+                }
+            }
+        }
+    }
+
+    if matched_ids.is_empty() {
+        return Ok(format!("No way handles attend signal '{signal}'.\n"));
+    }
+
+    // Show first matching way through the standard disclosure pipeline
+    let mut output = String::new();
+    for id in &matched_ids {
+        let trigger = format!("attend:{signal}");
+        let result = way(id, session_id, &trigger)?;
+        if !result.is_empty() {
+            output.push_str(&result);
+            break; // First eligible way wins
+        }
+    }
+
+    Ok(output)
+}
+
+/// Normalize a way ID: if the last segment matches its parent dir name, collapse.
+/// e.g., "attend/context-pressure/context-pressure" → "attend/context-pressure"
+fn normalize_way_id(id: &str) -> String {
+    let parts: Vec<&str> = id.split('/').collect();
+    if parts.len() >= 2 && parts[parts.len() - 1] == parts[parts.len() - 2] {
+        parts[..parts.len() - 1].join("/")
+    } else {
+        id.to_string()
+    }
 }
