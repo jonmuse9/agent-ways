@@ -472,7 +472,7 @@ fn cmd_inbox() {
 
             let (kind, identity) = from.split_once(':').unwrap_or(("unknown", from));
             let sender = match kind {
-                "claude" => format!("claude/{}", project),
+                "claude" => format!("claude/{}", source_cwd),
                 "external" => identity.to_string(),
                 _ => format!("{} ({})", project, from),
             };
@@ -490,14 +490,17 @@ fn cmd_inbox() {
     // Sort chronologically — oldest first (ledger order)
     entries.sort_by_key(|e| e.mtime);
 
-    for entry in &entries {
-        println!("[{}] from {}: {} (source: {})", entry.scope, entry.sender, entry.message, entry.source);
-    }
-
     if entries.is_empty() {
         println!("no messages");
     } else {
-        println!("--- {} message(s)", entries.len());
+        let mut t = agent_fmt::Table::new(&["Scope", "From", "Message", "Source"]);
+        t.max_width(0, 10);
+        t.max_width(1, 24);
+        for entry in &entries {
+            t.add(vec![&entry.scope, &entry.sender, &entry.message, &entry.source]);
+        }
+        t.print();
+        println!("  {} message(s)", entries.len());
     }
 }
 
@@ -658,9 +661,14 @@ fn cmd_status() {
     let own_count = count_signals(&own_dir);
     let broadcast_count = count_signals(&broadcast_dir);
 
-    println!("signals:");
-    println!("  project:   {} pending ({})", own_count, own_dir.display());
-    println!("  broadcast: {} pending ({})", broadcast_count, broadcast_dir.display());
+    {
+        let mut t = agent_fmt::Table::new(&["Signals", "Count", "Path"]);
+        t.align(1, agent_fmt::Align::Right);
+        t.max_width(1, 6);
+        t.add(vec!["project", &own_count.to_string(), &own_dir.display().to_string()]);
+        t.add(vec!["broadcast", &broadcast_count.to_string(), &broadcast_dir.display().to_string()]);
+        t.print();
+    }
 
     // Show focus file if it exists
     let focus_file = base.join("focus");
@@ -669,13 +677,17 @@ fn cmd_status() {
             let peers: Vec<&str> = content.lines()
                 .filter(|l| !l.trim().is_empty())
                 .collect();
-            println!("focus: {} peers", peers.len());
+            let mut t = agent_fmt::Table::new(&["Focus", "Path"]);
             for p in &peers {
-                println!("  {}", p);
+                t.add(vec!["peer", p]);
             }
+            if peers.is_empty() {
+                t.add(vec!["(none)", ""]);
+            }
+            t.print();
         }
     } else {
-        println!("focus: project only (no focus file)");
+        println!("  focus: project only (no focus file)");
     }
 }
 
@@ -899,29 +911,26 @@ fn main() {
             println!("attend {} ({})", env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"));
         }
         Some("help") | Some("--help") | Some("-h") | None => {
-            println!("\x1b[2m\x1b[4mA G E N T\x1b[0m\n");
-            println!("\x1b[38;5;73m █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ \x1b[0m");
-            println!("\x1b[38;5;79m██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗\x1b[0m");
-            println!("\x1b[38;5;80m███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║\x1b[0m");
-            println!("\x1b[38;5;116m██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║\x1b[0m");
-            println!("\x1b[38;5;109m██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝\x1b[0m");
-            println!("\x1b[38;5;66m╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ \x1b[0m");
-            println!();
-            println!("  \x1b[2mactive awareness for Claude Code sessions\x1b[0m\n");
+            agent_fmt::Banner::new("ATTEND")
+                .subtitle("active awareness for Claude Code sessions")
+                .gradient(&agent_fmt::GRADIENT_TEAL)
+                .print();
             println!("usage: attend <command>\n");
-            println!("commands:");
-            println!("  run       Start the sensor loop (use with Monitor for async delivery)");
-            println!("  peers     List active Claude Code sessions");
-            println!("  inbox     Read pending messages from peers");
-            println!("  send      Send a signal to peer sessions");
-            println!("  focus     Manage focus group (add/remove/clear/list peer projects)");
-            println!("  config    Manage configuration (init/show/path)");
-            println!("  status    Show running instances, signals, and focus state");
-            println!("  help      Show this help");
+            agent_fmt::print_commands("commands", &[
+                ("run",    "Start the sensor loop (use with Monitor for async delivery)"),
+                ("peers",  "List active Claude Code sessions"),
+                ("inbox",  "Read pending messages from peers"),
+                ("send",   "Send a signal to peer sessions"),
+                ("focus",  "Manage focus group (add/remove/clear/list peer projects)"),
+                ("config", "Manage configuration (init/show/path)"),
+                ("status", "Show running instances, signals, and focus state"),
+                ("help",   "Show this help"),
+            ]);
             println!();
-            println!("send flags:");
-            println!("  --broadcast     Send to all projects, not just your own");
-            println!("  --to <path>     Send to a specific project's signals dir");
+            agent_fmt::print_commands("send flags", &[
+                ("--broadcast", "Send to all projects, not just your own"),
+                ("--to <path>", "Send to a specific project's signals dir"),
+            ]);
         }
         Some(unknown) => {
             eprintln!("attend: unknown command '{}' — try 'attend help'", unknown);

@@ -54,6 +54,7 @@ pub trait Sensor {
     /// Adaptive interval configuration
     fn base_interval(&self) -> Duration;
     fn min_interval(&self) -> Duration;
+    #[allow(dead_code)]
     fn decay_threshold(&self) -> u32;
 
     /// Export state for checkpointing. Default: no state.
@@ -72,6 +73,7 @@ pub struct SensorSlot {
 }
 
 impl SensorSlot {
+    #[allow(dead_code)]
     pub fn new(sensor: Box<dyn Sensor>) -> Self {
         let interval = AdaptiveInterval::new(
             sensor.base_interval(),

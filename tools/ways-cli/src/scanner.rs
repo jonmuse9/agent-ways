@@ -31,7 +31,7 @@ pub fn scan_ways(root: &Path) -> Result<Vec<WayFile>> {
         // Skip check files
         if path.file_name()
             .and_then(|n| n.to_str())
-            .map_or(false, |n| n.contains(".check."))
+            .is_some_and(|n| n.contains(".check."))
         {
             continue;
         }

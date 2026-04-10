@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::table::{Table, Align};
+use agent_fmt::{Table, Align};
 
 pub fn run(path: String, jaccard: bool) -> Result<()> {
     let ways_root = home_dir().join(".claude/hooks/ways");
@@ -76,7 +76,7 @@ fn print_jaccard(_tree_path: &Path, ways_root: &Path, files: &[PathBuf]) -> Resu
         if file
             .file_name()
             .and_then(|n| n.to_str())
-            .map_or(false, |n| n.contains(".check."))
+            .is_some_and(|n| n.contains(".check."))
         {
             continue;
         }
@@ -93,7 +93,7 @@ fn print_jaccard(_tree_path: &Path, ways_root: &Path, files: &[PathBuf]) -> Resu
     t.max_width(1, 36);
     t.align(2, Align::Right);
 
-    for (_parent, siblings) in &by_parent {
+    for siblings in by_parent.values() {
         if siblings.len() < 2 {
             continue;
         }
@@ -117,7 +117,7 @@ fn analyze_file(file: &Path, tree_path: &Path, _ways_root: &Path) -> Result<WayI
     let is_check = file
         .file_name()
         .and_then(|n| n.to_str())
-        .map_or(false, |n| n.contains(".check."));
+        .is_some_and(|n| n.contains(".check."));
 
     let dir = file.parent().unwrap_or(file);
     let subpath = dir.strip_prefix(tree_path).unwrap_or(Path::new(""));

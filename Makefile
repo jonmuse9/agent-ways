@@ -6,7 +6,7 @@
 # Update:        make update
 
 .DEFAULT_GOAL := help
-.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild test test-unit test-sim test-lang test-locales test-multilingual release
+.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild lint test test-unit test-sim test-lang test-locales test-multilingual release
 
 WAYS_BIN = bin/ways
 ATTEND_BIN = bin/attend
@@ -24,7 +24,8 @@ help:
 	@echo "  make ways-rebuild Force rebuild ways from source"
 	@echo "  make attend       Build attend binary"
 	@echo "  make attend-rebuild Force rebuild attend from source"
-	@echo "  make test         Run all tests (smoke + unit + sim + lang)"
+	@echo "  make lint         Run clippy on Rust workspace (warnings = errors)"
+	@echo "  make test         Run all tests (lint + smoke + unit + sim + lang)"
 	@echo "  make test-unit    Run Rust unit tests"
 	@echo "  make test-sim     Run session simulator (8 scenarios)"
 	@echo "  make test-lang    Validate active language coverage"
@@ -126,8 +127,13 @@ attend-rebuild:
 
 # --- Test ---
 
-test: test-smoke test-unit test-sim test-lang test-locales test-multilingual
+test: lint test-smoke test-unit test-sim test-lang test-locales test-multilingual
 	@echo "All tests passed."
+
+lint:
+	@echo "Linting Rust workspace..."
+	@cargo clippy --manifest-path tools/Cargo.toml -- -D warnings
+	@echo "Lint passed."
 
 test-smoke: ways
 	@echo "Smoke testing ways binary..."

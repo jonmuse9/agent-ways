@@ -107,10 +107,8 @@ pub fn task(
             if !scope.contains("subagent") && !scope.contains("teammate") {
                 continue;
             }
-        } else {
-            if !scope.contains("subagent") {
-                continue;
-            }
+        } else if !scope.contains("subagent") {
+            continue;
         }
 
         // Skip state-triggered ways
@@ -201,7 +199,7 @@ pub fn command(
         }
 
         if !matched {
-            if let Some(ref desc) = description {
+            if let Some(desc) = description {
                 if let Some(ref pat) = way.pattern {
                     if regex_matches(pat, &desc.to_lowercase()) {
                         matched = true;
@@ -434,7 +432,7 @@ pub fn state(
             context.push_str(&out);
             context.push_str("\n\n");
         }
-    } else if let Some(ref tp) = transcript {
+    } else if let Some(tp) = transcript {
         // Check for stale core (context cleared under us)
         let ctx_size = transcript_size_since_summary(tp);
         if let Some(marker_ts) = session::core_marker_ts(session_id) {

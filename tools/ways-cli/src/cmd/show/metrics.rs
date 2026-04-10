@@ -56,7 +56,7 @@ pub(crate) fn count_siblings(way_id: &str, project_dir: &str, session_id: &str) 
         }
         if let Ok(entries) = std::fs::read_dir(&parent_dir) {
             for entry in entries.flatten() {
-                if !entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                if !entry.file_type().is_ok_and(|ft| ft.is_dir()) {
                     continue;
                 }
                 let sib_name = entry.file_name().to_string_lossy().to_string();
@@ -174,7 +174,7 @@ pub(crate) fn update_status_text() -> String {
             } else {
                 out.push_str(&format!("**Behind {upstream_repo}.** First add upstream, then sync:\n"));
                 out.push_str(&format!("`git -C ~/.claude remote add upstream https://github.com/{upstream_repo}`\n"));
-                out.push_str(&format!("`cd ~/.claude && git fetch upstream && git merge upstream/main`\n"));
+                out.push_str("`cd ~/.claude && git fetch upstream && git merge upstream/main`\n");
             }
         }
         "plugin" => {

@@ -624,12 +624,12 @@ fn find_newest_jsonl(dir: &Path) -> Option<PathBuf> {
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
-        if path.to_str().map_or(false, |s| s.contains(".tmp")) {
+        if path.to_str().is_some_and(|s| s.contains(".tmp")) {
             continue;
         }
         if let Ok(meta) = entry.metadata() {
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            if newest.as_ref().map_or(true, |(t, _)| mtime > *t) {
+            if newest.as_ref().is_none_or(|(t, _)| mtime > *t) {
                 newest = Some((mtime, path));
             }
         }

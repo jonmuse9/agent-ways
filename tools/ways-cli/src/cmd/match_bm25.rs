@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 use crate::bm25;
-use crate::table::{Table, Align};
+use agent_fmt::{Table, Align};
 use crate::util::xdg_cache_dir;
 
 /// Unified match: embedding first, BM25 fallback.
@@ -104,7 +104,7 @@ pub fn run(query: String, corpus: Option<String>) -> Result<()> {
         }
     }
 
-    if t.len() == 0 {
+    if t.is_empty() {
         eprintln!("no matches above threshold (BM25)");
         std::process::exit(1);
     }

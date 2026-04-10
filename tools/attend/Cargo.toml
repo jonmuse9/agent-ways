@@ -10,4 +10,5 @@ name = "attend"
 path = "src/main.rs"
 
 [dependencies]
+agent-fmt = { path = "../agent-fmt" }
 

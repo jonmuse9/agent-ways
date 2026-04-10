@@ -49,7 +49,7 @@ pub struct Layout {
 
 impl Layout {
     pub fn detect() -> Self {
-        let term_w = crate::table::terminal_width();
+        let term_w = agent_fmt::terminal_width();
         // Fixed columns: epoch(6) + dist(6) + trigger(12) + pin(2) + redisclosure(14) + agent(14) + spaces(6) = 60
         let fixed_cols = 60;
         let indent = 2;
@@ -119,14 +119,15 @@ pub fn write_table_header(out: &mut String) {
 pub fn write_table_header_with(out: &mut String, layout: &Layout) {
     let _ = writeln!(
         out,
-        "  \x1b[1m{:<w$} {:>5} {:>5} {:<11} {} {:<13} {}\x1b[0m",
-        "Way", "Epoch", "Dist", "Trigger", "⌖", "Re-disclosure", "Agent",
+        "  \x1b[1m{:<w$} {:>5} {:>5} {:<11} \u{2316} {:<13} Agent\x1b[0m",
+        "Way", "Epoch", "Dist", "Trigger", "Re-disclosure",
         w = layout.way_col
     );
     let _ = writeln!(out, "  \x1b[2m{}\x1b[0m", "─".repeat(layout.separator));
 }
 
 /// Render a single way row.
+#[allow(clippy::too_many_arguments)]
 pub fn write_way_row<W: WayRow>(
     out: &mut String,
     w: &W,
@@ -145,6 +146,7 @@ pub fn write_way_row<W: WayRow>(
 }
 
 /// Render a single way row with explicit layout.
+#[allow(clippy::too_many_arguments)]
 pub fn write_way_row_with<W: WayRow>(
     out: &mut String,
     w: &W,
@@ -359,9 +361,9 @@ pub fn write_token_timeline<W: WayRow>(
         );
 
         let mut marker_str = String::from("  ");
-        for i in 0..bar_width {
-            match zoom_markers[i] {
-                Some(ci) => marker_str.push_str(&pin_str(ci)),
+        for marker in &zoom_markers[..bar_width] {
+            match marker {
+                Some(ci) => marker_str.push_str(&pin_str(*ci)),
                 None => marker_str.push('·'),
             }
         }

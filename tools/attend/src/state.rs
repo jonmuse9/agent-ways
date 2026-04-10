@@ -158,6 +158,7 @@ impl StateStore {
     }
 
     /// Remove state file (on clean exit if desired).
+    #[allow(dead_code)]
     pub fn clear(&self) {
         if let Some(path) = self.state_path() {
             fs::remove_file(&path).ok();

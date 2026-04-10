@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 
 use crate::agents;
 use crate::frontmatter;
-use crate::table::Table;
+use agent_fmt::Table;
 use crate::util::{home_dir, xdg_cache_dir};
 
 pub fn run(filter_lang: Option<&str>, audit: bool, json_output: bool) -> Result<()> {
@@ -164,7 +164,7 @@ fn scan_way_dirs(
         if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        if path.file_name().and_then(|n| n.to_str()).map_or(false, |n| n.contains(".check.")) {
+        if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.contains(".check.")) {
             continue;
         }
         if crate::util::is_excluded_path(path, excluded) {

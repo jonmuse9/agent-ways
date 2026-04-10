@@ -71,12 +71,12 @@ pub fn run(manifest: &Value, json_out: bool) -> Result<()> {
     println!("\x1b[1mGovernance Traceability Matrix\x1b[0m");
     println!();
     println!(
-        "  \x1b[1m{:<28} {:<50} {}\x1b[0m",
-        "WAY", "CONTROL", "JUSTIFICATION"
+        "  \x1b[1m{:<28} {:<50} JUSTIFICATION\x1b[0m",
+        "WAY", "CONTROL"
     );
     println!(
-        "  \x1b[2m{:<28} {:<50} {}\x1b[0m",
-        "---", "-------", "-------------"
+        "  \x1b[2m{:<28} {:<50} -------------\x1b[0m",
+        "---", "-------"
     );
 
     for (way, ctrl, just) in &rows {

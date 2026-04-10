@@ -166,9 +166,7 @@ fn detect_model(content: &str) -> String {
 fn model_to_window(model: &str) -> u64 {
     if model.contains("opus-4") {
         1_000_000
-    } else if model.contains("sonnet") {
-        200_000
-    } else if model.contains("haiku") {
+    } else if model.contains("sonnet") || model.contains("haiku") {
         200_000
     } else {
         // Check env override
@@ -241,12 +239,12 @@ fn find_newest_transcript(dir: &Path) -> Option<PathBuf> {
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
-        if path.to_str().map_or(false, |s| s.contains(".tmp")) {
+        if path.to_str().is_some_and(|s| s.contains(".tmp")) {
             continue;
         }
         if let Ok(meta) = entry.metadata() {
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            if newest.as_ref().map_or(true, |(t, _)| mtime > *t) {
+            if newest.as_ref().is_none_or(|(t, _)| mtime > *t) {
                 newest = Some((mtime, path));
             }
         }

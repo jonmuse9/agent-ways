@@ -203,7 +203,7 @@ fn scan_and_lint(
         let is_check = path
             .file_name()
             .and_then(|n| n.to_str())
-            .map_or(false, |n| n.contains(".check."));
+            .is_some_and(|n| n.contains(".check."));
 
         files.push((path.to_path_buf(), is_check));
     }
@@ -219,6 +219,7 @@ fn scan_and_lint(
 
 // ── Per-file linting ────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn lint_file(
     path: &Path,
     is_check: bool,
@@ -501,7 +502,7 @@ fn has_field(fm: &str, name: &str) -> bool {
     fm.lines().any(|l| l.starts_with(&prefix))
 }
 
-fn get_field_value<'a>(fm: &'a str, name: &str) -> Option<String> {
+fn get_field_value(fm: &str, name: &str) -> Option<String> {
     let prefix = format!("{name}:");
     for line in fm.lines() {
         if let Some(rest) = line.strip_prefix(&prefix) {

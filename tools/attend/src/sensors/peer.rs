@@ -32,6 +32,7 @@ pub struct PeerSensor {
     baseline_established: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct PeerSummary {
     pid: u32,
@@ -195,13 +196,12 @@ impl PeerSensor {
                     let (kind, identity) = from.split_once(':')
                         .unwrap_or(("unknown", from));
 
+                    let source_cwd = parts[2];
                     let sender = match kind {
-                        "claude" => format!("claude/{}", project),
+                        "claude" => format!("claude/{}", source_cwd),
                         "external" => identity.to_string(),
                         _ => format!("{} ({})", project, from),
                     };
-
-                    let source_cwd = parts[2];
 
                     // Directed messages (in own project dir) get highest priority.
                     // Broadcast and focus group messages are important but less urgent.
@@ -319,7 +319,7 @@ impl PeerSensor {
         // Read last few KB for recent usage data — don't parse the whole file
         let metadata = fs::metadata(&path).ok()?;
         let file_len = metadata.len();
-        let read_from = if file_len > 8192 { file_len - 8192 } else { 0 };
+        let read_from = file_len.saturating_sub(8192);
 
         let content = fs::read_to_string(&path).ok()?;
         let mut model = String::from("-");
@@ -360,9 +360,8 @@ impl PeerSensor {
         let context_tokens = last_input + last_cache_read + last_cache_create;
         // Model string may include context window hint like "claude-opus-4-6[1m]"
         // Default to 1M for opus/sonnet 4.x, 200K for older models
-        let context_window: u64 = if model.contains("[1m]") || model.contains("1m]") {
-            1_000_000
-        } else if model.contains("opus-4") || model.contains("sonnet-4") {
+        let context_window: u64 = if model.contains("[1m]") || model.contains("1m]")
+            || model.contains("opus-4") || model.contains("sonnet-4") {
             1_000_000
         } else if model == "-" {
             // Unknown model — can't compute meaningful percentage
@@ -435,8 +434,8 @@ impl Sensor for PeerSensor {
                 };
                 let magnitude = if peer.cwd == focus.working_dir { 3.0 } else { 1.0 };
                 observations.push((magnitude, format!(
-                    "peer session started: {} ({}, {}, ctx {:.0}%)",
-                    peer.project_name, relevance, peer.status, peer.context_percent
+                    "peer session started: {} [{}] ({}, {}, ctx {:.0}%)",
+                    peer.project_name, peer.cwd, relevance, peer.status, peer.context_percent
                 )));
             }
         }
@@ -446,7 +445,7 @@ impl Sensor for PeerSensor {
             if !current.contains_key(sid) {
                 let magnitude = if peer.cwd == focus.working_dir { 2.0 } else { 0.5 };
                 observations.push((magnitude, format!(
-                    "peer session exited: {}", peer.project_name
+                    "peer session exited: {} [{}]", peer.project_name, peer.cwd
                 )));
             }
         }
@@ -462,16 +461,16 @@ impl Sensor for PeerSensor {
                 // Status changed
                 if peer.status != prior.status {
                     observations.push((1.5, format!(
-                        "peer {} now {} (was {})",
-                        peer.project_name, peer.status, prior.status
+                        "peer {} [{}] now {} (was {})",
+                        peer.project_name, peer.cwd, peer.status, prior.status
                     )));
                 }
 
                 // Context pressure — peer approaching limits
                 if peer.context_percent >= 80.0 && prior.context_percent < 80.0 {
                     observations.push((2.0, format!(
-                        "peer {} context at {:.0}% — approaching compaction",
-                        peer.project_name, peer.context_percent
+                        "peer {} [{}] context at {:.0}% — approaching compaction",
+                        peer.project_name, peer.cwd, peer.context_percent
                     )));
                 }
             }
@@ -640,7 +639,7 @@ pub fn find_own_session_id(own_pid: u32) -> Option<String> {
             .output()
             .ok()?;
         let line = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 2 && parts[1].contains("claude") {
             claude_pid = Some(pid);
             break;

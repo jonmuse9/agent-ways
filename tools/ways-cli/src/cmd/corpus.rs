@@ -391,7 +391,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
     // Also generate combined corpus for backward compatibility
     // (the main ways-corpus.jsonl keeps EN embeddings as before)
     if en_model.is_file() {
-        log(&format!("Generating combined corpus with English embeddings..."));
+        log("Generating combined corpus with English embeddings...");
         let status = std::process::Command::new(&bin)
             .args(["generate", "--corpus"])
             .arg(corpus)

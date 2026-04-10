@@ -6,10 +6,16 @@ on:
     tags: ['ways-v*']
     paths:
       - 'tools/ways-cli/**'
+      - 'tools/agent-fmt/**'
+      - 'tools/Cargo.toml'
+      - 'tools/Cargo.lock'
       - '.github/workflows/build-ways.yml'
   pull_request:
     paths:
       - 'tools/ways-cli/**'
+      - 'tools/agent-fmt/**'
+      - 'tools/Cargo.toml'
+      - 'tools/Cargo.lock'
       - '.github/workflows/build-ways.yml'
   workflow_dispatch:
 
@@ -48,18 +54,16 @@ jobs:
 
       - name: Build (native)
         if: "!(runner.os == 'Linux' && matrix.target == 'aarch64-unknown-linux-gnu')"
-        working-directory: tools/ways-cli
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --manifest-path tools/Cargo.toml -p ways --target ${{ matrix.target }}
 
       - name: Build (zigbuild cross-compile)
         if: runner.os == 'Linux' && matrix.target == 'aarch64-unknown-linux-gnu'
-        working-directory: tools/ways-cli
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --manifest-path tools/Cargo.toml -p ways --target ${{ matrix.target }}
 
       - name: Package binary
         run: |
           mkdir -p dist
-          cp tools/ways-cli/target/${{ matrix.target }}/release/ways dist/ways-${{ matrix.platform }}
+          cp tools/target/${{ matrix.target }}/release/ways dist/ways-${{ matrix.platform }}
 
       # Native builds can run directly; cross-compiled binaries can only be verified with `file`
       - name: Smoke test
@@ -83,11 +87,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Run unit tests
-        working-directory: tools/ways-cli
-        run: cargo test
+        run: cargo test --manifest-path tools/Cargo.toml -p ways
       - name: Run simulation tests
-        working-directory: tools/ways-cli
-        run: cargo test --test session_sim -- --test-threads=1
+        run: cargo test --manifest-path tools/Cargo.toml -p ways --test session_sim -- --test-threads=1
 
   collect:
     needs: [build, test]

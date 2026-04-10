@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 
-use crate::table::{Table, Align};
+use agent_fmt::{Table, Align};
 
 struct CorpusEntry {
     id: String,

@@ -106,12 +106,12 @@ pub fn active(manifest: &Value, json_out: bool) -> Result<()> {
     );
     println!();
     println!(
-        "  \x1b[1m{:<28} {:>5}  {}\x1b[0m",
-        "Way", "Fires", "Status"
+        "  \x1b[1m{:<28} {:>5}  Status\x1b[0m",
+        "Way", "Fires"
     );
     println!(
-        "  \x1b[2m{:<28} {:>5}  {}\x1b[0m",
-        "---", "-----", "------"
+        "  \x1b[2m{:<28} {:>5}  ------\x1b[0m",
+        "---", "-----"
     );
 
     for v in with_prov {
