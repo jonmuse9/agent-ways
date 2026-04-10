@@ -33,6 +33,8 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-110](./system/ADR-110-way-file-separation-and-graph-compatible-structure.md) | Way File Separation and Graph-Compatible Structure | Draft |
 | [ADR-111](./system/ADR-111-unified-ways-cli-single-binary-tool-consolidation.md) | Unified `ways` CLI — Single Binary Tool Consolidation | Accepted |
 | [ADR-112](./system/ADR-112-session-ledger-and-knowledge-graph-integration.md) | Session Ledger and Knowledge Graph Integration | Draft |
+| [ADR-113](./system/ADR-113-attend-active-awareness-module.md) | `attend` — Active Awareness Module as Executive Layer | Draft |
+| [ADR-114](./system/ADR-114-attend-as-insistent-way-trigger-type.md) | `attend` Events as an Insistent Way Trigger Type | Draft |
 
 ## Documentation
 _Documentation structure, tooling, coherence_

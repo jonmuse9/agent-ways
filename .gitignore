@@ -47,6 +47,8 @@
 !docs/architecture/*.md
 !docs/architecture/*/
 !docs/architecture/**/*.md
+!docs/design-notes/
+!docs/design-notes/*.md
 !docs/scripts/
 !docs/scripts/*
 !docs/hooks-and-ways/

@@ -1,0 +1,34 @@
+# Design Notes
+
+Design notes are prose-first architectural framing documents. They differ from ADRs in one key way: **ADRs record decisions; design notes record readings of the system**.
+
+## When to write a design note
+
+Write a design note when you need to capture a framework, principle, or north star that:
+
+- Justifies multiple related decisions rather than being one itself
+- Requires prose exposition to make the implied decisions comprehensible
+- Establishes vocabulary or conceptual language that future ADRs will cite
+- Reads the system as a whole rather than deciding a specific tradeoff
+
+Write an ADR instead when you have a specific decision with identifiable alternatives and tradeoffs.
+
+## Difference from ADRs
+
+| | ADR | Design Note |
+|---|---|---|
+| Form | Structured (context, decision, consequences, alternatives) | Prose, as long as needed |
+| Lifecycle | Status: Draft → Accepted → Deprecated/Superseded | No status lifecycle |
+| Answers | "Why did we choose X over Y?" | "How should we read this part of the system?" |
+| Cites | Other ADRs | Other ADRs, design notes, external references |
+| Cited by | Other ADRs, code comments | ADRs, other design notes |
+
+## Relationship to ADRs
+
+Design notes and ADRs complement each other. A design note establishes a framing; the ADRs it motivates cite the note for their Context sections. This keeps ADRs focused on their specific decision while the broader framing lives in one stable place.
+
+ADRs can reference design notes as foundational context. Design notes reference ADRs when they describe the system as currently decided. A design note does not supersede, deprecate, or block ADRs — it only provides reading-level context. If the reading turns out to be wrong, the note is updated or retired, and affected ADRs are revisited.
+
+## Index
+
+- [Cognitive Loop and the Awareness Layer](./cognitive-loop-and-awareness-layer.md) — reading of the system's cognitive architecture: turn-based temporal accounting, substrate separation, the awareness layer, insistence as informational pressure, agency preservation
