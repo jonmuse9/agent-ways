@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 
 use crate::agents;
 use crate::frontmatter;
-use crate::table::Table;
+use agent_fmt::Table;
 use crate::util::{home_dir, xdg_cache_dir};
 
 pub fn run(filter_lang: Option<&str>, audit: bool, json_output: bool) -> Result<()> {

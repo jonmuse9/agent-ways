@@ -49,7 +49,7 @@ pub struct Layout {
 
 impl Layout {
     pub fn detect() -> Self {
-        let term_w = crate::table::terminal_width();
+        let term_w = agent_fmt::terminal_width();
         // Fixed columns: epoch(6) + dist(6) + trigger(12) + pin(2) + redisclosure(14) + agent(14) + spaces(6) = 60
         let fixed_cols = 60;
         let indent = 2;

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 use crate::bm25;
-use crate::table::{Table, Align};
+use agent_fmt::{Table, Align};
 use crate::util::xdg_cache_dir;
 
 /// Unified match: embedding first, BM25 fallback.

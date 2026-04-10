@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::table::{Table, Align};
+use agent_fmt::{Table, Align};
 
 pub fn run(path: String, jaccard: bool) -> Result<()> {
     let ways_root = home_dir().join(".claude/hooks/ways");

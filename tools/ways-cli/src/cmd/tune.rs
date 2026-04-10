@@ -270,7 +270,7 @@ fn output_tune(results: &[TuneResult], apply: bool, json_output: bool) -> Result
         println!("{}", serde_json::to_string_pretty(&json_results)?);
     } else {
         let mut table =
-            crate::table::Table::new(&["Way", "Lang", "Current", "Optimal", "Self", "Noise", "Gap", "Δ"]);
+            agent_fmt::Table::new(&["Way", "Lang", "Current", "Optimal", "Self", "Noise", "Gap", "Δ"]);
         table.max_width(0, 40);
 
         for r in results {
