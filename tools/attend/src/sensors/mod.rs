@@ -80,6 +80,22 @@ impl SensorSlot {
         }
     }
 
+    /// Create a SensorSlot with config-overridden intervals.
+    pub fn new_with_config(
+        sensor: Box<dyn Sensor>,
+        base: std::time::Duration,
+        min: std::time::Duration,
+        decay_threshold: u32,
+    ) -> Self {
+        let interval = AdaptiveInterval::new(base, min, decay_threshold);
+        Self {
+            accumulator: DeltaAccumulator::new(),
+            next_fire: Instant::now(),
+            interval,
+            sensor,
+        }
+    }
+
     pub fn poll(&mut self, focus: &Focus) -> bool {
         let observations = self.sensor.poll(focus);
         if observations.is_empty() {

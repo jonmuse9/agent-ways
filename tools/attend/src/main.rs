@@ -1,3 +1,4 @@
+mod config;
 mod tick;
 mod delta;
 mod emit;
@@ -106,8 +107,10 @@ fn cmd_run_with_catchup(catchup: bool) {
     let focus = Focus::default_focus();
     emit::log(&format!("focus: {} ({})", focus.description, focus.working_dir));
 
-    // Self-documenting startup: emit usage summary to stdout so Monitor
-    // delivers it as Claude's first notification from attend.
+    // Load config: user scope → project scope overlay
+    let cfg = config::Config::load(&focus.working_dir);
+
+    // Self-documenting startup
     let focus_list = read_focus_list(&signals_base().join("focus"));
     let focus_desc = if focus_list.is_empty() {
         "project only".to_string()
@@ -117,25 +120,76 @@ fn cmd_run_with_catchup(catchup: bool) {
             .collect();
         format!("project + {}", names.join(", "))
     };
-    println!("[attend] v{} ({}) — sensors: context, git, peers, processes | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>",
-        env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), focus_desc);
 
+    // Build sensor list from config
+    let mut enabled_names: Vec<String> = Vec::new();
     let mut peer_sensor = PeerSensor::new();
     if !catchup {
         peer_sensor.mark_existing_as_seen(&focus);
     }
 
-    let mut slots: Vec<SensorSlot> = vec![
-        SensorSlot::new(Box::new(ContextSensor::new())),
-        SensorSlot::new(Box::new(ProcessSensor::new())),
-        SensorSlot::new(Box::new(GitSensor::new())),
-        SensorSlot::new(Box::new(peer_sensor)),
-    ];
+    let mut slots: Vec<SensorSlot> = Vec::new();
+
+    // Built-in sensors — check config for enabled/disabled and overrides
+    if cfg.sensors.get("context").map(|s| s.enabled).unwrap_or(true) {
+        let sc = cfg.sensors.get("context");
+        let mut sensor = ContextSensor::new();
+        slots.push(SensorSlot::new_with_config(
+            Box::new(sensor),
+            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(60)),
+            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(20)),
+            sc.map(|s| s.decay_threshold).unwrap_or(3),
+        ));
+        enabled_names.push("context".to_string());
+    }
+    if cfg.sensors.get("processes").map(|s| s.enabled).unwrap_or(true) {
+        let sc = cfg.sensors.get("processes");
+        slots.push(SensorSlot::new_with_config(
+            Box::new(ProcessSensor::new()),
+            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(30)),
+            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(5)),
+            sc.map(|s| s.decay_threshold).unwrap_or(5),
+        ));
+        enabled_names.push("processes".to_string());
+    }
+    if cfg.sensors.get("git").map(|s| s.enabled).unwrap_or(true) {
+        let sc = cfg.sensors.get("git");
+        slots.push(SensorSlot::new_with_config(
+            Box::new(GitSensor::new()),
+            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(30)),
+            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(10)),
+            sc.map(|s| s.decay_threshold).unwrap_or(4),
+        ));
+        enabled_names.push("git".to_string());
+    }
+    if cfg.sensors.get("peers").map(|s| s.enabled).unwrap_or(true) {
+        let sc = cfg.sensors.get("peers");
+        slots.push(SensorSlot::new_with_config(
+            Box::new(peer_sensor),
+            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(30)),
+            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(10)),
+            sc.map(|s| s.decay_threshold).unwrap_or(5),
+        ));
+        enabled_names.push("peers".to_string());
+    }
+
+    // Script sensors from config (+ entries with script: field)
+    for (name, sc) in &cfg.sensors {
+        if sc.script.is_some() && sc.enabled {
+            // Script sensors will be registered here when the runner is built
+            enabled_names.push(format!("{}*", name)); // * = script sensor
+            eprintln!("[attend] config: script sensor '{}' declared but script runner not yet implemented", name);
+        }
+    }
+
+    let sensor_list = enabled_names.join(", ");
+    println!("[attend] v{} ({}) — sensors: {} | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>",
+        env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), sensor_list, focus_desc);
 
     let mut governor = DisclosureGovernor::new(
-        Duration::from_secs(15),
-        3,
-        Duration::from_secs(120),
+        cfg.governor.base_cooldown,
+        cfg.governor.max_per_window,
+        cfg.governor.rate_window,
     );
 
     let mut queue: BinaryHeap<ScheduledSensor> = BinaryHeap::new();
@@ -756,6 +810,32 @@ fn main() {
         Some("focus") => {
             cmd_focus(&args[1..]);
         }
+        Some("config") => {
+            match args.get(1).map(|s| s.as_str()) {
+                Some("init") => {
+                    let path = config::Config::init_user_config();
+                    println!("wrote default config to {}", path.display());
+                }
+                Some("show") | None => {
+                    let focus = Focus::default_focus();
+                    let cfg = config::Config::load(&focus.working_dir);
+                    println!("{:#?}", cfg);
+                }
+                Some("path") => {
+                    let home = std::env::var("XDG_CONFIG_HOME")
+                        .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+                    println!("user:    {}/attend/config.yaml", home);
+                    let cwd = std::env::current_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    println!("project: {}/.claude/attend.yaml", cwd);
+                }
+                Some(sub) => {
+                    eprintln!("attend config: unknown subcommand '{}' — try init, show, path", sub);
+                    std::process::exit(1);
+                }
+            }
+        }
         Some("--version") | Some("-V") => {
             println!("attend {} ({})", env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"));
         }
@@ -776,6 +856,7 @@ fn main() {
             println!("  inbox     Read pending messages from peers");
             println!("  send      Send a signal to peer sessions");
             println!("  focus     Manage focus group (add/remove/clear/list peer projects)");
+            println!("  config    Manage configuration (init/show/path)");
             println!("  status    Show running instances, signals, and focus state");
             println!("  help      Show this help");
             println!();
