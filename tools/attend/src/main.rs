@@ -911,29 +911,26 @@ fn main() {
             println!("attend {} ({})", env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"));
         }
         Some("help") | Some("--help") | Some("-h") | None => {
-            println!("\x1b[2m\x1b[4mA G E N T\x1b[0m\n");
-            println!("\x1b[38;5;73m █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ \x1b[0m");
-            println!("\x1b[38;5;79m██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗\x1b[0m");
-            println!("\x1b[38;5;80m███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║\x1b[0m");
-            println!("\x1b[38;5;116m██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║\x1b[0m");
-            println!("\x1b[38;5;109m██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝\x1b[0m");
-            println!("\x1b[38;5;66m╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ \x1b[0m");
-            println!();
-            println!("  \x1b[2mactive awareness for Claude Code sessions\x1b[0m\n");
+            agent_fmt::Banner::new("ATTEND")
+                .subtitle("active awareness for Claude Code sessions")
+                .gradient(&agent_fmt::GRADIENT_TEAL)
+                .print();
             println!("usage: attend <command>\n");
-            println!("commands:");
-            println!("  run       Start the sensor loop (use with Monitor for async delivery)");
-            println!("  peers     List active Claude Code sessions");
-            println!("  inbox     Read pending messages from peers");
-            println!("  send      Send a signal to peer sessions");
-            println!("  focus     Manage focus group (add/remove/clear/list peer projects)");
-            println!("  config    Manage configuration (init/show/path)");
-            println!("  status    Show running instances, signals, and focus state");
-            println!("  help      Show this help");
+            agent_fmt::print_commands("commands", &[
+                ("run",    "Start the sensor loop (use with Monitor for async delivery)"),
+                ("peers",  "List active Claude Code sessions"),
+                ("inbox",  "Read pending messages from peers"),
+                ("send",   "Send a signal to peer sessions"),
+                ("focus",  "Manage focus group (add/remove/clear/list peer projects)"),
+                ("config", "Manage configuration (init/show/path)"),
+                ("status", "Show running instances, signals, and focus state"),
+                ("help",   "Show this help"),
+            ]);
             println!();
-            println!("send flags:");
-            println!("  --broadcast     Send to all projects, not just your own");
-            println!("  --to <path>     Send to a specific project's signals dir");
+            agent_fmt::print_commands("send flags", &[
+                ("--broadcast", "Send to all projects, not just your own"),
+                ("--to <path>", "Send to a specific project's signals dir"),
+            ]);
         }
         Some(unknown) => {
             eprintln!("attend: unknown command '{}' — try 'attend help'", unknown);
