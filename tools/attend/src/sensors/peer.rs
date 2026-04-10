@@ -502,6 +502,29 @@ impl Sensor for PeerSensor {
     fn decay_threshold(&self) -> u32 {
         5
     }
+
+    fn export_state(&self) -> Vec<(String, String)> {
+        let mut state = Vec::new();
+        for sig in &self.seen_signals {
+            state.push(("seen_signal".to_string(), sig.clone()));
+        }
+        state.push(("reply_hint_shown".to_string(), self.reply_hint_shown.to_string()));
+        state
+    }
+
+    fn import_state(&mut self, state: &[(String, String)]) {
+        for (key, value) in state {
+            match key.as_str() {
+                "seen_signal" => { self.seen_signals.insert(value.clone()); }
+                "reply_hint_shown" => { self.reply_hint_shown = value == "true"; }
+                _ => {}
+            }
+        }
+        if !self.seen_signals.is_empty() {
+            eprintln!("[attend] peers: restored {} seen signals from checkpoint",
+                self.seen_signals.len());
+        }
+    }
 }
 
 // --- Helpers ---

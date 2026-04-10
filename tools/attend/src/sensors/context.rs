@@ -205,6 +205,36 @@ impl Sensor for ContextSensor {
     fn decay_threshold(&self) -> u32 {
         3 // Decay quickly back to base when context is stable
     }
+
+    fn export_state(&self) -> Vec<(String, String)> {
+        let mut state = Vec::new();
+        for t in &self.disclosed_thresholds {
+            state.push(("disclosed_threshold".to_string(), t.to_string()));
+        }
+        if let Some(ref prior) = self.prior {
+            state.push(("context_pct".to_string(), format!("{:.1}", prior.pct_used)));
+        }
+        state
+    }
+
+    fn import_state(&mut self, state: &[(String, String)]) {
+        for (key, value) in state {
+            match key.as_str() {
+                "disclosed_threshold" => {
+                    if let Ok(t) = value.parse::<u8>() {
+                        if !self.disclosed_thresholds.contains(&t) {
+                            self.disclosed_thresholds.push(t);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !self.disclosed_thresholds.is_empty() {
+            eprintln!("[attend] context: restored {} disclosed thresholds from checkpoint",
+                self.disclosed_thresholds.len());
+        }
+    }
 }
 
 /// Extract a u64 from JSON-like text: "key":value

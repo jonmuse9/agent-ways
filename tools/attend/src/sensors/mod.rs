@@ -55,6 +55,12 @@ pub trait Sensor {
     fn base_interval(&self) -> Duration;
     fn min_interval(&self) -> Duration;
     fn decay_threshold(&self) -> u32;
+
+    /// Export state for checkpointing. Default: no state.
+    fn export_state(&self) -> Vec<(String, String)> { Vec::new() }
+
+    /// Import state from checkpoint. Default: no-op.
+    fn import_state(&mut self, _state: &[(String, String)]) {}
 }
 
 /// A sensor with its runtime state (interval, accumulator, scheduling)
@@ -120,5 +126,13 @@ impl SensorSlot {
 
     pub fn name(&self) -> &str {
         self.sensor.name()
+    }
+
+    pub fn export_state(&self) -> Vec<(String, String)> {
+        self.sensor.export_state()
+    }
+
+    pub fn import_state(&mut self, state: &[(String, String)]) {
+        self.sensor.import_state(state);
     }
 }

@@ -1,4 +1,5 @@
 mod config;
+mod state;
 mod tick;
 mod delta;
 mod emit;
@@ -182,6 +183,31 @@ fn cmd_run_with_catchup(catchup: bool) {
         }
     }
 
+    // State persistence
+    let session_id = own_session_id();
+    let state_store = state::StateStore::new(session_id);
+
+    // Try to restore state from previous run
+    if let Some(snapshot) = state_store.restore() {
+        // Distribute state to matching sensors
+        for slot in &mut slots {
+            let sensor_state: Vec<(String, String)> = match slot.name() {
+                "peers" => snapshot.seen_signals.iter()
+                    .map(|s| ("seen_signal".to_string(), s.clone()))
+                    .chain(std::iter::once(("reply_hint_shown".to_string(),
+                        snapshot.reply_hint_shown.to_string())))
+                    .collect(),
+                "context" => snapshot.disclosed_thresholds.iter()
+                    .map(|t| ("disclosed_threshold".to_string(), t.to_string()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if !sensor_state.is_empty() {
+                slot.import_state(&sensor_state);
+            }
+        }
+    }
+
     let sensor_list = enabled_names.join(", ");
     println!("[attend] v{} ({}) — sensors: {} | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>",
         env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), sensor_list, focus_desc);
@@ -196,6 +222,10 @@ fn cmd_run_with_catchup(catchup: bool) {
     for (i, slot) in slots.iter().enumerate() {
         queue.push(ScheduledSensor { fire_at: slot.next_fire, index: i });
     }
+
+    // Checkpoint timer — save state every 30s
+    let mut last_checkpoint = Instant::now();
+    let checkpoint_interval = Duration::from_secs(30);
 
     emit::log(&format!("tick loop running — {} sensors registered", slots.len()));
     for slot in &slots {
@@ -291,6 +321,32 @@ fn cmd_run_with_catchup(catchup: bool) {
                 governor.window_disclosures,
                 governor.max_disclosures_per_window,
             ));
+        }
+
+        // Periodic checkpoint
+        if last_checkpoint.elapsed() >= checkpoint_interval {
+            let mut snapshot = state::StateSnapshot::default();
+            for slot in &slots {
+                for (key, value) in slot.export_state() {
+                    match key.as_str() {
+                        "seen_signal" => { snapshot.seen_signals.insert(value); }
+                        "disclosed_threshold" => {
+                            if let Ok(t) = value.parse::<u8>() {
+                                snapshot.disclosed_thresholds.push(t);
+                            }
+                        }
+                        "reply_hint_shown" => {
+                            snapshot.reply_hint_shown = value == "true";
+                        }
+                        "context_pct" => {
+                            snapshot.context_pct = value.parse().ok();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            state_store.checkpoint(&snapshot);
+            last_checkpoint = Instant::now();
         }
     }
 }
