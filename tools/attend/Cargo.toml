@@ -1,0 +1,13 @@
+[package]
+name = "attend"
+version = "0.1.0"
+edition = "2021"
+description = "Active awareness module — adaptive sensing and disclosure for Claude Code sessions"
+license = "MIT"
+
+[[bin]]
+name = "attend"
+path = "src/main.rs"
+
+[dependencies]
+

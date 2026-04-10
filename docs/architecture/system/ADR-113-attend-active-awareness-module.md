@@ -72,7 +72,7 @@ It explicitly does not define:
 
 ### Internal architecture
 
-`attend` is composed of the following components. Each has a well-defined responsibility; most are small; the coordination between them is the turn-boundary processor.
+`attend` is composed of the following components. Each has a well-defined responsibility; most are small. The coordination center is the **tick loop** — a wall-clock-driven game loop that runs sensors on adaptive schedules and merges their observations with turn-boundary state from Claude's conversation.
 
 ```
 attend/
@@ -81,9 +81,10 @@ attend/
 │   ├── start.rs                  # Session startup, state restoration
 │   ├── stop.rs                   # Clean shutdown, final state checkpoint
 │   └── restart.rs                # Crash recovery
-├── turn_loop/
-│   ├── processor.rs              # Turn-boundary reactive loop
-│   └── context_observer.rs       # Reads Claude Code session state (context %, turn count)
+├── tick/
+│   ├── loop.rs                   # Wall-clock game loop: priority queue of sensor wake-ups, runs due sensors each tick
+│   ├── adaptive.rs               # Per-sensor adaptive interval: ramp-up on change, hysteresis decay on quiet
+│   └── turn_observer.rs          # Reads Claude Code session state (context %, turn count); enriches tick state at turn boundaries
 ├── consequence/
 │   ├── model.rs                  # Per-signal consequence definitions
 │   └── projection.rs             # Turn-delta arithmetic, critical-turn projection
@@ -92,14 +93,15 @@ attend/
 │   ├── emitter.rs                # Generates emissions at appropriate urgency
 │   └── scheduler.rs              # Decides when unacted signals need re-emission
 ├── sensors/
-│   ├── dispatcher.rs             # Runs sensor scripts on their schedules
+│   ├── dispatcher.rs             # Runs sensor scripts when the tick loop wakes them
 │   ├── registry.rs               # Discovers and loads sensors from disk
-│   └── schema.rs                 # Sensor declaration format (header, schedule, required permissions)
-├── deferred_intent/
-│   ├── store.rs                  # Pending items, user-requested timers
-│   └── timer.rs                  # Wall-clock observer for time-based intents
+│   └── schema.rs                 # Sensor declaration format (header, schedule, required permissions, adaptive interval bounds)
+├── delta/
+│   ├── accumulator.rs            # Per-sensor state-change accumulation across ticks; monotonic until emitted or decayed
+│   ├── store.rs                  # Pending observations below emission threshold (the "acknowledged-but-silent" set)
+│   └── timer.rs                  # User-requested wall-clock reminders
 ├── state/
-│   ├── store.rs                  # Persistent state: signals, baselines, priors
+│   ├── store.rs                  # Persistent state: signals, baselines, priors, per-sensor adaptive intervals
 │   └── checkpoint.rs             # Atomic writes, recovery on restart
 ├── config/
 │   ├── loader.rs                 # Reads ~/.config/attend/config.toml
@@ -113,19 +115,57 @@ attend/
     └── ways_affordance.rs        # For high-salience events, formats affordance strings that Claude can invoke via `ways show attend/<signal>` for deeper engagement through the normal disclosure pipeline
 ```
 
-### Turn-boundary processor
+### Tick loop (the game loop)
 
-The core loop. On every turn boundary (detected by reading Claude Code session state files, or by hook integration once that interface stabilizes), the processor:
+The core loop is **wall-clock-driven**, not turn-driven. It runs continuously for the session's lifetime, checking which sensors are due and running them. The analogy is a game loop: each frame, the scheduler checks its priority queue of sensor wake-ups, runs the ones that are due, collects their observations, and feeds them through the delta accumulation and emission pipeline.
 
-1. Observes the current turn number and context percentage
-2. Updates the state for each tracked signal (turns elapsed, growth rate, projected critical turn)
-3. Checks whether Claude has acted on any previously emitted signal since the last boundary
-4. Decides, per signal, whether an emission is warranted this turn (new, updated projection, insistence escalation, or silent)
-5. Dispatches any sensor scripts scheduled for this turn
-6. Routes all pending emissions through the ways bridge
-7. Checkpoints state to disk
+Each tick:
 
-There is no internal tick faster than turn boundaries for consequence tracking. Wall-clock observations (user idle, build duration, user-requested timers) run on their own schedule inside the deferred-intent store, but they do not drive the main processor — they surface their state through sensor emissions the next time the turn processor runs.
+1. Check the priority queue for sensors whose next-fire time has arrived
+2. Run due sensors, collect their observations
+3. For each observation, compare against the sensor's prior state
+4. If state changed: update the sensor's delta accumulator, shorten its polling interval (ramp up), reset its ramp cooldown
+5. If no change: increment the sensor's ramp cooldown; if the cooldown exceeds the decay threshold, lengthen the polling interval back toward the sensor's base rate
+6. Check whether any delta accumulator has crossed its emission threshold
+7. Feed threshold-crossing observations through the insistence emitter
+8. Route emissions to stdout
+9. Re-insert each sensor into the priority queue at its (possibly adjusted) next-fire time
+
+The tick loop does not checkpoint state on every tick — that would be wasteful at high-frequency intervals. Checkpointing happens at configurable intervals (default: every 30s of wall-clock) and on clean shutdown.
+
+### Adaptive sensor scheduling
+
+External sensors need a steady heartbeat independent of Claude's conversation activity. A camera peek, application state poll, or file hash comparison doesn't care about Claude's turns — it cares about what's happening in the world.
+
+Each sensor maintains adaptive scheduling state:
+
+```
+base_interval:    60s        # configured resting rate
+current_interval: 60s        # what the sensor is actually ticking at
+min_interval:     5s         # floor when ramped up
+decay_threshold:  5          # quiet ticks before interval lengthens
+ramp_cooldown:    0          # ticks since last real delta
+```
+
+The adaptive logic:
+
+- **Ramp-up is fast.** When a sensor detects real change, its interval shortens immediately (halved each time, down to `min_interval`). Missing real change is worse than over-sampling.
+- **Decay is slow (hysteresis).** The sensor must see `decay_threshold` consecutive quiet ticks before its interval lengthens. This prevents oscillation: change detected → ramp up → next tick quiet → premature ramp down → miss next change.
+- **False positives self-correct.** If the sensor ramps up and the high-frequency samples show the "change" was noise (hash bounced back, delta below significance), the ramp cooldown ticks up quickly at the faster rate, and the sensor decays back to baseline. The system spent a few extra samples to confirm, then relaxed.
+
+Interval bounds (`base_interval`, `min_interval`) are declared per sensor in the sensor header. The tick loop respects them; the adaptive logic operates within them.
+
+### Turn-boundary observer
+
+Turn boundaries are one **input source** to the tick loop, not the loop's driver. The turn observer watches Claude Code session state (context percentage, turn count) and injects turn-boundary events when it detects a new turn. These events enrich the tick loop's state:
+
+- Update consequence projections (turns elapsed, growth rate, projected critical turn)
+- Check whether Claude has acted on previously emitted signals
+- Trigger turn-specific logic (acknowledgment checking, insistence recalculation)
+
+The consequence model's arithmetic is turn-based because consequences are turn-based (compaction fires at a context threshold that grows per turn). But the consequence model is *consulted* on turn-boundary events within the wall-clock tick loop — it doesn't drive the loop.
+
+When Claude is idle (no turns for minutes), the tick loop keeps running. External sensors continue polling on their adaptive schedules. Delta accumulators continue growing. The turn observer simply has nothing new to report. When Claude's next turn arrives, the turn observer fires, consequence projections update with the fresh turn data, and any accumulated external observations that have crossed emission thresholds are emitted together with the updated consequence state.
 
 ### Consequence model and projection
 
@@ -176,14 +216,19 @@ When `attend` emits a signal, it records the signal's emission turn and signal I
 
 Acknowledgment detection is **heuristic, not infallible**. False negatives (Claude acted but attend didn't detect) result in redundant re-emission, which the disclosure gate in `ways` will suppress via standard habituation rules (ADR-104). False positives (attend thinks Claude acted but didn't) result in silence when insistence would have been useful, which is the worse failure mode. The acknowledgment tracker is therefore conservative: it only marks a signal acknowledged when it has clear evidence.
 
-### Deferred intent store
+### Delta accumulation and deferred observations
 
-Two categories:
+The delta accumulator is the bridge between raw sensor ticks and emission-worthy observations. Each sensor has its own accumulator that tracks real state change over time. Most ticks produce no change and the accumulator stays flat. When real deltas arrive, they accumulate monotonically until one of three things happens:
 
-1. **Pending observations** — sensor events that have been detected but held below the salience threshold, awaiting a moment when Claude's attention has capacity to integrate them. These are the "acknowledged-but-silent" observations from the design note.
-2. **User-requested timers** — explicit "remind me in N minutes" or "surface this at turn X" requests Claude can make of attend via a tool call. Attend holds the request in durable state, and when the trigger condition is met (wall-clock or turn-count), it surfaces the reminder via a sensor emission.
+1. **Emission threshold crossed** — the accumulated delta is significant enough to surface. The observation flows through the insistence emitter and out to stdout.
+2. **Decay** — if the accumulated delta has been below threshold for long enough without further change, it decays toward zero. The observation was real but too small to matter.
+3. **Superseded** — a newer observation on the same signal replaces the accumulated state entirely (e.g., context pressure jumped past the point the earlier delta was tracking).
 
-Timers are the one component that legitimately uses wall-clock time. Their emissions still flow through the turn-boundary processor (they become observations on the next turn, not interrupt-style breaks), so the rest of the loop remains turn-reactive.
+Observations that have accumulated real delta but haven't crossed their emission threshold sit in the **deferred observation store** — the "acknowledged-but-silent" set from the design note. These are not lost; they are available for batch drain when flow breaks or when Claude explicitly asks what attend has been noticing.
+
+### User-requested timers
+
+Explicit "remind me in N minutes" or "surface this at turn X" requests Claude can make of attend. Timers are wall-clock items that fire within the tick loop like any other scheduled event. Their emissions flow through the same pipeline as sensor observations.
 
 ### Sensor plugin model
 
@@ -218,9 +263,23 @@ Each sensor file begins with a header declaring its contract:
 #
 ```
 
-The `requires` field is consumed by the permission management subsystem (below) to aggregate allowlist entries. The `schedule` field is consumed by the dispatcher. The `emits` field is consumed by the way-side bridge (ADR-114) to route emissions to subscribing ways.
+```bash
+#!/usr/bin/env bash
+#
+# sensor: window_focus
+# schedule: wall-clock
+# base_interval: 30s
+# min_interval: 5s
+# decay_threshold: 10
+# emits: window-focus-change
+# requires: [tool=Bash, pattern="hyprctl activewindow"]
+# description: tracks which application has focus; ramps up during rapid window switching
+#
+```
 
-Sensor scripts emit observations as line-oriented output on stdout. Attend captures them, annotates with turn and timestamp, and feeds them through the consequence model and emission pipeline.
+The `requires` field is consumed by the permission management subsystem (below) to aggregate allowlist entries. The `schedule` field declares the sensor's tick model: `on-turn-boundary` for interoceptive sensors that key off Claude's conversation state, `wall-clock` for exteroceptive sensors that poll the environment on adaptive intervals. Wall-clock sensors additionally declare `base_interval`, `min_interval`, and `decay_threshold` to configure their adaptive scheduling bounds. The `emits` field is consumed by the way-side bridge (ADR-114) to route emissions to subscribing ways.
+
+Sensor scripts emit observations as line-oriented output on stdout. Attend captures them, annotates with turn and timestamp, and feeds them through the delta accumulator, consequence model, and emission pipeline.
 
 ### Persistent state and restart
 
@@ -403,7 +462,7 @@ These constraints are non-negotiable and any future change to attend must preser
 - **Separate repository entirely.** Rejected. ADR-111 consolidated on single-repo, single-binary (plus sibling binaries) for good reasons — shared workspace avoids cross-repo coordination churn when the integration surface changes. The sibling crate pattern keeps independence without fragmenting the project.
 - **Extend Claude Code directly (upstream contribution).** Rejected. Coupling to upstream means the feature ships on Anthropic's cadence, not Aaron's. The awareness layer is a local composition of existing Claude Code capabilities; it does not need Claude Code to change to work.
 - **Sensor scripts only, no central coordinator.** Rejected. Individual sensors without central accounting cannot implement insistence (no acknowledgment tracking across signals), cannot manage deferred intents, and cannot coordinate to avoid noisy emission bursts. The coordinator is the value; sensors are the plugins.
-- **Wall-clock-driven scheduler for emissions.** Rejected. Periodic emissions regardless of consequence would produce noise that bears no relationship to what Claude needs to attend to. Emissions are event-driven (sensor fired something) or consequence-driven (curve crossed a threshold), never time-driven.
+- **Fixed-interval wall-clock scheduler (crontab model).** Rejected. Fixed polling intervals cannot adapt to activity patterns — a sensor polling every 60s misses rapid changes and wastes ticks during quiet periods. The adopted model uses wall-clock as the tick substrate but with **adaptive intervals per sensor**: ramp-up on detected change, hysteresis decay on quiet, configurable bounds. Emissions remain event-driven (delta accumulator crossed a threshold) or consequence-driven (curve crossed a criticality boundary), never time-driven — the wall-clock loop drives *sampling*, not *emission*.
 - **Shared process with other Claude Code infrastructure (e.g., embedded in the session manager).** Rejected. Couples attend's lifetime to infrastructure with different failure modes. Independent process is cleaner and easier to reason about.
 
 ## Build Order and Rollout
@@ -419,32 +478,29 @@ This ADR proposes a phased build. Each phase delivers a working increment that c
 - No sensors yet; no emissions; no turn loop
 - Validates: the infrastructure and permission model work before any awareness logic exists
 
-**Phase 2 — Turn-reactive consequence tracker with the first canonical sensor**
+**Phase 2 — Tick loop and the first canonical sensor**
 
-- Turn-boundary processor
-- Interoceptive context-pressure sensor (reads Claude Code session state to determine context %)
+- Wall-clock tick loop with priority-queue scheduler
+- Adaptive interval logic (ramp-up, hysteresis decay)
+- Turn-boundary observer as an input source to the tick loop
+- Interoceptive context-pressure sensor (`on-turn-boundary` schedule — reads Claude Code session state to determine context %)
 - Consequence model for the context-threshold signal
+- Delta accumulator for the context-pressure signal
 - Insistence emitter generating the canonical emission format
-- Routes emissions through the ways bridge
-- Validates: the core cognitive loop works end-to-end with one sensor and one consequence, improving ADR-112's reflection triggering immediately
+- Routes emissions to stdout for Monitor delivery
+- Validates: the core game loop works end-to-end with one sensor, adaptive scheduling operates correctly even with a turn-boundary-driven sensor, and the emission pipeline produces well-formed Monitor notifications
 
-**Phase 3 — Sensor dispatcher and the initial workspace catalog**
+**Phase 3 — Multi-sensor operation and the initial workspace catalog**
 
-- Sensor dispatcher with schedule handling
-- First workspace sensor: git state change via `inotifywait` on `.git/` (HEAD, branch, stash)
+- Sensor dispatcher running multiple sensors at different adaptive cadences
+- First wall-clock sensor: git state change via polling `.git/` (HEAD, branch, stash) with adaptive intervals
 - Peer session awareness: walks `~/.claude/projects/*/` for other active Claude Code sessions on the same machine, emits state changes (new session, session activity, modifications to files this session is watching). Peer sessions are part of the **initial sensor catalog**, not deferred.
 - Acknowledgment tracker
-- Deferred intent store for pending observations
-- Validates: the sensor plugin model works for multi-sensor operation, signals can be held below threshold, and at least two sensors with different cadences cohabit cleanly
+- Deferred observation store for below-threshold accumulated deltas
+- User-requested timer subsystem
+- Validates: wall-clock and turn-boundary sensors cohabit in the same tick loop, adaptive scheduling produces the right behavior (ramp-up on activity, decay on quiet), and multiple sensors with different cadences don't produce emission bursts
 
-**Phase 4 — Wall-clock observations and user-requested timers**
-
-- Timer subsystem for explicit reminders
-- Wall-clock sensor for idle detection and external durations
-- Tool-exposed interface for Claude to set timers
-- Validates: wall-clock has its narrow role and doesn't contaminate turn-based accounting
-
-**Phase 5 — Toolkit growth**
+**Phase 4 — Toolkit growth**
 
 - Additional sensors added as their value is demonstrated
 - Workspace sensors beyond the initial catalog (file churn beyond git, project-structural changes)
