@@ -113,6 +113,52 @@ This also clarifies the relationship between the awareness layer and the existin
 
 The two layers compose cleanly because they operate at different timescales and on different signal sources, and both deliver through Claude's attention surface without competing. Hooks inject at hook events; `Monitor` notifications arrive in the gaps. Together they cover the synchronous and asynchronous sides of the same unified attention surface. Neither replaces the other; they complement.
 
+## Experimental findings on Monitor delivery
+
+The initial `attend` prototype (committed as `tools/attend/`) validated Monitor as the delivery primitive and produced several findings that refine the design:
+
+### What Monitor does to output
+
+Monitor wraps stdout lines in XML `<event>` tags inside a `<task-notification>` structure. **Any angle brackets in stdout are entity-escaped** (`<` → `&lt;`, `>` → `&gt;`). This means structured XML output from `attend` is rendered as escaped text, not parsed as markup. Square brackets, JSON, and all other formats pass through verbatim. The chosen format for `attend` output is bracketed key-value:
+
+```
+[attend sensor=file_churn priority=high] files modified in src/auth/
+```
+
+### Notification cadence and turn-taking stability
+
+Each Monitor notification triggers an inference pass regardless of whether Claude produces output. Under sustained notification delivery without intervening user interaction, Claude's turn-taking model destabilizes — the model generates confabulated user turns (phantom `Human:` messages) to "correct" the alternation pattern. This is a model-level behavior, not a content problem: changing the output format (plain text, escaped XML, bracketed key-value) did not affect it.
+
+The mitigation is **emission cadence**. In testing:
+
+- **10+ notifications in 2 minutes** with no user interaction: turn-taking breaks down
+- **3 notifications in 2 minutes** with no user interaction: completely stable
+
+The **disclosure governor** — a global rate limiter with a hard cap on emissions per time window and an inverse-rate cooldown — is the mechanism that keeps Monitor viable as a delivery channel. This is not a tuning knob; it is a load-bearing architectural component. `attend` must be stingy about what it emits, and the governor is what enforces stinginess.
+
+### The disclosure governor model
+
+The governor enforces two constraints:
+
+1. **Adaptive cooldown**: higher aggregate event rate across all sensors → longer wait between disclosures. This is the inverse relationship between event velocity and disclosure density: fast-changing situations need more compression before disclosure, not less.
+2. **Hard cap per time window**: maximum N disclosures per M-second window, regardless of how many sensors are ready.
+
+Sensors accumulate deltas independently on their own adaptive schedules. When a sensor's accumulated magnitude crosses its per-sensor emission threshold, it becomes "ready." But readiness is necessary-not-sufficient — the governor must also allow disclosure. Multiple ready sensors are batched into a single notification (emitted within 200ms so Monitor groups them).
+
+The prototype achieved 76 internal sensor ticks → 3 notifications in a 2-minute run. That ratio — cheap substrate doing constant work, expensive substrate seeing only the compressed result — is the design principle in action.
+
+### Batching within the 200ms window
+
+Monitor groups stdout lines emitted within 200ms into a single notification. `attend` uses this deliberately: when multiple sensors are ready for disclosure simultaneously, their observations are emitted together as separate lines within one flush. Claude receives one notification containing all of them rather than N separate notifications.
+
+### What this means for the architecture
+
+- **Monitor is viable as the primary delivery channel**, provided emission cadence is governed
+- **The disclosure governor is not optional** — it is the mechanism that makes Monitor safe for sustained use
+- **Output formatting cannot solve the turn-taking problem** — only emission rate can
+- **Wall-clock is the tick substrate** for the sensor loop; turn boundaries are one input source, not the driver
+- **Per-sensor adaptive intervals** (ramp-up on change, hysteresis decay on quiet) keep the internal tick rate responsive without increasing emission rate
+
 ## Interoception and exteroception
 
 The awareness layer senses in two directions, and the distinction is useful because it clarifies what the layer is watching when:

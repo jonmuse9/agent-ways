@@ -210,6 +210,22 @@ The function is deterministic. Given the same inputs it produces the same output
 
 Each emission is **informational**, not emotional. The emitter formats observations in declarative prose: *"disclosed N turns ago, current context X%, projected critical at turn N+T."* No simulated affect. No arbitrary urgency. Every insistence tracks an actual mechanical consequence.
 
+### Disclosure governor
+
+The disclosure governor is a **global rate limiter** that controls when `attend` is allowed to emit to stdout. It is architecturally load-bearing — without it, sustained notification delivery destabilizes Claude's turn-taking model. Experimentally validated: 10+ notifications in 2 minutes caused Claude to generate confabulated user turns; 3 notifications in 2 minutes was completely stable. The governor is the mechanism that keeps Monitor viable as a delivery channel.
+
+The governor enforces two constraints:
+
+1. **Adaptive cooldown.** Higher aggregate event rate across all sensors → longer wait between disclosures. This implements the inverse relationship between event velocity and disclosure density: fast-changing situations need more compression before disclosure, not less. The cooldown formula scales with the square root of the aggregate event rate, so occasional activity passes quickly while sustained bursts are held back.
+
+2. **Hard cap per time window.** Maximum N disclosures per M-second window (default: 3 per 120 seconds), regardless of how many sensors are ready. When the cap is reached, all further disclosures are held until the window resets.
+
+When multiple sensors are ready simultaneously, the governor discloses them as a **batch** — all observations emitted within the 200ms Monitor batching window so they arrive as a single notification rather than N separate ones. This means one disclosure slot can carry observations from multiple sensors.
+
+Each sensor has its own **per-sensor emission threshold** (minimum accumulated magnitude before it becomes a disclosure candidate). A sensor crossing its threshold becomes "ready" but readiness is necessary-not-sufficient — the governor must also allow disclosure. The governor's perspective is global: it doesn't care which sensor is ready, only whether the system as a whole should speak.
+
+The governor's value is measurable: in the prototype, 76 internal sensor ticks across 3 sensors over 2 minutes produced exactly 3 notifications. The ratio of cheap-substrate ticks to expensive-substrate notifications is the design principle in quantified form.
+
 ### Acknowledgment tracking
 
 When `attend` emits a signal, it records the signal's emission turn and signal ID in its state store. On subsequent turn boundaries, it inspects Claude's outputs (via hook integration or transcript tail) for evidence that the signal was acted upon — e.g., a reflection was written, a specific way was engaged, a tool was called, a file was touched.
@@ -313,7 +329,9 @@ exit_when_claude_exits = true    # Clean exit on Claude Code termination
 [emission]
 default_salience_floor = 0.3     # Observations below this never emit
 insistence_enabled = true
-max_emissions_per_turn = 3       # Debounce noisy turns
+max_disclosures_per_window = 3   # Hard cap: at most 3 disclosures per rate window
+rate_window_secs = 120           # Rate window duration (seconds)
+base_cooldown_secs = 15          # Minimum time between disclosures; adaptive cooldown grows with aggregate event rate
 
 [consequence.context_threshold]
 critical_context_pct = 95.0
@@ -374,17 +392,19 @@ The goal is **zero permission prompts during normal operation** with **full user
 
 #### Emission is stdout, not IPC
 
-`attend`'s only output mechanism to Claude is stdout. Every meaningful emission is a single line (or at most a short multiline block within 200ms to benefit from `Monitor`'s batching). Lines follow the canonical format:
+`attend`'s only output mechanism to Claude is stdout. Every meaningful emission is a single line (or at most a short multiline block within 200ms to benefit from `Monitor`'s batching). Lines use a **bracketed key-value format**:
 
 ```
-disclosed at turn 47, currently turn 52, projected critical at turn 58 (6 turns remaining)
+[attend sensor=context_pressure priority=high] context at 86%, critical in ~3 turns
 ```
 
-or as affordances for deeper engagement through the ways system:
+or with affordances for deeper engagement through the ways system:
 
 ```
-peer session active in ~/Projects/foo-mcp (last activity 3m ago) — use `ways show attend/peer-session-active` for coordination guidance
+[attend sensor=peer_session priority=medium affordance=ways show attend/peer-session-active] peer session active in ~/Projects/foo-mcp (last activity 3m ago)
 ```
+
+The bracketed format was chosen empirically: Monitor entity-escapes angle brackets (`<` → `&lt;`) in stdout, which renders XML output as escaped text rather than parsed markup. Square brackets, JSON, and other non-XML formats pass through verbatim. The key-value pairs inside the brackets provide structured metadata (sensor name, priority, optional affordance) while the trailing text is the human-readable observation.
 
 `attend` honors `Monitor`'s discipline rigorously:
 
