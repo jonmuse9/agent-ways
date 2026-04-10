@@ -114,7 +114,18 @@ The `requires:` values use the same permission string format as `settings.json`:
 - `Bash(*)` — any bash command
 - `*` — unrestricted (wildcard)
 
-This means the audit is a direct string comparison — no translation layer needed.
+### Matching Semantics
+
+Permission matching follows a containment hierarchy, not string equality:
+
+- `*` covers everything
+- `Bash(*)` covers any `Bash(command:*)` requirement
+- `Bash(git:*)` covers `Bash(git:status)`, `Bash(git:diff)`, etc.
+- `Read` (unscoped) covers `Read(/any/path)`
+
+The audit checks whether each declared requirement is **satisfied by** at least one granted permission. A grant of `Bash(*)` satisfies a requirement of `Bash(git:*)`. A grant of `Bash(git:*)` does NOT satisfy a requirement of `Bash(*)`.
+
+This matches Claude Code's own permission evaluation — the audit tells you exactly what Claude Code will allow or prompt for.
 
 ### Config Location
 
@@ -148,6 +159,20 @@ Migration: if `trusted-project-macros` exists, the audit command warns that it's
 - The audit is advisory — it doesn't block execution, it reports gaps
 - `frontmatter-schema.yaml` gains one new field
 
+### Declarative Config for Ways
+
+Ways currently scatters configuration across dynamic shell checks (matcher selection, default language, corpus settings). Following attend's lead (ADR-115), ways should read from a config file at `$XDG_CONFIG_HOME/ways/config.yaml` with project overlay at `$PROJECT/.claude/ways.yaml`.
+
+This config would hold:
+- `permissions:` — the `requires:` audit settings
+- `matcher:` — force semantic over BM25, or vice versa
+- `language:` — default locale (e.g. `en`)
+- `corpus:` — rebuild policy, staleness threshold
+
+Dynamic checks in the code become config reads. When a config value is missing, the check says what to set rather than guessing — "have an opinion." This is the same pattern attend established and should be a shared convention across all agent-ways tools.
+
+Full config schema design is out of scope for this ADR but should be addressed alongside or immediately after implementation.
+
 ## Implementation Plan
 
 1. Add `requires:` to `frontmatter-schema.yaml` (optional field, string array)
@@ -158,3 +183,6 @@ Migration: if `trusted-project-macros` exists, the audit command warns that it's
 6. Hardcode built-in sensor requirements in attend
 7. Deprecation notice for `trusted-project-macros` in audit output
 8. Update `docs/hooks-and-ways/macros.md` security model section
+9. Add `requires` validation to `ways lint` — flag ways with `macro:` but no `requires:` as warning
+10. Implement `ways lint --fix` auto-population — scan macro.sh for commands, generate `requires:` field
+11. Containment-aware permission matching (not string equality) in the audit engine

@@ -7,6 +7,7 @@ mod cmd;
 mod frontmatter;
 mod scanner;
 pub mod session;
+// TODO: migrate callers from crate::table:: to agent_fmt:: directly
 pub use agent_fmt as table;
 pub mod util;
 

@@ -55,6 +55,11 @@ impl<'a> Banner<'a> {
         }
     }
 
+    pub fn title(mut self, t: &'a str) -> Self {
+        self.title = t;
+        self
+    }
+
     pub fn subtitle(mut self, s: &'a str) -> Self {
         self.subtitle = Some(s);
         self

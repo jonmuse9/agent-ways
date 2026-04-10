@@ -27,7 +27,7 @@ pub struct Table {
 }
 
 /// Detect terminal width via ioctl. Tries stderr first (most reliable when
-/// stdout is piped), then stdout, then stdin. Falls back to 80.
+/// stdout is piped), then stdout, then stdin. Falls back to $COLUMNS, then 80.
 pub fn terminal_width() -> usize {
     #[cfg(unix)]
     {
@@ -42,6 +42,15 @@ pub fn terminal_width() -> usize {
                         return ws.ws_col as usize;
                     }
                 }
+            }
+        }
+    }
+
+    // Fallback: $COLUMNS env var (set by some shells)
+    if let Ok(cols) = std::env::var("COLUMNS") {
+        if let Ok(w) = cols.parse::<usize>() {
+            if w > 0 {
+                return w;
             }
         }
     }
