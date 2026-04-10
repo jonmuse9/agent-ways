@@ -117,7 +117,8 @@ fn cmd_run_with_catchup(catchup: bool) {
             .collect();
         format!("project + {}", names.join(", "))
     };
-    println!("[attend] active — sensors: context, git, peers, processes | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>", focus_desc);
+    println!("[attend] v{} ({}) — sensors: context, git, peers, processes | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>",
+        env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), focus_desc);
 
     let mut peer_sensor = PeerSensor::new();
     if !catchup {
@@ -754,6 +755,9 @@ fn main() {
         }
         Some("focus") => {
             cmd_focus(&args[1..]);
+        }
+        Some("--version") | Some("-V") => {
+            println!("attend {} ({})", env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"));
         }
         Some("help") | Some("--help") | Some("-h") | None => {
             println!("\x1b[2m\x1b[4mA G E N T\x1b[0m\n");
