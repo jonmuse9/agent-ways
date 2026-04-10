@@ -29,37 +29,48 @@ Call the Monitor tool with exactly these parameters:
 
 Do NOT run `attend run` with the Bash tool. Do NOT use `run_in_background`. Only Monitor delivers stdout lines as async notifications into the conversation.
 
-## What happens next
+On startup, attend emits a usage summary notification. After that, notifications arrive only on meaningful state changes.
 
-Attend polls three sensors on adaptive schedules:
+## Sensors
 
 - **processes** — application presence (not PID churn)
 - **git** — dirty files, branch changes, upstream divergence
-- **peers** — other Claude Code sessions via `~/.claude/sessions/`, plus signal files from peers
+- **peers** — other Claude Code sessions + signal files from peers
 
-Baselines are established silently on first poll (stderr only, not surfaced). Notifications arrive only when sensors detect meaningful state changes, rate-limited to ~3 per 2-minute window by the disclosure governor.
+## CLI Reference
 
-Each notification is a single line: `[attend sensor=NAME priority=LEVEL] description`
+All commands below are one-shot — run with Bash, not Monitor.
 
-## Peer messaging
+### Peer messaging
 
-To send a message to peer sessions, use Bash (not Monitor):
+Send defaults to your current scope (own project + focus group). No quotes needed around the message.
 
 ```bash
-attend send "your message here"
+attend send your message here
+attend send --broadcast important announcement for all sessions
+attend send --to /home/user/other-project directed message
 ```
 
-The message is written as a signal file. Peer attend instances pick it up on their next poll and surface it as a high-priority notification.
+### Focus groups
 
-## Other CLI commands
+A focus group is a set of peer project directories you listen to and send to. Send scope mirrors receive scope.
 
-These are one-shot commands — run with Bash, not Monitor:
+```bash
+attend focus list                    # show current focus group
+attend focus add ~/Projects/foo      # add a peer project
+attend focus add ~/temp ~/bar        # add multiple at once
+attend focus remove ~/temp           # remove a peer
+attend focus clear                   # back to project-only mode
+```
 
-- `attend peers` — list active Claude Code sessions
-- `attend status` — show running attend instances and pending signals
-- `attend help` — show all commands
+### Discovery and status
 
-## Stopping
+```bash
+attend peers                         # list active Claude Code sessions
+attend status                        # running instances, pending signals, focus state
+```
+
+### Stopping
 
 Use TaskStop with the Monitor's task ID. Attend exits cleanly on signal.
 

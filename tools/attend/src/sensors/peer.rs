@@ -26,6 +26,8 @@ pub struct PeerSensor {
     prior: HashMap<String, PeerSummary>,
     /// Signal files we've already seen (by filename)
     seen_signals: HashSet<String>,
+    /// Whether we've shown the reply hint (only show once per session)
+    reply_hint_shown: bool,
     /// Our own session ID (to skip our own signals)
     own_session_id: Option<String>,
     /// First poll establishes baseline
@@ -80,6 +82,7 @@ impl PeerSensor {
             signals_dir: home.join(".cache").join("attend").join("signals"),
             prior: HashMap::new(),
             seen_signals: HashSet::new(),
+            reply_hint_shown: false,
             own_session_id,
             baseline_established: false,
         }
@@ -156,9 +159,19 @@ impl PeerSensor {
                         _ => format!("{} ({})", project, from),
                     };
 
-                    observations.push((5.0, format!(
-                        "message from {}: {}", sender, message
-                    )));
+                    // Include reply hint only on first peer message
+                    let source_cwd = parts[2];
+                    if !self.reply_hint_shown {
+                        observations.push((5.0, format!(
+                            "message from {}: {} (reply: attend send --to {} <msg>)",
+                            sender, message, source_cwd
+                        )));
+                        self.reply_hint_shown = true;
+                    } else {
+                        observations.push((5.0, format!(
+                            "message from {}: {}", sender, message
+                        )));
+                    }
                 }
 
                 self.seen_signals.insert(key);

@@ -106,6 +106,19 @@ fn cmd_run() {
     let focus = Focus::default_focus();
     emit::log(&format!("focus: {} ({})", focus.description, focus.working_dir));
 
+    // Self-documenting startup: emit usage summary to stdout so Monitor
+    // delivers it as Claude's first notification from attend.
+    let focus_list = read_focus_list(&signals_base().join("focus"));
+    let focus_desc = if focus_list.is_empty() {
+        "project only".to_string()
+    } else {
+        let names: Vec<&str> = focus_list.iter()
+            .map(|p| p.rsplit('/').next().unwrap_or(p.as_str()))
+            .collect();
+        format!("project + {}", names.join(", "))
+    };
+    println!("[attend] active — sensors: git, peers, processes | focus: {} | commands: attend send <msg>, attend peers, attend focus add <path>", focus_desc);
+
     let mut slots: Vec<SensorSlot> = vec![
         SensorSlot::new(Box::new(ProcessSensor::new())),
         SensorSlot::new(Box::new(GitSensor::new())),
