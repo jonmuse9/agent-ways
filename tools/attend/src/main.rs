@@ -258,6 +258,10 @@ fn cmd_run_with_catchup(catchup: bool) {
                             let snapshot = collect_snapshot(&slots);
                             state_store.checkpoint(&snapshot);
 
+                            // Flush stdout before exec to avoid losing buffered output
+                            use std::io::Write;
+                            std::io::stdout().flush().ok();
+
                             // exec self via std::os::unix
                             use std::os::unix::process::CommandExt;
                             let args: Vec<String> = std::env::args().collect();
@@ -762,49 +766,9 @@ fn encode_project(path: &str) -> String {
         .collect()
 }
 
-/// Try to find our own session ID by walking up the process tree to find
-/// the claude parent, then matching it against ~/.claude/sessions/*.json
+/// Delegate to the shared implementation in the peer sensor module.
 fn own_session_id() -> Option<String> {
-    let own_pid = std::process::id();
-    // Walk up to find claude PID
-    let mut pid = own_pid;
-    let mut claude_pid = None;
-    for _ in 0..10 {
-        if pid <= 1 { break; }
-        let output = std::process::Command::new("ps")
-            .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid,comm"])
-            .output()
-            .ok()?;
-        let line = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = line.trim().split_whitespace().collect();
-        if parts.len() >= 2 && parts[1].contains("claude") {
-            claude_pid = Some(pid);
-            break;
-        }
-        pid = parts.first()?.parse().ok()?;
-    }
-
-    let claude_pid = claude_pid?;
-
-    // Scan session files for matching PID
-    let home = std::env::var("HOME").ok()?;
-    let sessions_dir = std::path::PathBuf::from(&home).join(".claude").join("sessions");
-    for entry in std::fs::read_dir(&sessions_dir).ok()?.flatten() {
-        let content = std::fs::read_to_string(entry.path()).ok()?;
-        // Quick check for PID match
-        let pid_pattern = format!("\"pid\":{}", claude_pid);
-        if content.contains(&pid_pattern) {
-            // Extract session ID
-            let needle = "\"sessionId\":\"";
-            if let Some(start) = content.find(needle) {
-                let rest = &content[start + needle.len()..];
-                if let Some(end) = rest.find('"') {
-                    return Some(rest[..end].to_string());
-                }
-            }
-        }
-    }
-    None
+    sensors::find_own_session_id(std::process::id())
 }
 
 // --- Entry point ---

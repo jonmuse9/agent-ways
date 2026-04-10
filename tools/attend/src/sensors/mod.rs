@@ -5,7 +5,7 @@ mod process;
 
 pub use context::ContextSensor;
 pub use git::GitSensor;
-pub use peer::PeerSensor;
+pub use peer::{PeerSensor, find_own_session_id};
 pub use process::ProcessSensor;
 
 use crate::delta::DeltaAccumulator;

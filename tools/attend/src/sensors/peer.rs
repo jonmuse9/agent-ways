@@ -77,7 +77,6 @@ impl PeerSensor {
             own_pid,
             sessions_dir: home.join(".claude").join("sessions"),
             projects_dir: home.join(".claude").join("projects"),
-            signals_dir: home.join(".cache").join("attend").join("signals"),
             prior: HashMap::new(),
             seen_signals: HashSet::new(),
             reply_hint_shown: false,
@@ -629,7 +628,9 @@ fn extract_json_u64(json: &str, key: &str) -> Option<u64> {
 
 /// Find our own session ID by walking up the process tree to the claude parent,
 /// then matching against ~/.claude/sessions/*.json.
-fn find_own_session_id(own_pid: u32) -> Option<String> {
+/// Find the Claude session ID for the current process by walking up the
+/// process tree to find the claude parent, then matching against session files.
+pub fn find_own_session_id(own_pid: u32) -> Option<String> {
     let mut pid = own_pid;
     let mut claude_pid = None;
     for _ in 0..10 {
