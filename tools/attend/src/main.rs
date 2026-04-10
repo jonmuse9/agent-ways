@@ -100,7 +100,7 @@ impl PartialOrd for ScheduledSensor {
 
 // --- Subcommands ---
 
-fn cmd_run() {
+fn cmd_run_with_catchup(catchup: bool) {
     emit::log("starting attend");
 
     let focus = Focus::default_focus();
@@ -119,10 +119,15 @@ fn cmd_run() {
     };
     println!("[attend] active — sensors: git, peers, processes | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>", focus_desc);
 
+    let mut peer_sensor = PeerSensor::new();
+    if !catchup {
+        peer_sensor.mark_existing_as_seen(&focus);
+    }
+
     let mut slots: Vec<SensorSlot> = vec![
         SensorSlot::new(Box::new(ProcessSensor::new())),
         SensorSlot::new(Box::new(GitSensor::new())),
-        SensorSlot::new(Box::new(PeerSensor::new())),
+        SensorSlot::new(Box::new(peer_sensor)),
     ];
 
     let mut governor = DisclosureGovernor::new(
@@ -708,7 +713,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     match args.first().map(|s| s.as_str()) {
-        Some("run") => cmd_run(),
+        Some("run") => {
+            let catchup = args.iter().any(|a| a == "--catchup");
+            cmd_run_with_catchup(catchup);
+        }
         Some("peers") => cmd_peers(),
         Some("inbox") => cmd_inbox(),
         Some("status") => cmd_status(),
