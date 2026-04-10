@@ -1,6 +1,7 @@
 ---
-status: Draft
+status: Accepted
 date: 2026-04-09
+revised: 2026-04-10
 deciders:
   - aaronsb
   - claude
@@ -11,540 +12,344 @@ related:
   - ADR-114
 ---
 
-# ADR-113: `attend` — Active Awareness Module as Executive Layer
+# ADR-113: `attend` — Active Awareness Module
 
 ## Context
 
 The [Cognitive Loop and the Awareness Layer](../../design-notes/cognitive-loop-and-awareness-layer.md) design note reads the agent-ways system as a cognitive loop with one missing stage: **active perception**. Every other stage is in place — reactive guidance (ADR-100, ADR-103, ADR-105, ADR-108), attention allocation via disclosure gating (ADR-104), episodic memory (ADR-112 ledger), associative recall (ADR-112 KG), consolidation (compaction plus compaction-checkpoint way), project-level awareness at session entry (ADR-106), and the scoring infrastructure that binds these together. What has been missing is a mechanism by which Claude gains cheap peripheral awareness of its own approaching consequences and the environment around it, without spending reasoning tokens to compute either.
 
-The consequence of that gap is well-defined: Claude operates in a partially blind configuration. Self-monitoring is expensive (costs tokens) and unreliable (can fail to fire). Environmental sensing requires explicit tool use (which consumes an entire turn for a single observation). Consequence tracking happens only when Claude chooses to check, by which point the consequence may be too near to respond to usefully. ADR-112's reflection triggers depend on Claude noticing context-threshold boundaries on its own; ADR-104's disclosure gate depends on Claude being aware of its current disclosure state. Both work well when they work, but both can fail silently when Claude's attention is occupied.
+The consequence of that gap is well-defined: Claude operates in a partially blind configuration. Self-monitoring is expensive (costs tokens) and unreliable (can fail to fire). Environmental sensing requires explicit tool use (which consumes an entire turn for a single observation). Consequence tracking happens only when Claude chooses to check, by which point the consequence may be too near to respond to usefully.
 
-This ADR proposes the missing layer as a new binary, separate from `ways`, co-resident in the agent-ways workspace.
+This ADR defines the missing layer as a new binary, separate from `ways`, co-resident in the agent-ways workspace.
 
 ### The delivery primitive: `Monitor`
 
-An additional and load-bearing reason this ADR is possible *now* rather than earlier is the recent release of the `Monitor` tool in Claude Code. Before `Monitor`, there was no standardized channel by which a background process could surface observations into Claude's conversation as asynchronous events. The hook system delivers synchronous injections at event boundaries (`PreToolUse`, `Stop`, `SessionStart`, `PostCompact`, `context-threshold`), but it has no mechanism for signals that occur *between* those boundaries. A persistent process that detected something meaningful had nowhere to send it until Claude's next hook event fired — which could be minutes later or entirely the wrong moment.
+An additional and load-bearing reason this ADR is possible *now* rather than earlier is the `Monitor` tool in Claude Code. Before `Monitor`, there was no standardized channel by which a background process could surface observations into Claude's conversation as asynchronous events. The hook system delivers synchronous injections at event boundaries, but it has no mechanism for signals that occur *between* those boundaries.
 
-`Monitor` closes that gap by treating a background script's stdout as an async event stream, delivering each line as a notification in Claude's chat. With `persistent: true`, a single `Monitor` invocation covers the duration of a Claude Code session. This turns the architectural requirement "an observation channel that works between turns" into a concrete tool invocation. The design note discusses `Monitor` in detail as the *delivery primitive* the awareness layer depends on; this ADR commits `attend` to that delivery model.
+`Monitor` closes that gap by treating a background script's stdout as an async event stream, delivering each line as a notification in Claude's chat. With `persistent: true`, a single `Monitor` invocation covers the duration of a Claude Code session. This is the delivery primitive the awareness layer depends on.
 
 ### Why a new binary (and not a ways subcommand)
 
-The `ways` binary is a matcher, scorer, and disclosure gate — a stateless (or near-stateless) computation engine invoked by hooks. It responds to events; it does not observe between them. Adding a durable, restartable, turn-reactive executive layer to `ways` would conflate two different lifecycles: the short-lived per-hook invocation of `ways` and the long-lived per-session lifetime of the executive layer. The two share concepts (disclosure, scoring, signal routing) but not lifecycles, and fusing them would compromise `ways`'s simplicity as a pure computation binary.
+The `ways` binary is a matcher, scorer, and disclosure gate — a stateless computation engine invoked by hooks. It responds to events; it does not observe between them. Adding a durable, long-lived executive layer to `ways` would conflate two different lifecycles.
 
-A sibling crate in the same workspace preserves the integration surface while keeping lifetimes clean. `attend` runs as a separate process and writes single-line observations to stdout. `Monitor` delivers those lines to Claude as asynchronous notifications. For higher-salience observations, `attend` formats the emission as an affordance that Claude can invoke through the existing `ways` command (covered in ADR-114), routing deeper engagement through the normal disclosure pipeline. There is no new IPC protocol and no new hook event class; stdout is the primary delivery channel, and the ways system is the optional deeper-engagement path.
+A sibling crate in the same workspace preserves the integration surface while keeping lifetimes clean. `attend` runs as a separate process and writes single-line observations to stdout. `Monitor` delivers those lines to Claude as asynchronous notifications.
 
-### Prior attempts
+### Prior attempts and how this differs
 
-ADR-101 (Wormhole relay, Deprecated) and ADR-102 (IRC-based agent communication, Abandoned) both attempted to give Claude inter-instance awareness by routing signals through external transports. Both failed: ADR-101 on transport fragility (wormhole is structurally unsuited for conversation), ADR-102 on complexity and C2-topology aesthetics. Neither addressed the underlying need the awareness layer addresses, because both were pointed outward (Claude ↔ Claude) rather than inward (Claude ↔ self + environment). The design note discusses this difference in detail; this ADR adopts the inward direction as a load-bearing constraint.
+ADR-101 (Wormhole relay, Deprecated) and ADR-102 (IRC-based agent communication, Abandoned) both attempted inter-instance awareness through external transports. Both failed: ADR-101 on transport fragility, ADR-102 on complexity.
+
+This ADR succeeds where those failed because it uses the **filesystem as transport** — `~/.claude/sessions/*.json` for session discovery, `~/.cache/attend/signals/` for inter-session messaging. No external services, no fragile protocols. The filesystem is stable because Claude Code depends on it (session files) and third-party tools depend on it (abtop reads the same session files). The transport is load-bearing for the ecosystem, not just for attend.
 
 ## Decision
 
-Introduce `attend`, a new Rust binary hosted as a sibling crate to `ways` in the agent-ways Cargo workspace. `attend` implements the active awareness layer as specified in the design note: durable, restartable, session-scoped, additive to (not required by) Claude Code.
+Introduce `attend`, a new Rust binary hosted as a sibling crate to `ways` in the agent-ways Cargo workspace. `attend` implements the active awareness layer: durable, restartable, session-scoped, additive to (not required by) Claude Code.
 
 ### Identity
 
 - **Name:** `attend`
 - **Binary:** `attend`
 - **Crate:** `attend/` (sibling to `ways/` in the workspace)
-- **Role:** Active awareness module — perception layer and executive coordination for a Claude Code work session
-- **Lifecycle:** Per work session. Explicit start and stop. Never autostarts. Exits cleanly when Claude Code exits or when explicitly stopped.
+- **Role:** Active awareness module — sensor loop, peer awareness, inter-session signaling
+- **Lifecycle:** Per work session. Explicit start via `/attend` skill or `attend run`. Exits cleanly on signal.
 
-The name is functional. It captures the active ("attend to something") and the caring ("attend to someone's needs") senses without reaching for biology or metaphysics. In prose: *the attend process*, *the attend module*, *active awareness via attend*.
+### CLI
 
-### Scope of this ADR
+`attend` is a normal CLI. Bare `attend` prints help with an ANSI header matching the ways visual style.
 
-This ADR defines:
-
-- The binary's role, lifecycle, and internal architecture
-- The configuration and permission model
-- The sensor plugin model and directory layout
-- The persistent state and restart semantics
-- The hard invariants the binary must honor
-- The build order and rollout phasing
-- The alternatives considered and the reasons for rejection
-
-It explicitly does not define:
-
-- The concrete schema for way-side integration — that is [ADR-114](./ADR-114-attend-as-insistent-way-trigger-type.md)'s subject
-- The full initial sensor catalog — only the canonical first sensor (interoceptive context-length tracking) is specified here; the toolkit grows in follow-up ADRs
-- Any audio/video/content-bearing sensing — explicitly out of scope and deferred to a separate decision
-- Cross-session, cross-machine, or cross-instance signal — explicitly out of scope forever for `attend`
+```
+attend run                          # sensor loop (launched via Monitor)
+attend run --catchup                # process existing signals, then watch forward
+attend send "message"               # signal to peers (project + focus scope)
+attend send --broadcast "message"   # signal to all sessions
+attend send --to /path "message"    # directed signal to specific project
+attend inbox                        # read pending messages chronologically
+attend peers                        # list active Claude Code sessions
+attend focus add ~/path             # add project to focus group
+attend focus remove ~/path          # remove from focus group
+attend focus list                   # show current focus group
+attend focus clear                  # back to project-only mode
+attend status                       # running instances, signals, focus state
+attend --version                    # version + git commit hash
+```
 
 ### Internal architecture
 
-`attend` is composed of the following components. Each has a well-defined responsibility; most are small. The coordination center is the **tick loop** — a wall-clock-driven game loop that runs sensors on adaptive schedules and merges their observations with turn-boundary state from Claude's conversation.
+`attend` is composed of small modules with clear responsibilities. The coordination center is the **tick loop** — a wall-clock-driven game loop that runs sensors on adaptive schedules.
 
 ```
 attend/
-├── main.rs                       # CLI entry point, subcommands
-├── lifecycle/
-│   ├── start.rs                  # Session startup, state restoration
-│   ├── stop.rs                   # Clean shutdown, final state checkpoint
-│   └── restart.rs                # Crash recovery
-├── tick/
-│   ├── loop.rs                   # Wall-clock game loop: priority queue of sensor wake-ups, runs due sensors each tick
-│   ├── adaptive.rs               # Per-sensor adaptive interval: ramp-up on change, hysteresis decay on quiet
-│   └── turn_observer.rs          # Reads Claude Code session state (context %, turn count); enriches tick state at turn boundaries
-├── consequence/
-│   ├── model.rs                  # Per-signal consequence definitions
-│   └── projection.rs             # Turn-delta arithmetic, critical-turn projection
-├── insistence/
-│   ├── tracker.rs                # Acknowledgment tracking per signal
-│   ├── emitter.rs                # Generates emissions at appropriate urgency
-│   └── scheduler.rs              # Decides when unacted signals need re-emission
-├── sensors/
-│   ├── dispatcher.rs             # Runs sensor scripts when the tick loop wakes them
-│   ├── registry.rs               # Discovers and loads sensors from disk
-│   └── schema.rs                 # Sensor declaration format (header, schedule, required permissions, adaptive interval bounds)
-├── delta/
-│   ├── accumulator.rs            # Per-sensor state-change accumulation across ticks; monotonic until emitted or decayed
-│   ├── store.rs                  # Pending observations below emission threshold (the "acknowledged-but-silent" set)
-│   └── timer.rs                  # User-requested wall-clock reminders
-├── state/
-│   ├── store.rs                  # Persistent state: signals, baselines, priors, per-sensor adaptive intervals
-│   └── checkpoint.rs             # Atomic writes, recovery on restart
-├── config/
-│   ├── loader.rs                 # Reads ~/.config/attend/config.toml
-│   └── schema.rs                 # Configuration format
-├── permissions/
-│   ├── audit.rs                  # Inspect ~/.claude/settings.json for required allowlist entries
-│   ├── install.rs                # Write required entries (with explicit user consent)
-│   └── sensor_requirements.rs    # Aggregate what sensors need to be allowed to run
-└── emit/
-    ├── stdout.rs                 # Writes single-line notifications to stdout for Monitor delivery (the primary channel); handles formatting, line buffering, and 200ms batching awareness
-    └── ways_affordance.rs        # For high-salience events, formats affordance strings that Claude can invoke via `ways show attend/<signal>` for deeper engagement through the normal disclosure pipeline
+├── build.rs              # Bakes git commit hash at compile time
+├── src/
+│   ├── main.rs           # CLI dispatch, subcommands, disclosure governor
+│   ├── tick/mod.rs       # AdaptiveInterval: ramp-up on change, hysteresis decay
+│   ├── delta/mod.rs      # DeltaAccumulator: per-sensor state-change tracking
+│   ├── emit/mod.rs       # stdout for Monitor delivery, stderr for diagnostics
+│   └── sensors/
+│       ├── mod.rs        # Sensor trait, Focus struct, SensorSlot runtime wrapper
+│       ├── context.rs    # Interoceptive: context window pressure via `ways context`
+│       ├── git.rs        # Git state: dirty files, branch changes, upstream divergence
+│       ├── peer.rs       # Peer sessions + signal file reading
+│       └── process.rs    # Application presence tracking
 ```
 
-### Tick loop (the game loop)
+### Sensor model
 
-The core loop is **wall-clock-driven**, not turn-driven. It runs continuously for the session's lifetime, checking which sensors are due and running them. The analogy is a game loop: each frame, the scheduler checks its priority queue of sensor wake-ups, runs the ones that are due, collects their observations, and feeds them through the delta accumulation and emission pipeline.
+All sensors implement a common trait:
+
+```rust
+pub trait Sensor {
+    fn name(&self) -> &str;
+    fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)>;
+    fn emission_threshold(&self) -> f64;
+    fn base_interval(&self) -> Duration;
+    fn min_interval(&self) -> Duration;
+    fn decay_threshold(&self) -> u32;
+}
+```
+
+Each sensor is wrapped in a `SensorSlot` that provides adaptive interval scheduling and delta accumulation. The tick loop polls sensors via a priority queue ordered by next-fire time.
+
+The `Focus` struct describes what Claude is currently attending to (description, working directory, keywords). Sensors filter observations through Focus to determine relevance.
+
+#### Built-in sensors
+
+| Sensor | Type | Polls | Reports |
+|--------|------|-------|---------|
+| **context** | interoceptive | `ways context --json` | threshold crossings, velocity, projection to critical |
+| **git** | exteroceptive | `git status`, `git rev-list` | dirty files, branch changes, upstream divergence |
+| **peers** | exteroceptive | `~/.claude/sessions/*.json` + signal files | session appear/exit, state changes, peer messages |
+| **processes** | exteroceptive | `ps` | application presence (not PID churn) |
+
+The context sensor is calibrated to complement — not duplicate — ways' existing context-threshold triggers (todos@75%, memory@80%, checkpoint@95%). Attend provides early warnings *before* those thresholds and velocity/projection *between* them.
+
+#### Script sensors (planned)
+
+Sensors as unit files — declare what to run, how often, what threshold matters. Attend is the scheduler; sensors are units. Two-layer config mirrors ways scoping:
+
+```
+~/.config/attend/config.yaml          # user scope — always loaded
+{project}/.claude/attend.yaml         # project scope — layered on top
+```
+
+Project config uses +/- to modify the sensor set:
+
+```yaml
+# project/.claude/attend.yaml
+sensors:
+  +hardware:
+    script: .claude/sensors/check-hardware.sh
+    interval: 120
+    threshold: 2.0
+  -processes:  # not relevant here
+```
+
+Script sensor contract: output `magnitude|description` lines to stdout. Empty output = no change. Same adaptive interval and delta accumulation as built-in sensors.
+
+Trust model follows ways: user-scope config is trusted, project-scope scripts get the same scrutiny as project-scope way macros.
+
+### Tick loop
+
+The core loop is wall-clock-driven, not turn-driven. It runs continuously for the session's lifetime.
 
 Each tick:
 
 1. Check the priority queue for sensors whose next-fire time has arrived
-2. Run due sensors, collect their observations
-3. For each observation, compare against the sensor's prior state
-4. If state changed: update the sensor's delta accumulator, shorten its polling interval (ramp up), reset its ramp cooldown
-5. If no change: increment the sensor's ramp cooldown; if the cooldown exceeds the decay threshold, lengthen the polling interval back toward the sensor's base rate
-6. Check whether any delta accumulator has crossed its emission threshold
-7. Feed threshold-crossing observations through the insistence emitter
-8. Route emissions to stdout
-9. Re-insert each sensor into the priority queue at its (possibly adjusted) next-fire time
+2. Run due sensors, collect observations
+3. For each observation, feed through the sensor's delta accumulator
+4. If state changed: shorten polling interval (ramp up), reset decay cooldown
+5. If no change: increment decay cooldown; if threshold exceeded, lengthen interval back toward base
+6. Check whether any accumulator has crossed its emission threshold
+7. Feed threshold-crossing observations through the disclosure governor
+8. Emit to stdout (Monitor delivery)
 
-The tick loop does not checkpoint state on every tick — that would be wasteful at high-frequency intervals. Checkpointing happens at configurable intervals (default: every 30s of wall-clock) and on clean shutdown.
+Quiet polls produce no stderr output. Only actual state changes are logged.
 
 ### Adaptive sensor scheduling
 
-External sensors need a steady heartbeat independent of Claude's conversation activity. A camera peek, application state poll, or file hash comparison doesn't care about Claude's turns — it cares about what's happening in the world.
-
 Each sensor maintains adaptive scheduling state:
 
-```
-base_interval:    60s        # configured resting rate
-current_interval: 60s        # what the sensor is actually ticking at
-min_interval:     5s         # floor when ramped up
-decay_threshold:  5          # quiet ticks before interval lengthens
-ramp_cooldown:    0          # ticks since last real delta
-```
-
-The adaptive logic:
-
-- **Ramp-up is fast.** When a sensor detects real change, its interval shortens immediately (halved each time, down to `min_interval`). Missing real change is worse than over-sampling.
-- **Decay is slow (hysteresis).** The sensor must see `decay_threshold` consecutive quiet ticks before its interval lengthens. This prevents oscillation: change detected → ramp up → next tick quiet → premature ramp down → miss next change.
-- **False positives self-correct.** If the sensor ramps up and the high-frequency samples show the "change" was noise (hash bounced back, delta below significance), the ramp cooldown ticks up quickly at the faster rate, and the sensor decays back to baseline. The system spent a few extra samples to confirm, then relaxed.
-
-Interval bounds (`base_interval`, `min_interval`) are declared per sensor in the sensor header. The tick loop respects them; the adaptive logic operates within them.
-
-### Turn-boundary observer
-
-Turn boundaries are one **input source** to the tick loop, not the loop's driver. The turn observer watches Claude Code session state (context percentage, turn count) and injects turn-boundary events when it detects a new turn. These events enrich the tick loop's state:
-
-- Update consequence projections (turns elapsed, growth rate, projected critical turn)
-- Check whether Claude has acted on previously emitted signals
-- Trigger turn-specific logic (acknowledgment checking, insistence recalculation)
-
-The consequence model's arithmetic is turn-based because consequences are turn-based (compaction fires at a context threshold that grows per turn). But the consequence model is *consulted* on turn-boundary events within the wall-clock tick loop — it doesn't drive the loop.
-
-When Claude is idle (no turns for minutes), the tick loop keeps running. External sensors continue polling on their adaptive schedules. Delta accumulators continue growing. The turn observer simply has nothing new to report. When Claude's next turn arrives, the turn observer fires, consequence projections update with the fresh turn data, and any accumulated external observations that have crossed emission thresholds are emitted together with the updated consequence state.
-
-### Consequence model and projection
-
-Each tracked signal has a consequence definition:
-
-```toml
-[consequence.context_threshold]
-signal_name = "context-threshold"
-critical_context_pct = 95.0
-warning_context_pct = 80.0
-description = "Compaction imminent; unflushed reasoning thread will be lost"
-```
-
-At each turn boundary, for each tracked signal, the processor computes:
-
-```
-turns_elapsed       = current_turn − disclosure_turn
-growth_rate         = (current_context_pct − disclosure_context_pct) / turns_elapsed
-turns_until_critical = (critical_context_pct − current_context_pct) / growth_rate
-projected_critical  = current_turn + turns_until_critical
-```
-
-The emission format is declarative and honest:
-
-```
-disclosed at turn 47, currently turn 52, projected critical at turn 58 (6 turns remaining)
-```
-
-When an emission is warranted (first disclosure, significant projection change, or escalation threshold crossed), the processor calls into the insistence emitter to generate the appropriate message.
-
-### Insistence emission
-
-Insistence is **not** a state machine with levels. It is a pure function of (signal state, projected imminence, disclosure history, acknowledgment status) that produces one of:
-
-- `Silent` — no emission warranted
-- `Informational` — state transition or first disclosure, low weight
-- `Affordance` — includes a tool or action invitation
-- `Insistent` — elevated weight, names stakes, projects criticality explicitly
-- `Critical` — maximum clarity, explicit consequence, minimum remaining turns
-
-The function is deterministic. Given the same inputs it produces the same output. There is no stored "urgency level"; urgency is recomputed each turn from current state. This keeps the logic testable and prevents drift.
-
-Each emission is **informational**, not emotional. The emitter formats observations in declarative prose: *"disclosed N turns ago, current context X%, projected critical at turn N+T."* No simulated affect. No arbitrary urgency. Every insistence tracks an actual mechanical consequence.
+- **Ramp-up is fast.** When change is detected, interval halves (down to `min_interval`). Missing real change is worse than over-sampling.
+- **Decay is slow (hysteresis).** The sensor must see `decay_threshold` consecutive quiet ticks before its interval lengthens. Prevents oscillation.
+- **False positives self-correct.** High-frequency samples confirm or deny, then the sensor decays back to baseline.
 
 ### Disclosure governor
 
-The disclosure governor is a **global rate limiter** that controls when `attend` is allowed to emit to stdout. It is architecturally load-bearing — without it, sustained notification delivery destabilizes Claude's turn-taking model. Experimentally validated: 10+ notifications in 2 minutes caused Claude to generate confabulated user turns; 3 notifications in 2 minutes was completely stable. The governor is the mechanism that keeps Monitor viable as a delivery channel.
+The disclosure governor is a global rate limiter controlling when attend emits to stdout. Architecturally load-bearing — without it, sustained notification delivery destabilizes Claude's turn-taking model. Experimentally validated: 10+ notifications in 2 minutes caused confabulated user turns; 3 per 2 minutes was completely stable.
 
-The governor enforces two constraints:
+Two constraints:
 
-1. **Adaptive cooldown.** Higher aggregate event rate across all sensors → longer wait between disclosures. This implements the inverse relationship between event velocity and disclosure density: fast-changing situations need more compression before disclosure, not less. The cooldown formula scales with the square root of the aggregate event rate, so occasional activity passes quickly while sustained bursts are held back.
+1. **Adaptive cooldown.** Higher aggregate event rate → longer wait between disclosures. Scales with square root of event rate.
+2. **Hard cap per window.** Maximum 3 disclosures per 120-second window.
 
-2. **Hard cap per time window.** Maximum N disclosures per M-second window (default: 3 per 120 seconds), regardless of how many sensors are ready. When the cap is reached, all further disclosures are held until the window resets.
+When multiple sensors are ready simultaneously, they're emitted as a **batch** within Monitor's 200ms batching window, consuming one disclosure slot.
 
-When multiple sensors are ready simultaneously, the governor discloses them as a **batch** — all observations emitted within the 200ms Monitor batching window so they arrive as a single notification rather than N separate ones. This means one disclosure slot can carry observations from multiple sensors.
+Prototype ratio: 76 internal sensor ticks → 3 notifications over 2 minutes.
 
-Each sensor has its own **per-sensor emission threshold** (minimum accumulated magnitude before it becomes a disclosure candidate). A sensor crossing its threshold becomes "ready" but readiness is necessary-not-sufficient — the governor must also allow disclosure. The governor's perspective is global: it doesn't care which sensor is ready, only whether the system as a whole should speak.
+### Peer awareness and inter-session signaling
 
-The governor's value is measurable: in the prototype, 76 internal sensor ticks across 3 sensors over 2 minutes produced exactly 3 notifications. The ratio of cheap-substrate ticks to expensive-substrate notifications is the design principle in quantified form.
+Attend discovers peer Claude Code sessions by reading `~/.claude/sessions/*.json` and their transcript JSONL files — the same stable pattern used by `abtop`. This provides:
 
-### Acknowledgment tracking
+- **Session discovery:** who else is running, which project, what model, context usage
+- **State tracking:** session appear/exit, status changes (working/waiting), context pressure
 
-When `attend` emits a signal, it records the signal's emission turn and signal ID in its state store. On subsequent turn boundaries, it inspects Claude's outputs (via hook integration or transcript tail) for evidence that the signal was acted upon — e.g., a reflection was written, a specific way was engaged, a tool was called, a file was touched.
+#### Signal files
 
-Acknowledgment detection is **heuristic, not infallible**. False negatives (Claude acted but attend didn't detect) result in redundant re-emission, which the disclosure gate in `ways` will suppress via standard habituation rules (ADR-104). False positives (attend thinks Claude acted but didn't) result in silence when insistence would have been useful, which is the worse failure mode. The acknowledgment tracker is therefore conservative: it only marks a signal acknowledged when it has clear evidence.
-
-### Delta accumulation and deferred observations
-
-The delta accumulator is the bridge between raw sensor ticks and emission-worthy observations. Each sensor has its own accumulator that tracks real state change over time. Most ticks produce no change and the accumulator stays flat. When real deltas arrive, they accumulate monotonically until one of three things happens:
-
-1. **Emission threshold crossed** — the accumulated delta is significant enough to surface. The observation flows through the insistence emitter and out to stdout.
-2. **Decay** — if the accumulated delta has been below threshold for long enough without further change, it decays toward zero. The observation was real but too small to matter.
-3. **Superseded** — a newer observation on the same signal replaces the accumulated state entirely (e.g., context pressure jumped past the point the earlier delta was tracking).
-
-Observations that have accumulated real delta but haven't crossed their emission threshold sit in the **deferred observation store** — the "acknowledged-but-silent" set from the design note. These are not lost; they are available for batch drain when flow breaks or when Claude explicitly asks what attend has been noticing.
-
-### User-requested timers
-
-Explicit "remind me in N minutes" or "surface this at turn X" requests Claude can make of attend. Timers are wall-clock items that fire within the tick loop like any other scheduled event. Their emissions flow through the same pipeline as sensor observations.
-
-### Sensor plugin model
-
-Sensors are small programs (primarily shell scripts; compiled plugins allowed) stored in a dedicated sensor directory. The default path follows XDG conventions:
+Inter-session messaging uses signal files in a project-scoped directory structure:
 
 ```
-~/.config/attend/sensors/
-  intrinsic/
-    context_pressure.sh           # Interoception: reads Claude Code session state
-    turn_velocity.sh              # Interoception: measures inference cadence
-  workspace/
-    file_churn.sh                 # inotifywait on working tree
-    git_state.sh                  # watches HEAD, branch, stash
-    peer_sessions.sh              # walks ~/.claude/projects/*/ for other active Claude sessions
-  system/
-    window_focus.sh               # hyprctl/swaymsg socket tail
-    idle_time.sh                  # xprintidle or equivalent
-  external/
-    # reserved for truly remote signals (CI, GitHub, webhooks); no initial entries
+~/.cache/attend/signals/
+├── _broadcast/                    # all attend instances read this
+├── -home-aaron-.claude/           # only attend in ~/.claude reads this
+├── -home-aaron-temp/              # only attend in ~/temp reads this
+└── focus                          # list of peer project dirs to watch
 ```
 
-Each sensor file begins with a header declaring its contract:
+Signal format: `from|project|cwd|message` (one line, atomic write via tmp+rename).
+
+Sender identity is automatically detected:
+- **From a Claude session:** `claude:session-id` → displays as `claude/project`
+- **From a human terminal:** `external:user@terminal` → displays as `aaron@kitty`
+
+Terminal detection checks KITTY_PID, ALACRITTY_SOCKET, WEZTERM_PANE, TMUX, STY, TERM_PROGRAM, SSH_CONNECTION.
+
+#### Sidetone prevention
+
+Attend filters own signals by checking the `from` field against its own session ID, not by filename prefix. This works across all scoped directories.
+
+#### Forward-only mode
+
+`attend run` marks all existing signals as seen on startup. Only signals arriving *after* launch produce notifications. `attend inbox` reads all pending messages (one-shot catchup). `attend run --catchup` processes existing signals then watches forward.
+
+#### Focus groups
+
+A focus group is a set of peer project directories. Send scope mirrors receive scope — messages go to everyone you're listening to.
 
 ```bash
-#!/usr/bin/env bash
-#
-# sensor: context_pressure
-# schedule: on-turn-boundary
-# emits: context-pressure
-# requires: [tool=Bash, pattern="ws grep '\"context\":' ~/.claude/sessions/.../state.json"]
-# description: reads current context percentage from session state
-#
+attend focus add ~/Projects/foo ~/temp    # listen to + send to these
+attend focus list                          # show current group
+attend focus clear                         # project-only mode
 ```
 
-```bash
-#!/usr/bin/env bash
-#
-# sensor: window_focus
-# schedule: wall-clock
-# base_interval: 30s
-# min_interval: 5s
-# decay_threshold: 10
-# emits: window-focus-change
-# requires: [tool=Bash, pattern="hyprctl activewindow"]
-# description: tracks which application has focus; ramps up during rapid window switching
-#
-```
+#### Reply hints
 
-The `requires` field is consumed by the permission management subsystem (below) to aggregate allowlist entries. The `schedule` field declares the sensor's tick model: `on-turn-boundary` for interoceptive sensors that key off Claude's conversation state, `wall-clock` for exteroceptive sensors that poll the environment on adaptive intervals. Wall-clock sensors additionally declare `base_interval`, `min_interval`, and `decay_threshold` to configure their adaptive scheduling bounds. The `emits` field is consumed by the way-side bridge (ADR-114) to route emissions to subscribing ways.
+The first peer message includes a reply hint: `(reply: attend send --to /path <msg>)`. Subsequent messages are clean — progressive disclosure, not repetitive nagging.
 
-Sensor scripts emit observations as line-oriented output on stdout. Attend captures them, annotates with turn and timestamp, and feeds them through the delta accumulator, consequence model, and emission pipeline.
+### Self-documenting startup
 
-### Persistent state and restart
-
-`attend` is durable and restartable. State is checkpointed after every turn boundary to:
+On launch, attend emits a single usage summary to stdout so Monitor delivers it as Claude's first notification:
 
 ```
-~/.local/state/attend/<session-id>/
-  state.json                      # Tracked signals, baselines, deferred intents, acknowledgments
-  sensors/                        # Per-sensor rolling state (priors, counters)
-  emissions.log                   # Append-only record of what was emitted when
+[attend] v0.1.0 (459534c) — sensors: context, git, peers, processes | focus: project + temp | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>
 ```
 
-On start, `attend` checks for existing state under the current session ID and restores from it if found. This means if the process is killed (by the OS, by a crash, by explicit stop-and-restart), it comes back exactly where it left off. Signals already emitted remain tracked; acknowledgment history is preserved; deferred intents are honored.
+### Emission format
 
-State is scoped per session. When the session ends cleanly (attend receives a stop signal from the user or detects that Claude Code has exited), the state directory is either archived for post-mortem inspection or deleted per configuration.
-
-### Configuration
-
-`attend` reads its configuration from `~/.config/attend/config.toml`. Default configuration is written by `attend init` on first run.
-
-```toml
-[attend]
-log_level = "info"
-state_dir = "~/.local/state/attend"
-sensor_dir = "~/.config/attend/sensors"
-
-[lifecycle]
-autostart = false                # Never autostart; explicit invocation only
-exit_when_claude_exits = true    # Clean exit on Claude Code termination
-
-[emission]
-default_salience_floor = 0.3     # Observations below this never emit
-insistence_enabled = true
-max_disclosures_per_window = 3   # Hard cap: at most 3 disclosures per rate window
-rate_window_secs = 120           # Rate window duration (seconds)
-base_cooldown_secs = 15          # Minimum time between disclosures; adaptive cooldown grows with aggregate event rate
-
-[consequence.context_threshold]
-critical_context_pct = 95.0
-warning_context_pct = 80.0
-
-[permissions]
-auto_install = false             # Require explicit user consent for permission writes
-audit_on_start = true            # Report any missing allowlist entries
-```
-
-Configuration is validated with `attend config check`. Missing required fields fail fast with a clear error; unknown fields warn but do not fail.
-
-### Permission management
-
-This is a first-class subsystem, not a footnote. The insistence model depends on emissions reaching Claude without triggering permission prompts. If attend emits a signal via a mechanism that requires Claude to click "allow," the emission becomes an interruption, not an observation, and the entire model breaks silently.
-
-Attend therefore ships with a permission management subsystem that:
-
-1. **Audits** `~/.claude/settings.json` on startup to determine which allowlist entries are needed for attend's own operation and for each registered sensor
-2. **Reports** any missing entries to the user in a clear format (which sensor needs what, why)
-3. **Installs** required entries on explicit user consent, via `attend permissions install`
-4. **Refuses to run sensors** whose required permissions are not present, with a clear error message pointing at the fix
-
-Sensor headers declare required permissions in a structured format:
+All notifications use bracketed key-value format:
 
 ```
-# requires:
-#   - tool: Bash
-#     pattern: "inotifywait -m *"
-#   - tool: Read
-#     pattern: "~/.claude/sessions/*/state.json"
+[attend sensor=context priority=medium] context at 50% — midpoint, wrap-up window opening (burning 1.8%/min, ~25 min to todos checkpoint at 75%)
+[attend sensor=peers priority=high] message from aaron: checking updates
+[attend sensor=git priority=low] new commits on main (HEAD abc1234 → def5678)
 ```
 
-Attend aggregates all declared requirements across all enabled sensors and compares against the current settings.json. `attend permissions audit` reports the delta. `attend permissions install` writes the missing entries (with a confirmation prompt showing exactly what will be added).
+This format was chosen empirically: Monitor entity-escapes angle brackets but passes square brackets verbatim.
 
-**This is explicitly not auto-applied.** The user must consent. Writing to settings.json is an auditable, reversible action and attend treats it as such. `--dry-run` shows what would be written; `--rollback` restores the pre-install state from a backup automatically created before any write.
+### Way integration
 
-The goal is **zero permission prompts during normal operation** with **full user visibility and control over what was allowlisted**.
+A way at `softwaredev/environment/attend` provides progressive disclosure of attend's capabilities. The way body is static CLI reference; a `macro.sh` script (appended at disclosure time) checks live state: whether attend is installed and running, current focus group, active peer count, pending signals.
 
-### Invocation and integration
+The `/attend` skill launches attend via Monitor with explicit instructions to use Monitor (not Bash).
 
-`attend` is invoked as the **command argument to Claude Code's `Monitor` tool** at session start. The user does not start `attend` at the shell directly; Claude invokes it through `Monitor`, and `Monitor` handles the lifecycle and delivery. This is the load-bearing integration point — see the [design note](../../design-notes/cognitive-loop-and-awareness-layer.md) for the Monitor-as-delivery-primitive discussion.
+### Coordination with ways context-threshold triggers
 
-#### The invocation flow
+Ways fires actions at context thresholds: todos@75%, memory@80%, checkpoint@95%. Attend's context sensor provides:
 
-1. A SessionStart way (shipped with `attend`) fires when a new Claude Code session begins
-2. The way guides Claude to invoke the `Monitor` tool with:
-   - `command: "attend stream --session=<session-id>"`
-   - `persistent: true` (keeps `attend` alive for the session's lifetime)
-   - `description: "active awareness module"` (appears in each delivered notification)
-3. Claude invokes `Monitor` as instructed
-4. `Monitor` starts `attend` as a background process
-5. `attend` reads configuration from `~/.config/attend/config.toml`, audits permissions (refusing to proceed if required entries are missing and `auto_install` is false), discovers sensors from `~/.config/attend/sensors/`, restores prior state from `~/.local/state/attend/<session-id>/state.json` if it exists, begins the turn-boundary processor loop, and logs to `~/.local/state/attend/<session-id>/attend.log` (stderr, so Monitor does not deliver log lines as notifications)
-6. As `attend` detects events and computes emissions, it writes single-line observations to stdout
-7. `Monitor` delivers each stdout line to Claude as an asynchronous chat notification
-8. Claude reads notifications between turns, acts or dismisses per the notification's salience
-9. When the session ends (or Claude calls `TaskStop`), `Monitor` terminates `attend`; `attend` catches the signal, flushes final state to disk, and exits cleanly
+- Early warnings before ways thresholds (40%, 50%, 65%)
+- Verification prompts after ways fires (85% = "verify memory saved")
+- Pre-critical warning (92% = "finish task before 95% checkpoint")
+- Velocity and projection between all thresholds
 
-#### Emission is stdout, not IPC
+Attend handles trajectory awareness. Ways handles threshold actions.
 
-`attend`'s only output mechanism to Claude is stdout. Every meaningful emission is a single line (or at most a short multiline block within 200ms to benefit from `Monitor`'s batching). Lines use a **bracketed key-value format**:
+### Build and install
 
 ```
-[attend sensor=context_pressure priority=high] context at 86%, critical in ~3 turns
+make attend          # build (or skip if already built)
+make attend-rebuild  # force rebuild
+make install         # symlinks bin/attend → tools/target/release/attend
 ```
 
-or with affordances for deeper engagement through the ways system:
-
-```
-[attend sensor=peer_session priority=medium affordance=ways show attend/peer-session-active] peer session active in ~/Projects/foo-mcp (last activity 3m ago)
-```
-
-The bracketed format was chosen empirically: Monitor entity-escapes angle brackets (`<` → `&lt;`) in stdout, which renders XML output as escaped text rather than parsed markup. Square brackets, JSON, and other non-XML formats pass through verbatim. The key-value pairs inside the brackets provide structured metadata (sensor name, priority, optional affordance) while the trailing text is the human-readable observation.
-
-`attend` honors `Monitor`'s discipline rigorously:
-
-- **Selective filtering.** `Monitor` auto-stops any script that produces too many events. `attend`'s insistence engine computes whether each candidate observation warrants emission; only those that do ever reach stdout. Everything else is held silently in the deferred intent store or dropped.
-- **Line-buffered output.** `attend` writes one observation per line and flushes immediately. No buffered writes that would delay notifications beyond the 200ms batching window.
-- **Stderr is for diagnostics only.** Debug logs, trace information, sensor output that shouldn't become notifications — all go to stderr. `Monitor` writes stderr to a file rather than delivering as notifications. The log file is accessible via the normal `Read` tool if Claude needs to inspect it.
-- **Multiline batching awareness.** `Monitor` groups stdout lines emitted within 200ms into a single notification. `attend` uses this deliberately when emitting related observations (signal text, affordance, metadata) — three lines flushed together become one coherent notification rather than three fragmentary ones.
-
-#### Two delivery paths: Monitor primary, ways affordance secondary
-
-`Monitor` notifications are the **primary** delivery channel. Every `attend` observation arrives via `Monitor` as an asynchronous notification in Claude's conversation. For most emissions, this is sufficient: Claude reads the notification, integrates it into its working model, and acts or dismisses based on the observation's urgency as expressed in the notification text itself.
-
-For higher-salience emissions, `attend` additionally formats the notification as an **affordance** — a string naming a specific `ways show attend/<signal-type>` command Claude can invoke if the observation warrants deeper engagement. When Claude invokes that command, the ways system runs the matcher and ADR-104 disclosure gate normally, injecting the full way body through the standard guidance pipeline. This is covered by [ADR-114](./ADR-114-attend-as-insistent-way-trigger-type.md).
-
-The two paths compose:
-
-- **Low/medium salience:** `Monitor` notification only. Claude reads the one-line observation, acknowledges peripherally, moves on. No ways invocation, no additional token cost beyond the notification.
-- **High salience (insistent/critical):** `Monitor` notification + affordance. Claude reads the notification, recognizes the stakes, invokes the named ways command, receives the full guidance body, acts deliberately. The notification raises awareness; the ways command provides the deeper context Claude uses to act on it.
-
-`attend` may *suggest* the affordance, but Claude retains agency over whether to invoke it. `attend` does not invoke ways directly; it invites Claude to do so. This preserves the "awareness layer never overrides Claude" invariant even at critical salience.
-
-#### When `Monitor` or `attend` is not running
-
-When `attend` is not running — whether because the SessionStart way was not installed, because `Monitor` was not invoked, or because the process exited early — **Claude functions exactly as it does today**. Ways still fire on their reactive triggers. Ledger entries are still captured. Compaction still works. The baseline Claude Code experience is unchanged.
-
-Ways with `trigger.type: attend` (see ADR-114) still *load* when `attend` is absent; they are simply inert until `Monitor` delivers a notification that invokes them. They are never broken, only dormant.
-
-This is a load-bearing property. The design note calls it *presence as additive*. It is honored architecturally: `attend` is never invoked implicitly, never wired into default install flows, and never imposes dependencies on the rest of the system. The SessionStart way that drives `Monitor` invocation is itself opt-in, and removing it is all that's required to disable the awareness layer entirely.
+Binaries are symlinked to the cargo build output, not copied. Cargo handles atomic replacement of the target binary; the old process keeps running on the old inode. No ETXTBSY on rebuild while attend is running.
 
 ### Hard invariants
 
-These constraints are non-negotiable and any future change to attend must preserve them:
+These constraints are non-negotiable:
 
-1. **Session-scoped observation.** Attend observes only the session that owns it. No cross-session, cross-project, or cross-machine signal.
-2. **No C2 topology.** No central server, no pubsub, no persistent identity, no relay, no inter-instance protocol. One attend process, one Claude Code session, one user.
-3. **Informational, not enforceable.** Attend emits observations. It never overrides Claude, never forces Claude to act, and never interrupts Claude in any way that bypasses the disclosure gate.
-4. **Consequence-anchored insistence.** Every insistence escalation tracks a real, identifiable mechanical consequence. No arbitrary urgency, no theater, no simulated affect.
-5. **Metadata-only for content-bearing sensors.** Sensors that touch content-rich sources (cameras, microphones, clipboards, notification bodies) may emit only boolean or categorical state, never the content itself. Content capture is explicitly out of scope for this ADR.
-6. **Additive, never required.** Attend must be runnable, stoppable, and entirely optional. Ways that depend on attend signals must gracefully no-op when attend is not running.
-7. **Explicit invocation only.** Attend never autostarts. The user decides when they want the awareness layer active.
-8. **User visibility into permissions.** Attend never writes to settings.json without explicit user consent. Every modification is auditable and reversible.
+1. **Filesystem as transport.** Inter-session awareness uses the filesystem (session files, signal files), not external services. No fragile protocols, no servers, no pubsub.
+2. **Informational, not enforceable.** Attend emits observations. It never overrides Claude, never forces action, never bypasses the disclosure gate.
+3. **Consequence-anchored.** Context warnings track real mechanical consequences. No arbitrary urgency, no simulated affect.
+4. **Metadata-only for content-bearing sensors.** Sensors that touch content-rich sources emit only boolean or categorical state, never the content itself.
+5. **Additive, never required.** Attend is optional. Ways that depend on attend signals gracefully no-op when attend is not running.
+6. **Explicit invocation only.** Attend never autostarts.
+7. **Send scope mirrors receive scope.** Messages go to the same set of projects you're listening to. No silent broadcasting.
+
+#### Invariant revision note
+
+The original draft of this ADR included "no cross-session signal" and "no inter-instance protocol" as hard invariants. These were revised after implementation demonstrated that inter-session awareness via the filesystem is stable, useful, and architecturally clean — the same session files Claude Code already publishes, the same pattern abtop already reads. The prior invariants were a reaction to ADR-101/102's failures with fragile external transports, not a principled objection to inter-session awareness itself. The revised invariants preserve the underlying concern (no fragile protocols) while permitting what works (filesystem-based observation and signaling).
 
 ## Consequences
 
 ### Positive
 
-- **Agency preservation.** Claude gains accurate awareness of approaching consequences in time to act on them, preserving coherent decision-making under context pressure.
-- **Reduced token waste on self-monitoring.** Interoceptive sensors replace expensive self-checks; Claude's reasoning budget is spent on reasoning, not on housekeeping metacognition.
-- **Proactive environmental awareness.** File changes, git state, application lifecycle, peer sessions — ambient signal that currently requires an explicit tool call becomes part of Claude's working model at near-zero token cost.
-- **Reliable reflection triggering.** ADR-112's reflection windows are driven by external interoception rather than Claude's self-monitoring, eliminating the failure mode where reflection is supposed to fire but doesn't.
-- **Sensor toolkit composability.** Adding a new capability means adding a shell script to the sensors directory. No framework changes, no binary recompile (for shell sensors).
-- **Durable, restartable operation.** State is checkpointed at every turn boundary. Process death is recoverable.
-- **Cleanly additive.** Sessions that don't need active awareness don't pay any cost. The awareness layer is explicitly opt-in and imposes nothing on the baseline Claude Code experience.
-- **Uses the standard `Monitor` delivery primitive.** No new hook event class, no new IPC protocol, no parallel notification channel. `attend` is architecturally a well-behaved `Monitor` client — its integration surface is "write lines to stdout when you have something to say," which is exactly what `Monitor` was built to consume. Noise control is enforced by `Monitor` itself (auto-stop on excess).
+- **Agency preservation.** Claude gains accurate awareness of approaching consequences in time to act on them.
+- **Reduced token waste.** Interoceptive sensors replace expensive self-checks.
+- **Proactive environmental awareness.** Git state, peer sessions, process lifecycle — ambient signal at near-zero token cost.
+- **Inter-session collaboration.** Multiple Claude instances and human terminals communicate through a shared signal system. No protocol overhead — just files on disk.
+- **Sensor toolkit composability.** Adding a new capability means adding a script or a compiled sensor module. The scheduler, delta accumulation, and disclosure governor handle the rest.
+- **Cleanly additive.** Sessions that don't need active awareness pay no cost.
+- **Standard delivery primitive.** `attend` is a well-behaved Monitor client. Its integration surface is "write lines to stdout."
 
 ### Negative
 
-- **New binary to maintain.** A sibling crate adds compilation, testing, release, and documentation surface. Mitigation: the crate is kept minimal and shares as much as possible with `ways` (configuration loading, logging, error handling) where those are already solved.
-- **Dependency on the `Monitor` tool.** `attend`'s primary delivery channel is `Monitor`-delivered stdout notifications. If `Monitor` is unavailable (because the running Claude Code version doesn't ship it, or because the user has disabled it), the awareness layer cannot deliver emissions. Mitigation: the dependency is explicit and documented; the SessionStart way that drives invocation checks for `Monitor` availability and reports clearly if absent rather than failing silently; `attend` itself still runs and maintains state, so the moment `Monitor` becomes available the existing state resumes without loss.
-- **Cross-crate coupling at the ways affordance surface.** The secondary deeper-engagement path (affordance → `ways show attend/<signal>`) couples `attend`'s emission format to the ways CLI. Changes to the `ways show` command interface may require coordinated updates. Mitigation: the affordance format is a short documented subset (command name + signal type); both sides version the subset if it needs to change.
-- **Permission model complexity.** The permission management subsystem adds a layer users must understand. Mitigation: sensible defaults, `attend init` auto-configures, `attend permissions audit` reports clearly, explicit consent required for any write.
-- **Sensor discipline required.** The "metadata, not content" invariant is a rule sensor authors must honor. Mitigation: schema validation in the sensor loader rejects sensors that declare content-bearing emissions; documentation and examples show the right pattern.
-- **Potential for insistence noise if misconfigured.** Poorly tuned escalation curves or over-eager sensors could generate noise. Mitigation: configuration includes `max_emissions_per_turn` debounce, salience floors, and a "do not disturb" mode for focused work. The default configuration is conservative.
+- **New binary to maintain.** Mitigation: sibling crate in the same workspace, shares build infrastructure with `ways`.
+- **Dependency on Monitor.** If Monitor is unavailable, attend cannot deliver. Mitigation: attend still runs and maintains state; delivery resumes when Monitor becomes available.
+- **Signal file management.** Stale signals accumulate if no attend instance polls the directory. Mitigation: 5-minute cleanup on each poll; `attend cleanup` planned.
+- **Binary version skew.** Multiple attend instances may run different versions. Mitigation: the signal format and directory layout are stable; version skew doesn't break interop.
 
 ### Neutral
 
-- **Shell scripts for sensors.** Follows the existing cheap-substrate pattern in the repo. Sensor authors don't need Rust. The binary is simple because the variety lives in scripts.
-- **XDG directory conventions.** State in `~/.local/state/attend/`, config in `~/.config/attend/`, sensors in `~/.config/attend/sensors/`. Consistent with the repo's XDG separation (see memory: runtime artifacts go to XDG cache, sources stay in `~/.claude/`).
-- **Rust implementation.** Matches the existing `ways` binary's implementation choice. Shared workspace means shared tooling, shared CI, shared release cadence.
+- **Rust implementation.** Matches `ways`. Zero external dependencies (no serde, no clap, no tokio).
+- **XDG conventions.** Signals in `~/.cache/attend/signals/`, config planned for `~/.config/attend/`.
+
+## Remaining work
+
+Tracked in aaronsb/agent-ways#2:
+
+- **Config externalization** — `~/.config/attend/config.yaml` with project-scope overlay
+- **Script sensor runner** — poll scripts, parse `magnitude|description` from stdout
+- **State persistence** — checkpoint/restore sensor baselines across restarts
+- **Self-reload** — watch own binary mtime, exec self on change
+- **ADR-114 integration** — affordance strings, `trigger.type: attend` in ways schema
+- **Insistence tracker** — unacted observations re-surface with escalating urgency
+- **Consequence model** — generalized beyond context pressure
 
 ## Alternatives Considered
 
-- **Subcommand of the `ways` binary (`ways attend start`).** Rejected. Conflates the stateless per-invocation lifecycle of `ways` with the durable per-session lifecycle of the awareness layer. Would compromise the simplicity of `ways` as a pure computation binary. The two systems share concepts but not lifetimes.
-- **Pure hook-based implementation (no persistent process).** Rejected. Turn-reactive consequence tracking can work as a hook, but sensors that need to observe *between* turns (file churn, idle detection, user-requested timers) require a persistent observer. A hybrid would be fragile; a daemon is honest.
-- **Separate repository entirely.** Rejected. ADR-111 consolidated on single-repo, single-binary (plus sibling binaries) for good reasons — shared workspace avoids cross-repo coordination churn when the integration surface changes. The sibling crate pattern keeps independence without fragmenting the project.
-- **Extend Claude Code directly (upstream contribution).** Rejected. Coupling to upstream means the feature ships on Anthropic's cadence, not Aaron's. The awareness layer is a local composition of existing Claude Code capabilities; it does not need Claude Code to change to work.
-- **Sensor scripts only, no central coordinator.** Rejected. Individual sensors without central accounting cannot implement insistence (no acknowledgment tracking across signals), cannot manage deferred intents, and cannot coordinate to avoid noisy emission bursts. The coordinator is the value; sensors are the plugins.
-- **Fixed-interval wall-clock scheduler (crontab model).** Rejected. Fixed polling intervals cannot adapt to activity patterns — a sensor polling every 60s misses rapid changes and wastes ticks during quiet periods. The adopted model uses wall-clock as the tick substrate but with **adaptive intervals per sensor**: ramp-up on detected change, hysteresis decay on quiet, configurable bounds. Emissions remain event-driven (delta accumulator crossed a threshold) or consequence-driven (curve crossed a criticality boundary), never time-driven — the wall-clock loop drives *sampling*, not *emission*.
-- **Shared process with other Claude Code infrastructure (e.g., embedded in the session manager).** Rejected. Couples attend's lifetime to infrastructure with different failure modes. Independent process is cleaner and easier to reason about.
-
-## Build Order and Rollout
-
-This ADR proposes a phased build. Each phase delivers a working increment that can be validated before the next phase begins.
-
-**Phase 1 — Binary scaffolding and permission management**
-
-- Create the `attend/` crate in the workspace
-- `attend init`, `attend config check`, `attend permissions audit`, `attend permissions install`
-- Configuration loading and validation
-- Persistent state store (scaffolded, empty)
-- No sensors yet; no emissions; no turn loop
-- Validates: the infrastructure and permission model work before any awareness logic exists
-
-**Phase 2 — Tick loop and the first canonical sensor**
-
-- Wall-clock tick loop with priority-queue scheduler
-- Adaptive interval logic (ramp-up, hysteresis decay)
-- Turn-boundary observer as an input source to the tick loop
-- Interoceptive context-pressure sensor (`on-turn-boundary` schedule — reads Claude Code session state to determine context %)
-- Consequence model for the context-threshold signal
-- Delta accumulator for the context-pressure signal
-- Insistence emitter generating the canonical emission format
-- Routes emissions to stdout for Monitor delivery
-- Validates: the core game loop works end-to-end with one sensor, adaptive scheduling operates correctly even with a turn-boundary-driven sensor, and the emission pipeline produces well-formed Monitor notifications
-
-**Phase 3 — Multi-sensor operation and the initial workspace catalog**
-
-- Sensor dispatcher running multiple sensors at different adaptive cadences
-- First wall-clock sensor: git state change via polling `.git/` (HEAD, branch, stash) with adaptive intervals
-- Peer session awareness: walks `~/.claude/projects/*/` for other active Claude Code sessions on the same machine, emits state changes (new session, session activity, modifications to files this session is watching). Peer sessions are part of the **initial sensor catalog**, not deferred.
-- Acknowledgment tracker
-- Deferred observation store for below-threshold accumulated deltas
-- User-requested timer subsystem
-- Validates: wall-clock and turn-boundary sensors cohabit in the same tick loop, adaptive scheduling produces the right behavior (ramp-up on activity, decay on quiet), and multiple sensors with different cadences don't produce emission bursts
-
-**Phase 4 — Toolkit growth**
-
-- Additional sensors added as their value is demonstrated
-- Workspace sensors beyond the initial catalog (file churn beyond git, project-structural changes)
-- System sensors where their value is clear (window focus, idle, D-Bus notifications, application lifecycle)
-- Each new sensor is its own small decision; no further ADRs required unless they introduce new invariants
-
-## Future Work
-
-The following are explicitly deferred:
-
-- **Sensor catalog ADR.** Once Phase 5 has produced a meaningful corpus of sensors, a follow-up ADR can document the stable toolkit and its conventions.
-- **Memory-system integration for awareness patterns.** Ledger entries capture reasoning; various memory-projection layers (the optional knowledge graph in ADR-112 Tier 2 is one example, but there may be others a user prefers) capture concepts and associations from that reasoning. Attend observations could feed such memory systems for long-horizon pattern recognition ("this project has a pattern of context crises around file X"). However, **attend must remain memory-tool-agnostic**: it must not prescribe, require, or hard-code dependence on any particular memory tool. If this integration is ever built, it must expose a generic interface that any configured memory layer can subscribe to, and the attend binary must function fully without any memory tool installed. Any future ADR that builds this integration must preserve this agnosticism. Deferred.
-- **Any form of inter-instance signal.** Explicitly out of scope forever for `attend`. If a future need arises, it is a separate concern with separate design, and it does not inherit the awareness layer's name or invariants.
-- **Audio, video, or content-bearing sensors.** Explicitly out of scope for this ADR. Any move toward content capture requires a separate decision with deliberate discussion of the privacy and surveillance implications.
-- **Cross-project or cross-machine awareness.** The session-scoped observation invariant rules this out for `attend`. Any future desire for broader awareness is a separate system.
+- **Subcommand of `ways`.** Rejected. Conflates stateless per-invocation lifecycle with durable per-session lifecycle.
+- **Pure hook-based implementation.** Rejected. Sensors that observe between turns need a persistent process.
+- **External transport (wormhole, IRC).** Rejected by ADR-101/102 failures. Filesystem transport is simpler and more stable.
+- **Fixed-interval scheduler.** Rejected. Adaptive intervals ramp on change, decay on quiet — better sampling efficiency.
+- **Separate repository.** Rejected per ADR-111. Shared workspace avoids coordination churn.
 
 ## References
 
 - **Design note:** [Cognitive Loop and the Awareness Layer](../../design-notes/cognitive-loop-and-awareness-layer.md)
-- **Related ADRs cited:**
-  - [ADR-104](./ADR-104-token-gated-way-re-disclosure-for-long-context-windows.md) — Token-gated way re-disclosure (disclosure gate is where attend emissions land)
-  - [ADR-111](./ADR-111-unified-ways-cli-single-binary-tool-consolidation.md) — Unified `ways` CLI (sibling-crate pattern extends from here)
-  - [ADR-112](./ADR-112-session-ledger-and-knowledge-graph-integration.md) — Session ledger (the memory layer whose perception counterpart this ADR provides)
-  - [ADR-114](./ADR-114-attend-as-insistent-way-trigger-type.md) — `attend` events as an insistent way trigger type (the schema for how attend signals reach ways)
-- **Prior attempts (for context on why this is different):**
+- **Tracking issue:** [aaronsb/agent-ways#2](https://github.com/aaronsb/agent-ways/issues/2)
+- **Related ADRs:**
+  - [ADR-104](./ADR-104-token-gated-way-re-disclosure-for-long-context-windows.md) — Disclosure gate
+  - [ADR-111](./ADR-111-unified-ways-cli-single-binary-tool-consolidation.md) — Sibling-crate pattern
+  - [ADR-112](./ADR-112-session-ledger-and-knowledge-graph-integration.md) — Session ledger
+  - [ADR-114](./ADR-114-attend-as-insistent-way-trigger-type.md) — Way trigger type for attend signals
+- **Prior attempts:**
   - [ADR-101](./ADR-101-wormhole-relay-protocol-for-cross-instance-agent-communication.md) — Wormhole relay (Deprecated)
   - [ADR-102](./ADR-102-irc-based-local-agent-communication.md) — IRC-based agent communication (Abandoned)
