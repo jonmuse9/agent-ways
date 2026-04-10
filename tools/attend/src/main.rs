@@ -238,7 +238,41 @@ fn cmd_run_with_catchup(catchup: bool) {
         ));
     }
 
+    // Self-reload: track own binary mtime
+    let self_exe = std::env::current_exe().ok();
+    let initial_mtime = self_exe.as_ref()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok());
+    let mut last_reload_check = Instant::now();
+    let reload_check_interval = Duration::from_secs(10);
+
     loop {
+        // Check for binary change
+        if last_reload_check.elapsed() >= reload_check_interval {
+            if let (Some(ref exe), Some(ref orig_mtime)) = (&self_exe, &initial_mtime) {
+                if let Ok(meta) = std::fs::metadata(exe) {
+                    if let Ok(current_mtime) = meta.modified() {
+                        if current_mtime != *orig_mtime {
+                            // Binary changed — checkpoint and exec self
+                            emit::log("binary changed — checkpointing and reloading");
+                            let snapshot = collect_snapshot(&slots);
+                            state_store.checkpoint(&snapshot);
+
+                            // exec self via std::os::unix
+                            use std::os::unix::process::CommandExt;
+                            let args: Vec<String> = std::env::args().collect();
+                            let err = std::process::Command::new(&args[0])
+                                .args(&args[1..])
+                                .exec();
+                            // exec() only returns on failure
+                            emit::log(&format!("self-reload failed: {}", err));
+                        }
+                    }
+                }
+            }
+            last_reload_check = Instant::now();
+        }
+
         let next = match queue.peek() {
             Some(s) => s.fire_at,
             None => break,
@@ -325,30 +359,35 @@ fn cmd_run_with_catchup(catchup: bool) {
 
         // Periodic checkpoint
         if last_checkpoint.elapsed() >= checkpoint_interval {
-            let mut snapshot = state::StateSnapshot::default();
-            for slot in &slots {
-                for (key, value) in slot.export_state() {
-                    match key.as_str() {
-                        "seen_signal" => { snapshot.seen_signals.insert(value); }
-                        "disclosed_threshold" => {
-                            if let Ok(t) = value.parse::<u8>() {
-                                snapshot.disclosed_thresholds.push(t);
-                            }
-                        }
-                        "reply_hint_shown" => {
-                            snapshot.reply_hint_shown = value == "true";
-                        }
-                        "context_pct" => {
-                            snapshot.context_pct = value.parse().ok();
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            let snapshot = collect_snapshot(&slots);
             state_store.checkpoint(&snapshot);
             last_checkpoint = Instant::now();
         }
     }
+}
+
+fn collect_snapshot(slots: &[sensors::SensorSlot]) -> state::StateSnapshot {
+    let mut snapshot = state::StateSnapshot::default();
+    for slot in slots {
+        for (key, value) in slot.export_state() {
+            match key.as_str() {
+                "seen_signal" => { snapshot.seen_signals.insert(value); }
+                "disclosed_threshold" => {
+                    if let Ok(t) = value.parse::<u8>() {
+                        snapshot.disclosed_thresholds.push(t);
+                    }
+                }
+                "reply_hint_shown" => {
+                    snapshot.reply_hint_shown = value == "true";
+                }
+                "context_pct" => {
+                    snapshot.context_pct = value.parse().ok();
+                }
+                _ => {}
+            }
+        }
+    }
+    snapshot
 }
 
 fn cmd_inbox() {
