@@ -219,15 +219,12 @@ impl Sensor for ContextSensor {
 
     fn import_state(&mut self, state: &[(String, String)]) {
         for (key, value) in state {
-            match key.as_str() {
-                "disclosed_threshold" => {
-                    if let Ok(t) = value.parse::<u8>() {
-                        if !self.disclosed_thresholds.contains(&t) {
-                            self.disclosed_thresholds.push(t);
-                        }
+            if key.as_str() == "disclosed_threshold" {
+                if let Ok(t) = value.parse::<u8>() {
+                    if !self.disclosed_thresholds.contains(&t) {
+                        self.disclosed_thresholds.push(t);
                     }
                 }
-                _ => {}
             }
         }
         if !self.disclosed_thresholds.is_empty() {

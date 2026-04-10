@@ -227,17 +227,17 @@ fn apply_config(config: &mut Config, content: &str) {
                 }
             } else if current_section == "sensors" {
                 let sensor_line = trimmed.trim_end_matches(':');
-                if sensor_line.starts_with('-') {
+                if let Some(stripped) = sensor_line.strip_prefix('-') {
                     // Remove sensor: -processes
-                    let name = sensor_line[1..].trim();
+                    let name = stripped.trim();
                     if let Some(s) = config.sensors.get_mut(name) {
                         s.enabled = false;
                         eprintln!("[attend] config: disabled sensor '{}'", name);
                     }
                     current_sensor.clear();
-                } else if sensor_line.starts_with('+') {
+                } else if let Some(stripped) = sensor_line.strip_prefix('+') {
                     // Add script sensor: +disk-pressure
-                    let name = sensor_line[1..].trim().to_string();
+                    let name = stripped.trim().to_string();
                     config.sensors.entry(name.clone()).or_insert(SensorConfig {
                         enabled: true,
                         interval: Duration::from_secs(60),

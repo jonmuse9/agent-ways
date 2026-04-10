@@ -320,7 +320,7 @@ impl PeerSensor {
         // Read last few KB for recent usage data — don't parse the whole file
         let metadata = fs::metadata(&path).ok()?;
         let file_len = metadata.len();
-        let read_from = if file_len > 8192 { file_len - 8192 } else { 0 };
+        let read_from = file_len.saturating_sub(8192);
 
         let content = fs::read_to_string(&path).ok()?;
         let mut model = String::from("-");
@@ -361,9 +361,8 @@ impl PeerSensor {
         let context_tokens = last_input + last_cache_read + last_cache_create;
         // Model string may include context window hint like "claude-opus-4-6[1m]"
         // Default to 1M for opus/sonnet 4.x, 200K for older models
-        let context_window: u64 = if model.contains("[1m]") || model.contains("1m]") {
-            1_000_000
-        } else if model.contains("opus-4") || model.contains("sonnet-4") {
+        let context_window: u64 = if model.contains("[1m]") || model.contains("1m]")
+            || model.contains("opus-4") || model.contains("sonnet-4") {
             1_000_000
         } else if model == "-" {
             // Unknown model — can't compute meaningful percentage
@@ -641,7 +640,7 @@ pub fn find_own_session_id(own_pid: u32) -> Option<String> {
             .output()
             .ok()?;
         let line = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 2 && parts[1].contains("claude") {
             claude_pid = Some(pid);
             break;

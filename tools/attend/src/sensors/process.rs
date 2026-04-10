@@ -59,8 +59,8 @@ impl ProcessSensor {
                       "at-spi-bus-laun", "at-spi2-registr",
                       "gjs", "gsd-*", "gnome-*", "xdg-*"];
         if noise.iter().any(|n| {
-            if n.ends_with('*') {
-                comm.starts_with(&n[..n.len()-1])
+            if let Some(prefix) = n.strip_suffix('*') {
+                comm.starts_with(prefix)
             } else {
                 comm == *n
             }
@@ -118,14 +118,14 @@ impl Sensor for ProcessSensor {
         let mut observations = Vec::new();
 
         // New applications (not in prior at all)
-        for (app, _count) in &current {
+        for app in current.keys() {
             if !self.prior.contains_key(app) {
                 observations.push((2.0, format!("{app} started")));
             }
         }
 
         // Exited applications (were in prior, gone now)
-        for (app, _count) in &self.prior {
+        for app in self.prior.keys() {
             if !current.contains_key(app) {
                 observations.push((2.0, format!("{app} exited")));
             }

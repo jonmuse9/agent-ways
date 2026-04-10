@@ -200,6 +200,11 @@ impl Table {
     pub fn len(&self) -> usize {
         self.rows.len()
     }
+
+    /// Returns true if the table has no rows.
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
 }
 
 /// Measure the visible length of a string (ignoring ANSI escape codes).
