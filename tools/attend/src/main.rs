@@ -490,14 +490,17 @@ fn cmd_inbox() {
     // Sort chronologically — oldest first (ledger order)
     entries.sort_by_key(|e| e.mtime);
 
-    for entry in &entries {
-        println!("[{}] from {}: {} (source: {})", entry.scope, entry.sender, entry.message, entry.source);
-    }
-
     if entries.is_empty() {
         println!("no messages");
     } else {
-        println!("--- {} message(s)", entries.len());
+        let mut t = agent_fmt::Table::new(&["Scope", "From", "Message", "Source"]);
+        t.max_width(0, 10);
+        t.max_width(1, 24);
+        for entry in &entries {
+            t.add(vec![&entry.scope, &entry.sender, &entry.message, &entry.source]);
+        }
+        t.print();
+        println!("  {} message(s)", entries.len());
     }
 }
 
@@ -658,9 +661,14 @@ fn cmd_status() {
     let own_count = count_signals(&own_dir);
     let broadcast_count = count_signals(&broadcast_dir);
 
-    println!("signals:");
-    println!("  project:   {} pending ({})", own_count, own_dir.display());
-    println!("  broadcast: {} pending ({})", broadcast_count, broadcast_dir.display());
+    {
+        let mut t = agent_fmt::Table::new(&["Signals", "Count", "Path"]);
+        t.align(1, agent_fmt::Align::Right);
+        t.max_width(1, 6);
+        t.add(vec!["project", &own_count.to_string(), &own_dir.display().to_string()]);
+        t.add(vec!["broadcast", &broadcast_count.to_string(), &broadcast_dir.display().to_string()]);
+        t.print();
+    }
 
     // Show focus file if it exists
     let focus_file = base.join("focus");
@@ -669,13 +677,17 @@ fn cmd_status() {
             let peers: Vec<&str> = content.lines()
                 .filter(|l| !l.trim().is_empty())
                 .collect();
-            println!("focus: {} peers", peers.len());
+            let mut t = agent_fmt::Table::new(&["Focus", "Path"]);
             for p in &peers {
-                println!("  {}", p);
+                t.add(vec!["peer", p]);
             }
+            if peers.is_empty() {
+                t.add(vec!["(none)", ""]);
+            }
+            t.print();
         }
     } else {
-        println!("focus: project only (no focus file)");
+        println!("  focus: project only (no focus file)");
     }
 }
 
