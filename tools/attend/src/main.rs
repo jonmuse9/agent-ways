@@ -3,7 +3,7 @@ mod delta;
 mod emit;
 mod sensors;
 
-use sensors::{Focus, ProcessSensor, SensorSlot};
+use sensors::{Focus, GitSensor, PeerSensor, ProcessSensor, SensorSlot};
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
@@ -110,6 +110,8 @@ fn main() {
     // Register sensors
     let mut slots: Vec<SensorSlot> = vec![
         SensorSlot::new(Box::new(ProcessSensor::new())),
+        SensorSlot::new(Box::new(GitSensor::new())),
+        SensorSlot::new(Box::new(PeerSensor::new())),
     ];
 
     let mut governor = DisclosureGovernor::new(

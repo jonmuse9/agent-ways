@@ -1,5 +1,9 @@
+mod git;
+mod peer;
 mod process;
 
+pub use git::GitSensor;
+pub use peer::PeerSensor;
 pub use process::ProcessSensor;
 
 use crate::delta::DeltaAccumulator;
