@@ -129,16 +129,16 @@ impl Sensor for ContextSensor {
 
         let mut observations = Vec::new();
 
-        // Threshold crossings calibrated to 1M context sessions where
-        // real wrap-up window is 500-600k (50-60%). By 75% the session
-        // should already be wrapping up or have reflected.
+        // Attend handles trajectory awareness. Ways handles threshold
+        // actions (todos@75%, memory@80%, checkpoint@95%).
+        // Attend's thresholds are early warnings *before* ways fires,
+        // plus velocity context that ways can't provide.
         let thresholds: &[(u8, f64, &str)] = &[
-            (40, 1.5, "approaching productive midpoint"),
-            (50, 2.5, "midpoint — start planning wrap-up"),
-            (60, 3.5, "wrap-up window — reflect and consolidate"),
-            (70, 4.5, "past optimal wrap-up — commit and document now"),
-            (80, 5.5, "compaction approaching — finish current task"),
-            (90, 6.0, "critical — compaction imminent, save state now"),
+            (40, 1.5, "approaching midpoint — plan wrap-up scope"),
+            (50, 2.0, "midpoint — wrap-up window opening"),
+            (65, 3.0, "ways will fire todos checkpoint at 75%"),
+            (85, 4.0, "ways fired memory save at 80% — verify it happened"),
+            (92, 5.0, "compaction checkpoint at 95% — finish current task"),
         ];
 
         for &(pct, magnitude, label) in thresholds {
