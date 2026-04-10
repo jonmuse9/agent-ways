@@ -1,7 +1,9 @@
+mod context;
 mod git;
 mod peer;
 mod process;
 
+pub use context::ContextSensor;
 pub use git::GitSensor;
 pub use peer::PeerSensor;
 pub use process::ProcessSensor;

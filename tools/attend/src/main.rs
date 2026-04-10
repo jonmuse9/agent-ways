@@ -3,7 +3,7 @@ mod delta;
 mod emit;
 mod sensors;
 
-use sensors::{Focus, GitSensor, PeerSensor, ProcessSensor, Sensor, SensorSlot};
+use sensors::{ContextSensor, Focus, GitSensor, PeerSensor, ProcessSensor, Sensor, SensorSlot};
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
@@ -117,7 +117,7 @@ fn cmd_run_with_catchup(catchup: bool) {
             .collect();
         format!("project + {}", names.join(", "))
     };
-    println!("[attend] active — sensors: git, peers, processes | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>", focus_desc);
+    println!("[attend] active — sensors: context, git, peers, processes | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>", focus_desc);
 
     let mut peer_sensor = PeerSensor::new();
     if !catchup {
@@ -125,6 +125,7 @@ fn cmd_run_with_catchup(catchup: bool) {
     }
 
     let mut slots: Vec<SensorSlot> = vec![
+        SensorSlot::new(Box::new(ContextSensor::new())),
         SensorSlot::new(Box::new(ProcessSensor::new())),
         SensorSlot::new(Box::new(GitSensor::new())),
         SensorSlot::new(Box::new(peer_sensor)),
