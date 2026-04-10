@@ -173,14 +173,16 @@ fn cmd_run() {
                 governor.record_event();
             }
 
-            emit::log(&format!(
-                "{}: poll interval={:.1}s changed={} accum={:.1} events={}",
-                slots[i].name(),
-                slots[i].interval.current.as_secs_f64(),
-                changed,
-                slots[i].accumulator.magnitude,
-                slots[i].accumulator.event_count,
-            ));
+            // Only log when something changed — quiet polls are silent
+            if changed {
+                emit::log(&format!(
+                    "{}: change detected (interval={:.1}s, accum={:.1}, events={})",
+                    slots[i].name(),
+                    slots[i].interval.current.as_secs_f64(),
+                    slots[i].accumulator.magnitude,
+                    slots[i].accumulator.event_count,
+                ));
+            }
 
             if slots[i].ready_to_disclose() {
                 ready_indices.push(i);
@@ -517,8 +519,9 @@ fn own_session_id() -> Option<String> {
         let pid_pattern = format!("\"pid\":{}", claude_pid);
         if content.contains(&pid_pattern) {
             // Extract session ID
-            if let Some(start) = content.find("\"sessionId\":\"") {
-                let rest = &content[start + 14..];
+            let needle = "\"sessionId\":\"";
+            if let Some(start) = content.find(needle) {
+                let rest = &content[start + needle.len()..];
                 if let Some(end) = rest.find('"') {
                     return Some(rest[..end].to_string());
                 }
