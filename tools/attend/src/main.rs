@@ -628,62 +628,142 @@ fn cmd_status() {
         .output()
         .ok();
 
-    let mut found = false;
+    let mut instances: Vec<(String, String)> = Vec::new(); // (pid, info)
     if let Some(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
         let own_pid = std::process::id();
         for line in stdout.lines() {
             let line = line.trim();
-            if line.contains("attend run") && !line.contains(&own_pid.to_string()) {
-                println!("{}", line);
-                found = true;
+            // Only match actual attend binary, not shell wrappers that contain "attend run"
+            if !line.contains("attend run") || line.contains(&own_pid.to_string()) {
+                continue;
+            }
+            // Skip zsh/bash wrapper lines (contain shell-snapshots or eval)
+            if line.contains("shell-snapshots") || line.contains("eval '") {
+                continue;
+            }
+            // Extract PID and show clean output
+            let parts: Vec<&str> = line.splitn(2, char::is_whitespace).collect();
+            if parts.len() == 2 {
+                instances.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
             }
         }
     }
 
-    if !found {
-        println!("no attend instances running");
-    }
-
-    // Show signals
+    // Gather all data before building a single unified table
     let base = signals_base();
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let own_dir = base.join(encode_project(&cwd));
     let broadcast_dir = base.join("_broadcast");
-
     let own_count = count_signals(&own_dir);
     let broadcast_count = count_signals(&broadcast_dir);
 
-    {
-        let mut t = agent_fmt::Table::new(&["Signals", "Count", "Path"]);
-        t.align(1, agent_fmt::Align::Right);
-        t.max_width(1, 6);
-        t.add(vec!["project", &own_count.to_string(), &own_dir.display().to_string()]);
-        t.add(vec!["broadcast", &broadcast_count.to_string(), &broadcast_dir.display().to_string()]);
-        t.print();
+    let focus_file = base.join("focus");
+    let focus_peers: Vec<String> = if focus_file.exists() {
+        std::fs::read_to_string(&focus_file)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Single table: Section | Detail | Info
+    let mut t = agent_fmt::Table::new(&["", "Detail", "Info"]);
+    t.align(0, agent_fmt::Align::Left);
+
+    // ── Instances section
+    if instances.is_empty() {
+        t.add(vec!["instances", "(none)", ""]);
+    } else {
+        for (i, (pid, cmd)) in instances.iter().enumerate() {
+            let label = if i == 0 { "instances" } else { "" };
+            t.add(vec![label, &format!("PID {pid}"), cmd]);
+        }
     }
 
-    // Show focus file if it exists
-    let focus_file = base.join("focus");
-    if focus_file.exists() {
-        if let Ok(content) = std::fs::read_to_string(&focus_file) {
-            let peers: Vec<&str> = content.lines()
-                .filter(|l| !l.trim().is_empty())
-                .collect();
-            let mut t = agent_fmt::Table::new(&["Focus", "Path"]);
-            for p in &peers {
-                t.add(vec!["peer", p]);
-            }
-            if peers.is_empty() {
-                t.add(vec!["(none)", ""]);
-            }
-            t.print();
-        }
+    // ── Separator
+    t.add(vec!["", "", ""]);
+
+    // ── Signals section
+    t.add(vec!["signals", "project", &format!("{own_count} pending")]);
+    t.add(vec!["", "broadcast", &format!("{broadcast_count} pending")]);
+
+    // ── Separator
+    t.add(vec!["", "", ""]);
+
+    // ── Focus section
+    if focus_peers.is_empty() {
+        t.add(vec!["focus", "project only", ""]);
     } else {
-        println!("  focus: project only (no focus file)");
+        for (i, peer) in focus_peers.iter().enumerate() {
+            let label = if i == 0 { "focus" } else { "" };
+            t.add(vec![label, "peer", peer]);
+        }
     }
+
+    t.print();
+}
+
+fn display_config(cfg: &config::Config) {
+    // Governor section
+    let mut t = agent_fmt::Table::new(&["", "Setting", "Value"]);
+    t.align(0, agent_fmt::Align::Left);
+
+    t.add(vec![
+        "governor",
+        "base_cooldown",
+        &format!("{}s", cfg.governor.base_cooldown.as_secs()),
+    ]);
+    t.add(vec![
+        "",
+        "max_per_window",
+        &cfg.governor.max_per_window.to_string(),
+    ]);
+    t.add(vec![
+        "",
+        "rate_window",
+        &format!("{}s", cfg.governor.rate_window.as_secs()),
+    ]);
+
+    t.add(vec!["", "", ""]);
+
+    // Sensors — sorted by name
+    let mut names: Vec<&String> = cfg.sensors.keys().collect();
+    names.sort();
+
+    for (i, name) in names.iter().enumerate() {
+        let sc = &cfg.sensors[*name];
+        let sensor_type = if sc.script.is_some() { "script" } else { "crate" };
+        let enabled = if sc.enabled { "" } else { " (disabled)" };
+        let label = format!("{name}{enabled}");
+
+        let section = if i == 0 { "sensors" } else { "" };
+        t.add(vec![
+            section,
+            &label,
+            &format!(
+                "[{sensor_type}] interval={}s min={}s threshold={} decay={}",
+                sc.interval.as_secs(),
+                sc.min_interval.as_secs(),
+                sc.threshold,
+                sc.decay_threshold,
+            ),
+        ]);
+
+        if let Some(ref script) = sc.script {
+            t.add(vec!["", "", &format!("script: {script}")]);
+        }
+        if !sc.requires.is_empty() {
+            t.add(vec!["", "", &format!("requires: [{}]", sc.requires.join(", "))]);
+        }
+    }
+
+    t.print();
 }
 
 fn count_signals(dir: &std::path::Path) -> usize {
@@ -952,7 +1032,7 @@ fn main() {
                 Some("show") | None => {
                     let focus = Focus::default_focus();
                     let cfg = config::Config::load(&focus.working_dir);
-                    println!("{:#?}", cfg);
+                    display_config(&cfg);
                 }
                 Some("path") => {
                     let home = std::env::var("XDG_CONFIG_HOME")
