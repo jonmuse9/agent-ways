@@ -132,6 +132,184 @@ Rooms are directories under the existing signals base:
 
 The `@` prefix prevents collision between named rooms and encoded project paths. `_rooms.yaml` tracks which rooms each session has joined and which are pinned.
 
+## UX Flows
+
+### Flow 1: Solo work (default, no action needed)
+
+Agent starts. It's in its project room automatically. No peers, no noise.
+
+```
+$ attend peers
+  Room              Agent          Status   Context
+  ──────────────────────────────────────────────────
+  agent-ways        (you)          working  12%
+
+  1 agent, 1 room
+```
+
+### Flow 2: Ad-hoc collaboration
+
+Aaron spins up two agents and wants them to coordinate.
+
+```
+# In agent A's session (agent-ways):
+$ attend room join deploy
+
+# In agent B's session (api-server):
+$ attend room join deploy
+
+# Now both see each other:
+$ attend peers
+  Room              Agent          Status   Context
+  ──────────────────────────────────────────────────
+  agent-ways        (you)          working  12%
+  deploy            api-server     waiting  8%
+
+  2 agents, 2 rooms
+```
+
+Signals flow through the room:
+```
+# Agent A:
+$ attend send --room deploy "migrations are done, ready for deploy"
+
+# Agent B sees it via the peer sensor:
+[attend sensor=peers] message from agent-ways in deploy: migrations are done, ready for deploy
+```
+
+When done, agents leave or sessions end:
+```
+$ attend room leave deploy
+# If both leave, "deploy" is cleaned up on next poll
+```
+
+### Flow 3: Standing workgroup
+
+A team of agents that reconvene across sessions.
+
+```
+$ attend room join infra --pin
+# --pin keeps the room alive even when empty
+# Next time an agent starts, it can discover and rejoin:
+
+$ attend rooms
+  Room              Members  Pinned
+  ─────────────────────────────────
+  deploy            0        no       (will be cleaned up)
+  infra             0        yes      (persists)
+
+$ attend room join infra
+```
+
+### Flow 4: Scene switch
+
+Aaron wants all agents in private mode while he's in a meeting, then open mode after.
+
+```
+# From any terminal:
+$ attend scene private
+# → leaves all named rooms, project room only
+# → writes scene signal to broadcast so other agents' attend instances pick it up
+
+# Later:
+$ attend scene open
+# → joins the well-known "open" room
+# → all agents with attend running see the scene change and auto-join
+```
+
+Scenes in config:
+```yaml
+# ~/.config/attend/scenes.yaml
+private:
+  rooms: []
+
+standup:
+  rooms: [daily]
+
+open:
+  rooms: ["*"]
+```
+
+### Flow 5: Discovery — "what rooms exist?"
+
+```
+$ attend rooms
+  Room              Members  Pinned
+  ─────────────────────────────────
+  deploy            2        no
+  infra             1        yes
+  daily             0        yes
+
+# Join one:
+$ attend room join deploy
+```
+
+### Flow 6: Directing a message without joining
+
+Sometimes you want to send a message to a room without subscribing to it.
+
+```
+$ attend send --room infra "heads up: the CI cert expires Friday"
+# Message lands in the room, but you don't join it or receive from it
+```
+
+### Flow 7: Human sends from terminal
+
+Aaron is in a terminal, not in a Claude session. He wants to poke agents.
+
+```
+# Send to a specific room:
+$ attend send --room deploy "hold off, I'm rolling back"
+
+# Send to broadcast (all agents):
+$ attend send --broadcast "going to lunch, back in 30"
+```
+
+### Flow 8: Migration from focus groups
+
+Existing focus group config:
+```
+# old: attend focus add ~/Projects/foo ~/Projects/bar
+```
+
+Migration path — attend emits deprecation notice:
+```
+$ attend focus add ~/Projects/foo
+[attend] focus: deprecated — use `attend room join <name>` instead
+[attend] migrated: created room "collab" with ~/Projects/foo
+```
+
+Or manual:
+```
+$ attend room join collab    # from agent-ways
+$ attend room join collab    # from ~/Projects/foo
+$ attend room join collab    # from ~/Projects/bar
+# All three see each other through "collab"
+```
+
+### CLI Summary
+
+```
+attend room join <name> [--pin]   Join a room (create if needed, --pin to persist)
+attend room leave <name>          Leave a room
+attend room list                  Show rooms you're in
+attend room pin <name>            Pin a room (persist when empty)
+attend room unpin <name>          Unpin a room
+attend room dissolve <name>       Remove a room, notify members
+
+attend rooms                      List all active rooms with member counts
+
+attend send "msg"                 Send to your project room
+attend send --room <name> "msg"   Send to a named room
+attend send --broadcast "msg"     Send to all agents
+
+attend scene <name>               Activate a scene (reconfigure room membership)
+attend scenes                     List available scenes
+
+attend peers                      Unified view: agents grouped by room
+attend status                     Self-view: your rooms, signals, config
+```
+
 ## Consequences
 
 ### Positive
