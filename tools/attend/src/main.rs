@@ -941,6 +941,86 @@ fn write_focus_list(path: &std::path::Path, list: &[String]) {
     std::fs::write(path, content).ok();
 }
 
+// --- Permissions audit (ADR-116) ---
+
+fn cmd_permissions_audit() {
+    use agent_fmt::permissions;
+
+    let focus = Focus::default_focus();
+    let cfg = config::Config::load(&focus.working_dir);
+
+    // Load settings.json grants
+    let home = std::env::var("HOME").unwrap_or_default();
+    let settings_path = std::path::PathBuf::from(&home).join(".claude/settings.json");
+    let grants = permissions::load_settings_permissions(&settings_path);
+
+    if grants.is_empty() {
+        eprintln!("Warning: no permissions found in {}", settings_path.display());
+    }
+
+    // Collect (sensor_name, requires) pairs from config
+    let mut requirements: Vec<(String, Vec<String>)> = Vec::new();
+    let mut names: Vec<&String> = cfg.sensors.keys().collect();
+    names.sort();
+    for name in names {
+        let sensor = &cfg.sensors[name];
+        if !sensor.requires.is_empty() {
+            let prefix = if sensor.script.is_some() { "+" } else { "" };
+            requirements.push((
+                format!("{prefix}{name}"),
+                sensor.requires.clone(),
+            ));
+        }
+    }
+
+    let results = permissions::audit(&requirements, &grants);
+
+    // Display
+    println!();
+    println!("  \x1b[1mAttend Permissions Audit\x1b[0m (ADR-116)");
+    println!();
+
+    if results.is_empty() {
+        println!("  No sensors declare requires: fields.");
+        println!();
+        return;
+    }
+
+    let mut table = agent_fmt::Table::new(&["Sensor", "Requires", "Status"]);
+    table.align(0, agent_fmt::Align::Left);
+    table.align(1, agent_fmt::Align::Left);
+    table.align(2, agent_fmt::Align::Left);
+
+    let mut missing_count = 0u32;
+    let mut missing_perms: Vec<String> = Vec::new();
+
+    for r in &results {
+        let status = if r.granted {
+            "\x1b[32mgranted\x1b[0m".to_string()
+        } else {
+            missing_count += 1;
+            if !missing_perms.contains(&r.requirement) {
+                missing_perms.push(r.requirement.clone());
+            }
+            "\x1b[31mMISSING\x1b[0m".to_string()
+        };
+        table.add(vec![&r.source, &r.requirement, &status]);
+    }
+
+    table.print();
+    println!();
+
+    if missing_count > 0 {
+        println!("  \x1b[33m{missing_count} missing permission(s).\x1b[0m Add to settings.json:");
+        for p in &missing_perms {
+            println!("    \"{p}\"");
+        }
+    } else {
+        println!("  \x1b[32mAll permissions granted.\x1b[0m");
+    }
+    println!();
+}
+
 // --- Entry point ---
 
 fn main() {
@@ -959,6 +1039,15 @@ fn main() {
         }
         Some("focus") => {
             cmd_focus(&args[1..]);
+        }
+        Some("permissions") => {
+            match args.get(1).map(|s| s.as_str()) {
+                Some("audit") | None => cmd_permissions_audit(),
+                Some(sub) => {
+                    eprintln!("attend permissions: unknown subcommand '{}' — try audit", sub);
+                    std::process::exit(1);
+                }
+            }
         }
         Some("config") => {
             match args.get(1).map(|s| s.as_str()) {
@@ -1003,8 +1092,9 @@ fn main() {
                 ("inbox",  "Read pending messages from peers"),
                 ("send",   "Send a signal to peer sessions"),
                 ("focus",  "Manage focus group (add/remove/clear/list peer projects)"),
-                ("config", "Manage configuration (init/show/path)"),
-                ("status", "Show running instances, signals, and focus state"),
+                ("config",      "Manage configuration (init/show/path)"),
+                ("permissions", "Audit sensor permissions against settings.json"),
+                ("status",      "Show running instances, signals, and focus state"),
                 ("help",   "Show this help"),
             ]);
             println!();
