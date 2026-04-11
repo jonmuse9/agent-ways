@@ -221,16 +221,24 @@ impl PeerSensor {
                         5.0 // focus group — relevant peer
                     };
 
+                    // Short messages inline, long messages get a mailbox pointer.
+                    // Monitor truncates at ~500 chars; prefix eats ~100. Cap at 300.
+                    let display_msg = if message.len() > 300 {
+                        format!("{}... (full message in attend inbox)", &message[..297])
+                    } else {
+                        message.to_string()
+                    };
+
                     // Include reply hint only on first peer message
                     if !self.reply_hint_shown {
                         observations.push((magnitude, format!(
                             "message from {}: {} (reply: attend send --to {} <msg>)",
-                            sender, message, source_cwd
+                            sender, display_msg, source_cwd
                         )));
                         self.reply_hint_shown = true;
                     } else {
                         observations.push((magnitude, format!(
-                            "message from {}: {}", sender, message
+                            "message from {}: {}", sender, display_msg
                         )));
                     }
                 }
