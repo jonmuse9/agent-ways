@@ -5,7 +5,7 @@
 //! Non-zero exit or unparseable lines are silently ignored.
 
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{Focus, Sensor};
 
@@ -64,15 +64,45 @@ impl Sensor for ScriptSensor {
             return Vec::new();
         }
 
-        let output = match Command::new("bash")
+        // Timeout: kill script if it runs longer than 10 seconds
+        let mut child = match Command::new("bash")
             .arg(&script_path)
             .current_dir(&self.working_dir)
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
-            .output()
+            .spawn()
         {
-            Ok(o) => o,
+            Ok(c) => c,
             Err(e) => {
                 eprintln!("[attend] script sensor '{}': exec failed: {}", self.name, e);
+                return Vec::new();
+            }
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if Instant::now() > deadline {
+                        eprintln!("[attend] script sensor '{}': killed after 10s timeout", self.name);
+                        child.kill().ok();
+                        child.wait().ok();
+                        return Vec::new();
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => {
+                    eprintln!("[attend] script sensor '{}': wait failed: {}", self.name, e);
+                    return Vec::new();
+                }
+            }
+        }
+
+        let output = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("[attend] script sensor '{}': output read failed: {}", self.name, e);
                 return Vec::new();
             }
         };

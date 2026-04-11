@@ -371,3 +371,29 @@ fn normalize_way_id(id: &str) -> String {
         id.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_collapses_duplicate_leaf() {
+        assert_eq!(
+            normalize_way_id("meta/attend/context-pressure/context-pressure"),
+            "meta/attend/context-pressure"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_distinct_leaf() {
+        assert_eq!(
+            normalize_way_id("softwaredev/code/testing"),
+            "softwaredev/code/testing"
+        );
+    }
+
+    #[test]
+    fn normalize_single_segment() {
+        assert_eq!(normalize_way_id("testing"), "testing");
+    }
+}

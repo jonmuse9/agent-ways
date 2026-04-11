@@ -152,3 +152,36 @@ pub(crate) fn extract_attend_signals(content: &str) -> Vec<String> {
 }
 
 pub(crate) use crate::util::home_dir;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_attend_signals_basic() {
+        let content = "---\ntrigger:\n  type: attend\n  signals:\n    - context-pressure\n    - reflection-overdue\n---\nBody text.";
+        let signals = extract_attend_signals(content);
+        assert_eq!(signals, vec!["context-pressure", "reflection-overdue"]);
+    }
+
+    #[test]
+    fn extract_attend_signals_not_attend() {
+        let content = "---\ndescription: normal way\nvocabulary: test\n---\nBody.";
+        let signals = extract_attend_signals(content);
+        assert!(signals.is_empty());
+    }
+
+    #[test]
+    fn extract_attend_signals_no_frontmatter() {
+        let content = "Just a plain file.";
+        let signals = extract_attend_signals(content);
+        assert!(signals.is_empty());
+    }
+
+    #[test]
+    fn extract_attend_signals_type_without_signals() {
+        let content = "---\ntrigger:\n  type: attend\n---\nBody.";
+        let signals = extract_attend_signals(content);
+        assert!(signals.is_empty());
+    }
+}
