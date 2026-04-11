@@ -5,7 +5,7 @@ mod delta;
 mod emit;
 mod sensors;
 
-use sensors::{ContextSensor, Focus, GitSensor, PeerSensor, ProcessSensor, ScriptSensor, Sensor, SensorSlot};
+use sensors::{ContextSensor, Focus, GitSensor, PeerSensor, ProcessSensor, ScriptSensor, SensorSlot};
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
@@ -520,17 +520,21 @@ fn cmd_inbox() {
 }
 
 fn cmd_peers() {
-    let focus = Focus::default_focus();
-    let mut sensor = PeerSensor::new();
-    let observations = sensor.poll(&focus);
-    // First poll returns empty (baseline). The baseline info goes to stderr.
-    // Poll again to get the actual state — but since nothing changed, just
-    // show the baseline that was printed to stderr.
-    if observations.is_empty() {
-        // Baseline was printed to stderr by the sensor. For the CLI, also
-        // list what we found by doing a second poll (which will show no deltas).
-        let _ = sensor.poll(&focus);
+    let sensor = PeerSensor::new();
+    let peers = sensor.list_peers();
+
+    if peers.is_empty() {
+        println!("no active peer sessions");
+        return;
     }
+
+    let mut t = agent_fmt::Table::new(&["Project", "Path", "Status", "Context"]);
+    t.max_width(0, 20);
+    for (cwd, project, status, ctx) in &peers {
+        t.add(vec![project, cwd, status, &format!("{ctx:.0}%")]);
+    }
+    t.print();
+    println!("  {} peer(s)", peers.len());
 }
 
 fn cmd_send(args: &[String]) {
@@ -579,6 +583,34 @@ fn cmd_send(args: &[String]) {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
+
+    // Validate --to path against active peers
+    if let Some(ref path) = target_dir {
+        let resolved = std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| path.clone());
+
+        let sensor = PeerSensor::new();
+        let peers = sensor.list_peers();
+        let peer_paths: Vec<&str> = peers.iter().map(|(cwd, _, _, _)| cwd.as_str()).collect();
+
+        if !peer_paths.contains(&resolved.as_str()) {
+            eprintln!("error: no active peer at {}", resolved);
+            if peers.is_empty() {
+                eprintln!("\nno active peer sessions found");
+            } else {
+                eprintln!("\nactive peers:");
+                for (peer_cwd, project, _, _) in &peers {
+                    eprintln!("  {} ({})", peer_cwd, project);
+                }
+                // Fuzzy suggest: find closest match by path suffix
+                if let Some(suggestion) = find_closest_peer(&resolved, &peer_paths) {
+                    eprintln!("\ndid you mean: {}?", suggestion);
+                }
+            }
+            std::process::exit(1);
+        }
+    }
 
     // Determine target directories based on current mode:
     // --broadcast: _broadcast only (reaches everyone)
@@ -773,6 +805,25 @@ fn detect_terminal() -> String {
         return t.rsplit('/').next().unwrap_or(&t).to_string();
     }
     String::new()
+}
+
+/// Find the closest matching peer path by comparing path suffixes.
+fn find_closest_peer<'a>(target: &str, peers: &[&'a str]) -> Option<&'a str> {
+    // Try matching the last N segments of the target against peer paths
+    let target_parts: Vec<&str> = target.rsplit('/').collect();
+    let mut best: Option<(&str, usize)> = None;
+
+    for peer in peers {
+        let peer_parts: Vec<&str> = peer.rsplit('/').collect();
+        let common = target_parts.iter().zip(peer_parts.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if common > 0 && (best.is_none() || common > best.unwrap().1) {
+            best = Some((peer, common));
+        }
+    }
+
+    best.map(|(p, _)| p)
 }
 
 fn signals_base() -> std::path::PathBuf {
