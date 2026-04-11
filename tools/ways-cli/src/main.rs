@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 pub mod agents;
 mod bm25;
 mod cmd;
+pub mod config;
 mod frontmatter;
 mod scanner;
 pub mod session;
@@ -233,6 +234,11 @@ enum Commands {
         #[arg(long)]
         confirm: bool,
     },
+    /// Manage configuration (init/show/path)
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommand,
+    },
     /// Tune embed_threshold values for locale stubs based on corpus similarity
     Tune {
         /// Ways root directory (default: ~/.claude/hooks/ways)
@@ -384,6 +390,16 @@ enum ShowCommand {
 }
 
 #[derive(Subcommand)]
+enum ConfigCommand {
+    /// Initialize user config at XDG path
+    Init,
+    /// Show resolved configuration
+    Show,
+    /// Show config file paths
+    Path,
+}
+
+#[derive(Subcommand)]
 enum GovernanceCommand {
     /// Coverage report (default)
     Report,
@@ -501,6 +517,24 @@ fn main() -> Result<()> {
             ShowCommand::Attend { signal, session } => {
                 let out = cmd::show::attend(&signal, &session)?;
                 if !out.is_empty() { print!("{out}"); }
+                Ok(())
+            }
+        },
+        Commands::Config { action } => match action {
+            ConfigCommand::Init => {
+                let path = config::Config::init_user_config();
+                println!("wrote config to {}", path.display());
+                Ok(())
+            }
+            ConfigCommand::Show => {
+                let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+                    .unwrap_or_else(|_| std::env::var("PWD").unwrap_or_else(|_| ".".to_string()));
+                let cfg = config::Config::load(&project_dir);
+                println!("{:#?}", cfg);
+                Ok(())
+            }
+            ConfigCommand::Path => {
+                println!("{}", config::Config::config_path());
                 Ok(())
             }
         },
