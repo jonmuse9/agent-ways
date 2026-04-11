@@ -608,6 +608,19 @@ fn cmd_send(args: &[String]) {
                     eprintln!("\ndid you mean: {}?", suggestion);
                 }
             }
+            // Show focus group if configured
+            let focus_file = base.join("focus");
+            if let Ok(content) = std::fs::read_to_string(&focus_file) {
+                let groups: Vec<&str> = content.lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .collect();
+                if !groups.is_empty() {
+                    eprintln!("\nfocus group (use `attend send` without --to to reach all):");
+                    for g in &groups {
+                        eprintln!("  {}", g);
+                    }
+                }
+            }
             std::process::exit(1);
         }
     }
