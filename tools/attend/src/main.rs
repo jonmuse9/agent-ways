@@ -450,26 +450,59 @@ fn cmd_inbox() {
 }
 
 fn cmd_peers() {
+    let r = get_rooms();
+
     #[cfg(feature = "sensor-peers")]
     let peers = {
         let sensor = sensors::PeerSensor::new();
         sensor.list_peers()
     };
     #[cfg(not(feature = "sensor-peers"))]
-    let peers: Vec<(String, String, String, String)> = Vec::new();
+    let peers: Vec<(String, String, String, f64)> = Vec::new();
 
-    if peers.is_empty() {
-        println!("no active peer sessions");
-        return;
+    let my_rooms = r.my_rooms();
+
+    let mut t = agent_fmt::Table::new(&["Room", "Agent", "Status", "Context"]);
+    t.max_width(1, 24);
+
+    // Show self in project room
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let self_project = cwd.rsplit('/').next().unwrap_or("?");
+    t.add(vec!["(project)", self_project, "working", ""]);
+
+    // Show named rooms we're in
+    for (room_name, pinned) in &my_rooms {
+        let pin_marker = if *pinned { " (pinned)" } else { "" };
+        let label = format!("{room_name}{pin_marker}");
+        t.add(vec![&label, "(you)", "", ""]);
     }
 
-    let mut t = agent_fmt::Table::new(&["Project", "Path", "Status", "Context"]);
-    t.max_width(0, 20);
-    for (cwd, project, status, ctx) in &peers {
-        t.add(vec![project, cwd, status, &format!("{ctx:.0}%")]);
+    // Show peers
+    if !peers.is_empty() {
+        t.add(vec!["", "", "", ""]);
+        for (peer_cwd, project, status, ctx) in &peers {
+            // Determine room context: same project? in a shared room?
+            let room_label = if *peer_cwd == cwd {
+                "(project)".to_string()
+            } else {
+                // Check if this peer's project name matches any room (heuristic)
+                String::new()
+            };
+            t.add(vec![&room_label, project, status, &format!("{ctx:.0}%")]);
+        }
     }
+
     t.print();
-    println!("  {} peer(s)", peers.len());
+
+    let room_count = my_rooms.len();
+    let peer_count = peers.len();
+    println!(
+        "  {} agent(s), {} room(s)",
+        peer_count + 1,
+        room_count + 1
+    );
 }
 
 fn cmd_send(args: &[String]) {
