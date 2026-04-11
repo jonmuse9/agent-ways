@@ -1,0 +1,412 @@
+//! Room management for attend (ADR-118).
+//!
+//! Rooms are named signal namespaces that agents join and leave dynamically.
+//! Storage: `@room-name/` directories under the signals base, with membership
+//! tracked in `_rooms.yaml`.
+//!
+//! Every agent is always in its implicit project room (from cwd).
+//! Named rooms are explicit and opt-in via `attend room join <name>`.
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// Room membership entry.
+#[derive(Debug, Clone)]
+pub struct RoomEntry {
+    /// Whether this room persists when empty.
+    pub pinned: bool,
+    /// Session IDs currently in this room.
+    pub members: Vec<String>,
+}
+
+/// Room state manager.
+pub struct Rooms {
+    base: PathBuf,
+    session_id: String,
+}
+
+const ROOM_PREFIX: &str = "@";
+
+impl Rooms {
+    pub fn new(signals_base: &Path, session_id: &str) -> Self {
+        Self {
+            base: signals_base.to_path_buf(),
+            session_id: session_id.to_string(),
+        }
+    }
+
+    /// Path to a named room's signal directory.
+    pub fn room_dir(&self, name: &str) -> PathBuf {
+        self.base.join(format!("{ROOM_PREFIX}{name}"))
+    }
+
+    /// Path to the rooms state file.
+    fn state_path(&self) -> PathBuf {
+        self.base.join("_rooms.yaml")
+    }
+
+    /// Join a named room. Creates the room if it doesn't exist.
+    pub fn join(&self, name: &str, pin: bool) -> Result<(), String> {
+        validate_room_name(name)?;
+        let dir = self.room_dir(name);
+        fs::create_dir_all(&dir).map_err(|e| format!("creating room dir: {e}"))?;
+
+        let mut state = self.load_state();
+        let entry = state.entry(name.to_string()).or_insert(RoomEntry {
+            pinned: false,
+            members: Vec::new(),
+        });
+        if !entry.members.contains(&self.session_id) {
+            entry.members.push(self.session_id.clone());
+        }
+        if pin {
+            entry.pinned = true;
+        }
+        self.save_state(&state);
+        Ok(())
+    }
+
+    /// Leave a named room.
+    pub fn leave(&self, name: &str) -> Result<(), String> {
+        let mut state = self.load_state();
+        if let Some(entry) = state.get_mut(name) {
+            entry.members.retain(|m| m != &self.session_id);
+        }
+        self.save_state(&state);
+        self.cleanup_if_empty(name, &state);
+        Ok(())
+    }
+
+    /// Pin a room so it persists when empty.
+    pub fn pin(&self, name: &str) {
+        let mut state = self.load_state();
+        if let Some(entry) = state.get_mut(name) {
+            entry.pinned = true;
+            self.save_state(&state);
+        }
+    }
+
+    /// Unpin a room.
+    pub fn unpin(&self, name: &str) {
+        let mut state = self.load_state();
+        if let Some(entry) = state.get_mut(name) {
+            entry.pinned = false;
+            self.save_state(&state);
+        }
+        self.cleanup_if_empty(name, &state);
+    }
+
+    /// Dissolve a room — remove it and notify members.
+    pub fn dissolve(&self, name: &str) -> Vec<String> {
+        let mut state = self.load_state();
+        let members = state
+            .remove(name)
+            .map(|e| e.members)
+            .unwrap_or_default();
+        self.save_state(&state);
+
+        // Remove the signal directory
+        let dir = self.room_dir(name);
+        if dir.is_dir() {
+            fs::remove_dir_all(&dir).ok();
+        }
+        members
+    }
+
+    /// List rooms this session has joined.
+    pub fn my_rooms(&self) -> Vec<(String, bool)> {
+        let state = self.load_state();
+        state
+            .iter()
+            .filter(|(_, entry)| entry.members.contains(&self.session_id))
+            .map(|(name, entry)| (name.clone(), entry.pinned))
+            .collect()
+    }
+
+    /// List all active rooms with member counts and pin state.
+    pub fn all_rooms(&self) -> Vec<(String, usize, bool)> {
+        let state = self.load_state();
+        let mut rooms: Vec<(String, usize, bool)> = state
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.members.len(), entry.pinned))
+            .collect();
+        rooms.sort_by(|a, b| a.0.cmp(&b.0));
+        rooms
+    }
+
+    /// Get room names this session is in (for signal routing).
+    #[allow(dead_code)] // Used by signal routing (task 27)
+    pub fn joined_room_names(&self) -> Vec<String> {
+        self.my_rooms().into_iter().map(|(name, _)| name).collect()
+    }
+
+    /// Get signal directories for all rooms this session should receive from.
+    #[allow(dead_code)] // Used by signal routing (task 27)
+    /// Includes: project room, joined named rooms, broadcast.
+    pub fn receive_dirs(&self, project_dir: &str) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+
+        // Project room (always)
+        dirs.push(self.base.join(encode_project(project_dir)));
+
+        // Named rooms
+        for name in self.joined_room_names() {
+            dirs.push(self.room_dir(&name));
+        }
+
+        // Broadcast (always)
+        dirs.push(self.base.join("_broadcast"));
+
+        dirs
+    }
+
+    /// Clean up stale members (sessions that no longer exist).
+    pub fn cleanup_stale(&self) {
+        let mut state = self.load_state();
+        let mut changed = false;
+
+        for entry in state.values_mut() {
+            let before = entry.members.len();
+            entry.members.retain(|sid| session_alive(sid));
+            if entry.members.len() != before {
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.save_state(&state);
+        }
+
+        // Clean up empty unpinned rooms
+        let to_remove: Vec<String> = state
+            .iter()
+            .filter(|(_, e)| e.members.is_empty() && !e.pinned)
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        for name in &to_remove {
+            let dir = self.room_dir(name);
+            if dir.is_dir() {
+                fs::remove_dir_all(&dir).ok();
+            }
+        }
+
+        if !to_remove.is_empty() {
+            for name in &to_remove {
+                state.remove(name);
+            }
+            self.save_state(&state);
+        }
+    }
+
+    // ── State persistence ──────────────────────────────────────
+
+    fn load_state(&self) -> HashMap<String, RoomEntry> {
+        let path = self.state_path();
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => return HashMap::new(),
+        };
+        parse_rooms_yaml(&content)
+    }
+
+    fn save_state(&self, state: &HashMap<String, RoomEntry>) {
+        let path = self.state_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        let content = serialize_rooms_yaml(state);
+        fs::write(&path, content).ok();
+    }
+
+    fn cleanup_if_empty(&self, name: &str, state: &HashMap<String, RoomEntry>) {
+        if let Some(entry) = state.get(name) {
+            if entry.members.is_empty() && !entry.pinned {
+                let dir = self.room_dir(name);
+                if dir.is_dir() {
+                    fs::remove_dir_all(&dir).ok();
+                }
+                // Remove from state
+                let mut state = state.clone();
+                state.remove(name);
+                self.save_state(&state);
+            }
+        }
+    }
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+
+fn validate_room_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("room name cannot be empty".to_string());
+    }
+    if name.starts_with('_') || name.starts_with('@') {
+        return Err("room name cannot start with _ or @".to_string());
+    }
+    if name.contains('/') || name.contains(' ') {
+        return Err("room name cannot contain / or spaces".to_string());
+    }
+    if name == "broadcast" {
+        return Err("'broadcast' is reserved".to_string());
+    }
+    Ok(())
+}
+
+/// Check if a Claude Code session is still alive by looking for its lock dir.
+fn session_alive(session_id: &str) -> bool {
+    // Claude sessions create dirs under ~/.claude/projects/
+    // A session is alive if its PID parent process exists
+    // For now, be conservative: assume alive (stale cleanup is best-effort)
+    let _ = session_id;
+    true // TODO: implement proper liveness check
+}
+
+/// Encode a project path: '/', '_', '.' → '-'
+#[allow(dead_code)] // Used by receive_dirs
+fn encode_project(path: &str) -> String {
+    path.chars()
+        .map(|c| match c {
+            '/' | '_' | '.' => '-',
+            _ => c,
+        })
+        .collect()
+}
+
+// ── Minimal YAML parser/serializer ─────────────────────────────
+// Keeps attend dependency-free on serde.
+
+fn parse_rooms_yaml(content: &str) -> HashMap<String, RoomEntry> {
+    let mut rooms = HashMap::new();
+    let mut current_room: Option<String> = None;
+    let mut current_pinned = false;
+    let mut current_members: Vec<String> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        let indent = line.len() - line.trim_start().len();
+
+        // Top-level: room name
+        if indent == 0 && trimmed.ends_with(':') {
+            // Save previous room
+            if let Some(ref name) = current_room {
+                rooms.insert(
+                    name.clone(),
+                    RoomEntry {
+                        pinned: current_pinned,
+                        members: current_members.clone(),
+                    },
+                );
+            }
+            current_room = Some(trimmed.trim_end_matches(':').to_string());
+            current_pinned = false;
+            current_members = Vec::new();
+            continue;
+        }
+
+        // Second-level: room properties
+        if indent == 2 {
+            if let Some((key, value)) = trimmed.split_once(':') {
+                let key = key.trim();
+                let value = value.trim();
+                match key {
+                    "pinned" => current_pinned = value == "true",
+                    "members" => {} // array header, items follow
+                    _ => {}
+                }
+            }
+        }
+
+        // Third-level: member list items
+        if indent == 4 {
+            if let Some(member) = trimmed.strip_prefix("- ") {
+                current_members.push(member.to_string());
+            }
+        }
+    }
+
+    // Save last room
+    if let Some(ref name) = current_room {
+        rooms.insert(
+            name.clone(),
+            RoomEntry {
+                pinned: current_pinned,
+                members: current_members,
+            },
+        );
+    }
+
+    rooms
+}
+
+fn serialize_rooms_yaml(state: &HashMap<String, RoomEntry>) -> String {
+    let mut out = String::new();
+    let mut names: Vec<&String> = state.keys().collect();
+    names.sort();
+
+    for name in names {
+        let entry = &state[name];
+        out.push_str(&format!("{name}:\n"));
+        out.push_str(&format!("  pinned: {}\n", entry.pinned));
+        out.push_str("  members:\n");
+        for member in &entry.members {
+            out.push_str(&format!("    - {member}\n"));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_room_name() {
+        assert!(validate_room_name("deploy").is_ok());
+        assert!(validate_room_name("my-room").is_ok());
+        assert!(validate_room_name("").is_err());
+        assert!(validate_room_name("_internal").is_err());
+        assert!(validate_room_name("@bad").is_err());
+        assert!(validate_room_name("has/slash").is_err());
+        assert!(validate_room_name("has space").is_err());
+        assert!(validate_room_name("broadcast").is_err());
+    }
+
+    #[test]
+    fn test_yaml_roundtrip() {
+        let mut state = HashMap::new();
+        state.insert(
+            "deploy".to_string(),
+            RoomEntry {
+                pinned: true,
+                members: vec!["session-abc".to_string(), "session-xyz".to_string()],
+            },
+        );
+        state.insert(
+            "collab".to_string(),
+            RoomEntry {
+                pinned: false,
+                members: vec!["session-abc".to_string()],
+            },
+        );
+
+        let yaml = serialize_rooms_yaml(&state);
+        let parsed = parse_rooms_yaml(&yaml);
+
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed["deploy"].pinned);
+        assert_eq!(parsed["deploy"].members.len(), 2);
+        assert!(!parsed["collab"].pinned);
+        assert_eq!(parsed["collab"].members.len(), 1);
+    }
+
+    #[test]
+    fn test_encode_project() {
+        assert_eq!(encode_project("/home/aaron/.claude"), "-home-aaron--claude");
+    }
+}

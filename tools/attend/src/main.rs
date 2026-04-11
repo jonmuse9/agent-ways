@@ -1,4 +1,5 @@
 mod config;
+mod rooms;
 mod state;
 mod emit;
 mod sensors;
@@ -882,6 +883,124 @@ fn own_session_id() -> Option<String> {
 
 // --- Entry point ---
 
+fn get_rooms() -> rooms::Rooms {
+    let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
+    rooms::Rooms::new(&signals_base(), &session_id)
+}
+
+fn cmd_room(args: &[String]) {
+    let r = get_rooms();
+
+    match args.first().map(|s| s.as_str()) {
+        Some("join") => {
+            let name = match args.get(1) {
+                Some(n) => n,
+                None => {
+                    eprintln!("usage: attend room join <name> [--pin]");
+                    std::process::exit(1);
+                }
+            };
+            let pin = args.iter().any(|a| a == "--pin");
+            match r.join(name, pin) {
+                Ok(()) => {
+                    let suffix = if pin { " (pinned)" } else { "" };
+                    println!("[attend] room: joined {name}{suffix}");
+                }
+                Err(e) => {
+                    eprintln!("[attend] room: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some("leave") => {
+            let name = match args.get(1) {
+                Some(n) => n,
+                None => {
+                    eprintln!("usage: attend room leave <name>");
+                    std::process::exit(1);
+                }
+            };
+            r.leave(name).ok();
+            println!("[attend] room: left {name}");
+        }
+        Some("pin") => {
+            let name = match args.get(1) {
+                Some(n) => n,
+                None => {
+                    eprintln!("usage: attend room pin <name>");
+                    std::process::exit(1);
+                }
+            };
+            r.pin(name);
+            println!("[attend] room: pinned {name}");
+        }
+        Some("unpin") => {
+            let name = match args.get(1) {
+                Some(n) => n,
+                None => {
+                    eprintln!("usage: attend room unpin <name>");
+                    std::process::exit(1);
+                }
+            };
+            r.unpin(name);
+            println!("[attend] room: unpinned {name}");
+        }
+        Some("dissolve") => {
+            let name = match args.get(1) {
+                Some(n) => n,
+                None => {
+                    eprintln!("usage: attend room dissolve <name>");
+                    std::process::exit(1);
+                }
+            };
+            let members = r.dissolve(name);
+            if members.is_empty() {
+                println!("[attend] room: dissolved {name} (was empty)");
+            } else {
+                println!("[attend] room: dissolved {name} ({} members removed)", members.len());
+            }
+        }
+        Some("list") | None => {
+            let my = r.my_rooms();
+            if my.is_empty() {
+                println!("not in any named rooms (project room only)");
+            } else {
+                let mut t = agent_fmt::Table::new(&["Room", "Pinned"]);
+                for (name, pinned) in &my {
+                    t.add(vec![name.as_str(), if *pinned { "yes" } else { "no" }]);
+                }
+                t.print();
+            }
+        }
+        Some(unknown) => {
+            eprintln!("attend room: unknown subcommand '{unknown}' — try join, leave, list, pin, unpin, dissolve");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_rooms() {
+    let r = get_rooms();
+    r.cleanup_stale();
+    let all = r.all_rooms();
+
+    if all.is_empty() {
+        println!("no active rooms");
+        return;
+    }
+
+    let mut t = agent_fmt::Table::new(&["Room", "Members", "Pinned"]);
+    t.align(1, agent_fmt::Align::Right);
+    for (name, count, pinned) in &all {
+        t.add(vec![
+            name.as_str(),
+            &count.to_string(),
+            if *pinned { "yes" } else { "no" },
+        ]);
+    }
+    t.print();
+}
+
 fn cmd_focus(args: &[String]) {
     let focus_file = signals_base().join("focus");
 
@@ -1011,6 +1130,12 @@ fn main() {
         Some("send") => {
             cmd_send(&args[1..]);
         }
+        Some("room") => {
+            cmd_room(&args[1..]);
+        }
+        Some("rooms") => {
+            cmd_rooms();
+        }
         Some("focus") => {
             cmd_focus(&args[1..]);
         }
@@ -1065,7 +1190,9 @@ fn main() {
                 ("peers",  "List active Claude Code sessions"),
                 ("inbox",  "Read pending messages from peers"),
                 ("send",   "Send a signal to peer sessions"),
-                ("focus",  "Manage focus group (add/remove/clear/list peer projects)"),
+                ("room",   "Join/leave named rooms (join, leave, list, pin, unpin, dissolve)"),
+                ("rooms",  "List all active rooms with members"),
+                ("focus",  "Manage focus group [deprecated — use room]"),
                 ("config",      "Manage configuration (init/show/path)"),
                 ("permissions", "Audit sensor permissions against settings.json"),
                 ("status",      "Show running instances, signals, and focus state"),
