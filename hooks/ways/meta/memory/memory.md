@@ -6,6 +6,7 @@ threshold: 80
 pattern: remember|save.*(to|this|that).*memory|note.*(for|this).*(later|next)|don't forget|keep.*in.*mind
 macro: prepend
 scope: agent
+requires: ["Bash(jq:*)", "Bash(sed:*)", "Bash(ways:*)", "Bash(wc:*)"]
 ---
 <!-- epistemic: convention -->
 # Memory

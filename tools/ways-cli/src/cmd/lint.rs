@@ -341,6 +341,42 @@ fn lint_file(
         }
     }
 
+    // requires: field validation (ADR-116)
+    let has_macro = has_field(&fm_str, "macro");
+    let has_requires = has_field(&fm_str, "requires");
+    if has_macro && !has_requires {
+        if fix {
+            // Scan adjacent macro.sh for external commands → generate requires:
+            let macro_path = path.parent().map(|p| p.join("macro.sh"));
+            if let Some(ref mp) = macro_path {
+                if mp.is_file() {
+                    let reqs = scan_macro_requires(mp);
+                    if !reqs.is_empty() {
+                        let requires_yaml = format_requires_yaml(&reqs);
+                        content = insert_requires_field(&content, &requires_yaml);
+                        modified = true;
+                        *fixes += 1;
+                        eprintln!("  FIXED: {rel} — added requires: [{}]", reqs.join(", "));
+                    }
+                }
+            }
+        } else {
+            eprintln!("  WARNING: {rel} — macro: without requires: (run --fix to auto-populate)");
+            *warnings += 1;
+        }
+    }
+    if has_requires {
+        // Validate requires: values are well-formed permission strings
+        if let Some(reqs) = extract_requires_list(&fm_str) {
+            for req in &reqs {
+                if !is_valid_permission(req) {
+                    eprintln!("  ERROR: {rel} — invalid requires value '{req}' (expected: Tool, Tool(scope), or *)");
+                    *errors += 1;
+                }
+            }
+        }
+    }
+
     // Trigger enum
     if let Some(val) = get_field_value(&fm_str, "trigger") {
         if !schema.valid_triggers.iter().any(|v| v == &val) {
@@ -631,6 +667,243 @@ fn extract_string_list(doc: &serde_yaml::Value, keys: &[&str]) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ── ADR-116: requires field helpers ─────────────────────────────
+
+/// Known external commands that map to Bash(cmd:*) permissions.
+/// Shell builtins and control flow keywords are excluded.
+const EXTERNAL_COMMANDS: &[&str] = &[
+    "attend", "awk", "basename", "cargo", "cat", "chmod", "cp", "curl", "cut",
+    "date", "df", "diff", "dirname", "du", "file", "find", "gh", "git", "grep",
+    "head", "id", "jq", "ln", "ls", "make", "mkdir", "mv", "node", "npm",
+    "pnpm", "ps", "python3", "realpath", "rg", "rm", "sed", "sha256sum",
+    "sort", "stat", "tail", "tee", "touch", "tr", "tree", "uname", "uniq",
+    "ways", "wc", "which", "xargs", "yarn",
+];
+
+/// Scan a macro.sh file and extract external commands → permission strings.
+fn scan_macro_requires(path: &Path) -> Vec<String> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut found: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Skip comments and empty lines
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Look for external commands: word boundaries in the line
+        for cmd in EXTERNAL_COMMANDS {
+            if line_uses_command(trimmed, cmd) && !found.contains(cmd) {
+                found.push(cmd);
+            }
+        }
+    }
+
+    found.sort();
+
+    // Also check if the script reads files (common: cat, source, .)
+    let mut perms: Vec<String> = Vec::new();
+
+    // Check if script needs Read access (reads files outside macro dir)
+    let needs_read = found.iter().any(|c| matches!(*c, "cat" | "head" | "tail" | "ls" | "file" | "stat" | "find" | "tree"));
+    if needs_read {
+        perms.push("Read".to_string());
+    }
+
+    for cmd in &found {
+        perms.push(format!("Bash({cmd}:*)"));
+    }
+
+    perms
+}
+
+/// Check if a shell line uses a specific command (not just as a substring).
+fn line_uses_command(line: &str, cmd: &str) -> bool {
+    // Match command at line start, after pipe, after $(), after backtick,
+    // after &&, after ||, after ;, or after assignment
+    for token in shell_tokens(line) {
+        if token == cmd {
+            return true;
+        }
+    }
+    false
+}
+
+/// Simple shell tokenizer — extracts tokens in "command position".
+/// Command position: first word of line, after |, &&, ||, ;, or inside $().
+/// Also handles VAR=$(cmd ...) and trap 'cmd ...' patterns.
+fn shell_tokens(line: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut expect_cmd = true; // first word is a command
+
+    for word in line.split_whitespace() {
+        // Handle VAR=$(cmd — split on $( inside the word
+        let subshell_word = if let Some(pos) = word.find("$(") {
+            let after = &word[pos + 2..];
+            if !after.is_empty() {
+                Some(after)
+            } else {
+                None // trailing $( — next word is the command
+            }
+        } else {
+            None
+        };
+
+        // If we extracted a command from inside $(), process it
+        if let Some(sw) = subshell_word {
+            let clean = sw
+                .trim_start_matches('\'')
+                .trim_start_matches('"')
+                .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '-');
+            if !clean.is_empty() && !clean.starts_with('-') {
+                tokens.push(clean);
+            }
+        }
+
+        // Detect if this word itself starts a subshell/substitution
+        let starts_subshell = word.starts_with("$(")
+            || word.starts_with('`')
+            || word.starts_with('(');
+
+        let is_cmd = expect_cmd || starts_subshell;
+
+        // Strip leading shell syntax to get to the actual command
+        let w = word
+            .trim_start_matches("$(")
+            .trim_start_matches('`')
+            .trim_start_matches('(')
+            .trim_start_matches('\'')
+            .trim_start_matches('"');
+
+        if is_cmd && !w.is_empty() && !w.starts_with('-') && !w.contains('=') {
+            let clean = w.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '-');
+            if !clean.is_empty() && !tokens.contains(&clean) {
+                tokens.push(clean);
+            }
+            expect_cmd = false;
+        }
+
+        // trap 'cmd ...' — the first word inside the quotes is a command
+        if expect_cmd && w == "trap" {
+            // Next whitespace-separated token will be the quoted command
+            expect_cmd = false; // trap itself consumed
+            // We'll catch the command via the quote-stripping on the next token
+            // when it's not in command position, but we need a special case
+        }
+
+        // These signal the next word is a command
+        if word.ends_with('|') || word == "&&" || word == "||" || word.ends_with(';')
+            || word == "|" || word.ends_with("$(") || word.ends_with('`')
+        {
+            expect_cmd = true;
+        }
+    }
+    tokens
+}
+
+/// Format requires list as YAML inline array for frontmatter.
+fn format_requires_yaml(reqs: &[String]) -> String {
+    let items: Vec<String> = reqs.iter().map(|r| format!("\"{}\"", r)).collect();
+    format!("requires: [{}]", items.join(", "))
+}
+
+/// Insert a requires: field into frontmatter, before the closing ---.
+fn insert_requires_field(content: &str, requires_line: &str) -> String {
+    let mut lines: Vec<&str> = content.lines().collect();
+    // Find the closing --- of frontmatter
+    let mut close_idx = None;
+    let mut in_fm = false;
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 && *line == "---" {
+            in_fm = true;
+            continue;
+        }
+        if in_fm && *line == "---" {
+            close_idx = Some(i);
+            break;
+        }
+    }
+
+    if let Some(idx) = close_idx {
+        lines.insert(idx, requires_line);
+    }
+
+    let mut result = lines.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
+/// Parse requires: field from frontmatter as a list of strings.
+/// Handles both inline array [a, b] and YAML list (- a) formats.
+fn extract_requires_list(fm: &str) -> Option<Vec<String>> {
+    let prefix = "requires:";
+    for (i, line) in fm.lines().enumerate() {
+        if !line.starts_with(prefix) {
+            continue;
+        }
+        let rest = line[prefix.len()..].trim();
+
+        // Inline array: requires: ["Bash(gh:*)", "Read"]
+        if rest.starts_with('[') && rest.ends_with(']') {
+            let inner = &rest[1..rest.len() - 1];
+            let items: Vec<String> = inner
+                .split(',')
+                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            return Some(items);
+        }
+
+        // YAML list: requires:\n  - Bash(gh:*)
+        if rest.is_empty() {
+            let mut items = Vec::new();
+            for subsequent in fm.lines().skip(i + 1) {
+                let trimmed = subsequent.trim();
+                if let Some(val) = trimmed.strip_prefix("- ") {
+                    items.push(val.trim_matches('"').trim_matches('\'').to_string());
+                } else {
+                    break;
+                }
+            }
+            return Some(items);
+        }
+
+        return None;
+    }
+    None
+}
+
+/// Validate that a permission string is well-formed.
+fn is_valid_permission(perm: &str) -> bool {
+    // Wildcard
+    if perm == "*" {
+        return true;
+    }
+    // Simple tool name: Read, Write, Edit, Bash
+    if matches!(perm, "Read" | "Write" | "Edit" | "Bash") {
+        return true;
+    }
+    // Tool(scope): Read(/path/**), Bash(git:*), Bash(*)
+    if let Some(paren_start) = perm.find('(') {
+        if !perm.ends_with(')') {
+            return false;
+        }
+        let tool = &perm[..paren_start];
+        if !matches!(tool, "Read" | "Write" | "Edit" | "Bash") {
+            return false;
+        }
+        let scope = &perm[paren_start + 1..perm.len() - 1];
+        !scope.is_empty()
+    } else {
+        false
+    }
 }
 
 use crate::util::{detect_project_dir, home_dir};

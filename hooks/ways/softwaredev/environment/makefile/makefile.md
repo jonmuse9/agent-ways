@@ -7,6 +7,7 @@ threshold: 1.5
 redisclose: 10
 scope: agent, subagent
 macro: append
+requires: ["Bash(awk:*)", "Bash(make:*)", "Bash(sort:*)", "Bash(tr:*)"]
 ---
 <!-- epistemic: convention -->
 # Makefile Way

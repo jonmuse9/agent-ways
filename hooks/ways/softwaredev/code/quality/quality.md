@@ -7,6 +7,7 @@ redisclose: 15
 macro: append
 scan_exclude: \.md$|\.lock$|\.min\.(js|css)$|\.generated\.|\.bundle\.|vendor/|node_modules/|dist/|build/|__pycache__/
 scope: agent, subagent
+requires: ["Read", "Bash(awk:*)", "Bash(dirname:*)", "Bash(file:*)", "Bash(git:*)", "Bash(grep:*)", "Bash(head:*)", "Bash(sort:*)", "Bash(wc:*)"]
 ---
 <!-- epistemic: heuristic -->
 # Code Quality Way

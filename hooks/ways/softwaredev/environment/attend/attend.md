@@ -8,6 +8,7 @@ commands: attend
 redisclose: 15
 macro: append
 scope: agent, subagent
+requires: ["Bash(attend:*)", "Bash(grep:*)", "Bash(ps:*)", "Bash(sed:*)"]
 ---
 <!-- epistemic: tool-knowledge -->
 # Attend

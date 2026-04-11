@@ -1,5 +1,6 @@
 ---
 macro: prepend
+requires: ["Bash(awk:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(sort:*)", "Bash(tr:*)", "Bash(wc:*)"]
 ---
 # Core Ways of Working
 

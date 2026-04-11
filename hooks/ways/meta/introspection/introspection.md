@@ -6,6 +6,7 @@ pattern: pull.?request|create.*pr|pr.*create|write.*pr|open.*pr
 commands: gh\ pr\ create
 macro: prepend
 scope: agent
+requires: ["Bash(jq:*)", "Bash(ways:*)"]
 ---
 <!-- epistemic: heuristic -->
 # Introspection Way
