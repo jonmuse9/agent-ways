@@ -15,17 +15,17 @@ pub trait AgentConfig {
 }
 
 /// Resolve output language with cascade:
-///   1. ways.json `output_language` (explicit override)
+///   1. Config language field (from ways.json / XDG config / project overlay)
 ///   2. Active agent's language setting
 ///   3. System locale ($LANG)
 ///   4. "en" fallback
+///
+/// config::global() — future migration: ctx.config.language
 pub fn resolve_language() -> String {
-    // 1. ways.json explicit override
-    let ways_lang = ways_json_language();
-    if let Some(lang) = ways_lang {
-        if lang != "auto" {
-            return normalize_language(&lang);
-        }
+    // 1. Config (layered: ways.json → XDG → project)
+    let cfg_lang = &crate::config::global().language;
+    if cfg_lang != "auto" {
+        return normalize_language(cfg_lang);
     }
 
     // 2. Agent config (currently only Claude Code)
@@ -43,8 +43,9 @@ pub fn resolve_language() -> String {
     "en".to_string()
 }
 
-/// Read output_language from ways.json.
-fn ways_json_language() -> Option<String> {
+/// Legacy: read output_language from ways.json directly.
+/// Kept for callers outside the config chain. Prefer config::global().language.
+fn _ways_json_language() -> Option<String> {
     let config = crate::util::home_dir().join(".claude/ways.json");
     let content = std::fs::read_to_string(config).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;

@@ -126,10 +126,13 @@ fn parse_candidate(id: &str, path: &Path, content: &str) -> Option<WayCandidate>
         files: get_fm_field(&fm, "files"),
         description: get_fm_field(&fm, "description").unwrap_or_default(),
         vocabulary: get_fm_field(&fm, "vocabulary").unwrap_or_default(),
+        // config::global() — future migration: ctx.config.bm25_threshold
         threshold: get_fm_field(&fm, "threshold")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(2.0),
-        scope: get_fm_field(&fm, "scope").unwrap_or_else(|| "agent".to_string()),
+            .unwrap_or(crate::config::global().bm25_threshold),
+        // config::global() — future migration: ctx.config.default_scope
+        scope: get_fm_field(&fm, "scope")
+            .unwrap_or_else(|| crate::config::global().default_scope.clone()),
         when_project: get_when_field(&fm, "project"),
         when_file_exists: get_when_field(&fm, "file_exists"),
         trigger: get_fm_field(&fm, "trigger"),

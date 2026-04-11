@@ -397,7 +397,8 @@ fn parent_threshold(way_id: &str, threshold: f64, session_id: &str) -> f64 {
     while let Some(idx) = path.rfind('/') {
         path = path[..idx].to_string();
         if session::way_is_shown(&path, session_id) {
-            return threshold * 0.8;
+            // config::global() — future migration: ctx.config.parent_threshold_multiplier
+            return threshold * crate::config::global().parent_threshold_multiplier;
         }
     }
     threshold

@@ -7,6 +7,20 @@
 //!   4. $PROJECT/.claude/ways.yaml (project scope)
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+/// Global config, loaded once on first access.
+/// Access via `config::global()` — grep-friendly for future context refactor.
+static GLOBAL: LazyLock<Config> = LazyLock::new(|| {
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .unwrap_or_else(|_| std::env::var("PWD").unwrap_or_else(|_| ".".to_string()));
+    Config::load(&project_dir)
+});
+
+/// Access the process-wide config. Every call site is a future `ctx.config` migration point.
+pub fn global() -> &'static Config {
+    &GLOBAL
+}
 
 /// Ways configuration.
 #[derive(Debug, Clone)]
