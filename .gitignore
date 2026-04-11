@@ -127,6 +127,16 @@ hooks/ways/.obsidian/
 !tools/mmaid/*
 !tools/agent-fmt/
 !tools/agent-fmt/**
+!tools/sensor-trait/
+!tools/sensor-trait/**
+!tools/sensor-git/
+!tools/sensor-git/**
+!tools/sensor-context/
+!tools/sensor-context/**
+!tools/sensor-peers/
+!tools/sensor-peers/**
+!tools/sensor-processes/
+!tools/sensor-processes/**
 !tools/ways-cli/
 !tools/ways-cli/**
 # ways-cli build artifacts (tracked via .gitignore inside ways-cli/)
