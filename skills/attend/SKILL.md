@@ -43,31 +43,44 @@ All commands below are one-shot — run with Bash, not Monitor.
 
 ### Peer messaging
 
-Send defaults to your current scope (own project + focus group). Always wrap the message in double quotes to prevent shell metacharacter expansion (`?`, `*`, `!`).
+Send defaults to your current scope (own project + focus groups). Always wrap the message in double quotes to prevent shell metacharacter expansion (`?`, `*`, `!`).
 
 ```bash
 attend send "your message here"
+attend send --focus deploy "message to a focus group"
 attend send --broadcast "important announcement for all sessions"
 attend send --to /home/user/other-project "directed message"
 ```
 
 ### Focus groups
 
-A focus group is a set of peer project directories you listen to and send to. Send scope mirrors receive scope.
+Named groups that agents focus on for shared signal routing. Groups are dynamic — join and leave as needed.
 
 ```bash
-attend focus list                    # show current focus group
-attend focus add ~/Projects/foo      # add a peer project
-attend focus add ~/temp ~/bar        # add multiple at once
-attend focus remove ~/temp           # remove a peer
-attend focus clear                   # back to project-only mode
+attend focus list                    # show groups you're focused on
+attend focus on deploy               # focus on the "deploy" group
+attend focus on infra --pin          # focus + pin (persists when empty)
+attend focus off deploy              # release focus on a group
+attend focus clear                   # release all groups (project only)
+attend focus all                     # list all active groups with members
+attend focus dissolve deploy         # remove a group entirely
+```
+
+### Scenes
+
+Named presets that reconfigure focus group membership.
+
+```bash
+attend scene private                 # leave all groups (project only)
+attend scene open                    # join the shared "open" group
+attend scenes                        # list available scenes
 ```
 
 ### Discovery and status
 
 ```bash
-attend peers                         # list active Claude Code sessions
-attend status                        # running instances, pending signals, focus state
+attend peers                         # list active sessions with focus groups
+attend status                        # instances, signals, and focus state
 ```
 
 ### Stopping
