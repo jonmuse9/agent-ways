@@ -437,21 +437,10 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 
 // ── Domain disable check ────────────────────────────────────────
 
-/// Check if a domain is disabled in ways.json.
+/// Check if a domain is disabled.
+/// config::global() — future migration: ctx.config.disabled_domains
 pub fn domain_disabled(domain: &str) -> bool {
-    let config = home_dir().join(".claude/ways.json");
-    let content = match std::fs::read_to_string(&config) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    let parsed: serde_json::Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    if let Some(disabled) = parsed.get("disabled").and_then(|v| v.as_array()) {
-        return disabled.iter().any(|v| v.as_str() == Some(domain));
-    }
-    false
+    crate::config::global().disabled_domains.iter().any(|d| d == domain)
 }
 
 

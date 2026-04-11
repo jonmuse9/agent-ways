@@ -9,8 +9,6 @@ use walkdir::WalkDir;
 pub fn run(json_output: bool) -> Result<()> {
     let xdg_cache = xdg_cache_dir().join("claude-ways/user");
     let ways_dir = home_dir().join(".claude/hooks/ways");
-    let ways_json = home_dir().join(".claude/ways.json");
-
     // Engine detection
     let way_embed = find_way_embed(&xdg_cache);
     let model_path = xdg_cache.join("minilm-l6-v2.gguf");
@@ -20,8 +18,8 @@ pub fn run(json_output: bool) -> Result<()> {
     let model_exists = model_path.is_file();
     let corpus_exists = corpus_path.is_file();
 
-    // Configured engine from ways.json
-    let configured = read_ways_json_engine(&ways_json);
+    // config::global() — future migration: ctx.config.matcher
+    let configured = crate::config::global().matcher.clone();
 
     // Active engine
     let engine = if way_embed.is_some() && model_exists && corpus_exists {
@@ -80,13 +78,8 @@ pub fn run(json_output: bool) -> Result<()> {
     // Output language
     let output_language = crate::agents::resolve_language();
 
-    // Disabled domains
-    let disabled: Vec<String> = std::fs::read_to_string(&ways_json)
-        .ok()
-        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-        .and_then(|v| v["disabled"].as_array().cloned())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-        .unwrap_or_default();
+    // config::global() — future migration: ctx.config.disabled_domains
+    let disabled = crate::config::global().disabled_domains.clone();
 
     if json_output {
         let output = json!({
@@ -204,14 +197,6 @@ fn find_way_embed(xdg_cache: &Path) -> Option<PathBuf> {
         return Some(bin);
     }
     None
-}
-
-fn read_ways_json_engine(path: &Path) -> String {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-        .and_then(|v| v["semantic_engine"].as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "auto".to_string())
 }
 
 fn count_ways(dir: &Path) -> (usize, usize) {

@@ -40,8 +40,9 @@ fn fixture_ways_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ways")
 }
 
-fn generate_corpus() -> PathBuf {
-    let corpus_dir = std::env::temp_dir().join("ways-sim-corpus");
+fn generate_corpus(name: &str) -> PathBuf {
+    // Per-test corpus dir avoids races when tests run in parallel
+    let corpus_dir = std::env::temp_dir().join(format!("ways-sim-corpus-{}-{}", name, std::process::id()));
     std::fs::create_dir_all(&corpus_dir).unwrap();
     let corpus_file = corpus_dir.join("ways-corpus.jsonl");
 
@@ -70,7 +71,7 @@ struct Session {
 impl Session {
     fn new(name: &str) -> Self {
         let id = format!("sim-{}-{}", name, std::process::id());
-        let corpus = generate_corpus();
+        let corpus = generate_corpus(name);
         // Clean any stale markers
         clean_markers(&id);
         Session { id, corpus }
