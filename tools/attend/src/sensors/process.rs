@@ -125,11 +125,19 @@ impl Sensor for ProcessSensor {
         }
 
         // Exited applications (were in prior, gone now)
-        let build_tools = ["cargo", "rustc", "make", "gcc", "g++", "go", "npm", "yarn", "tsc"];
+        // Build tools: exact match on process name (comm field from /proc)
+        let build_tools = [
+            "cargo", "rustc", "make", "cmake", "ninja",
+            "gcc", "g++", "cc", "c++", "clang", "clang++",
+            "go", "npm", "yarn", "pnpm", "tsc",
+            "mvn", "gradle", "pip", "pip3",
+        ];
         for app in self.prior.keys() {
             if !current.contains_key(app) {
-                let is_build = build_tools.iter().any(|t| app.contains(t));
+                let is_build = build_tools.contains(&app.as_str());
                 if is_build {
+                    // Affordance: Claude reads this notification and can invoke the command.
+                    // $CLAUDE_SESSION_ID is resolved by Claude when it runs the command.
                     observations.push((2.5, format!(
                         "{app} exited. Use `ways show attend build-complete --session $CLAUDE_SESSION_ID` for next steps"
                     )));
