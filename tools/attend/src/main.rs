@@ -1,5 +1,6 @@
 mod config;
 mod rooms;
+mod scenes;
 mod state;
 mod emit;
 mod sensors;
@@ -939,6 +940,44 @@ fn own_session_id() -> Option<String> {
 
 // --- Entry point ---
 
+fn cmd_scene(args: &[String]) {
+    let name = match args.first() {
+        Some(n) => n,
+        None => {
+            eprintln!("usage: attend scene <name>");
+            eprintln!("  try: attend scenes (to list available)");
+            std::process::exit(1);
+        }
+    };
+
+    let r = get_rooms();
+    match scenes::activate(name, &r) {
+        Ok(result) => println!("[attend] scene '{name}': {result}"),
+        Err(e) => {
+            eprintln!("[attend] scene: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_scenes() {
+    let all = scenes::load_scenes();
+    let mut names: Vec<&String> = all.keys().collect();
+    names.sort();
+
+    let mut t = agent_fmt::Table::new(&["Scene", "Rooms"]);
+    for name in &names {
+        let scene = &all[*name];
+        let rooms_str = if scene.rooms.is_empty() {
+            "(none — project only)".to_string()
+        } else {
+            scene.rooms.join(", ")
+        };
+        t.add(vec![name.as_str(), &rooms_str]);
+    }
+    t.print();
+}
+
 fn get_rooms() -> rooms::Rooms {
     let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
     rooms::Rooms::new(&signals_base(), &session_id)
@@ -1192,6 +1231,12 @@ fn main() {
         Some("rooms") => {
             cmd_rooms();
         }
+        Some("scene") => {
+            cmd_scene(&args[1..]);
+        }
+        Some("scenes") => {
+            cmd_scenes();
+        }
         Some("focus") => {
             cmd_focus(&args[1..]);
         }
@@ -1248,6 +1293,8 @@ fn main() {
                 ("send",   "Send a signal to peer sessions"),
                 ("room",   "Join/leave named rooms (join, leave, list, pin, unpin, dissolve)"),
                 ("rooms",  "List all active rooms with members"),
+                ("scene",  "Activate a named scene (reconfigure room membership)"),
+                ("scenes", "List available scenes"),
                 ("focus",  "Manage focus group [deprecated — use room]"),
                 ("config",      "Manage configuration (init/show/path)"),
                 ("permissions", "Audit sensor permissions against settings.json"),
