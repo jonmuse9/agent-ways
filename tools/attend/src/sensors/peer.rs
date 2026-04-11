@@ -86,6 +86,16 @@ impl PeerSensor {
         }
     }
 
+    /// Return a list of active peer sessions as (cwd, project_name, status, context_percent).
+    pub fn list_peers(&self) -> Vec<(String, String, String, f64)> {
+        let peers = self.discover_peers();
+        let mut result: Vec<_> = peers.values()
+            .map(|p| (p.cwd.clone(), p.project_name.clone(), p.status.to_string(), p.context_percent))
+            .collect();
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    }
+
     /// Mark all existing signal files as already seen so attend run
     /// only processes signals that arrive after startup.
     pub fn mark_existing_as_seen(&mut self, focus: &Focus) {
