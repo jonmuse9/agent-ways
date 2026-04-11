@@ -2,11 +2,13 @@ mod context;
 mod git;
 mod peer;
 mod process;
+mod script;
 
 pub use context::ContextSensor;
 pub use git::GitSensor;
 pub use peer::{PeerSensor, find_own_session_id};
 pub use process::ProcessSensor;
+pub use script::ScriptSensor;
 
 use crate::delta::DeltaAccumulator;
 use crate::tick::AdaptiveInterval;
