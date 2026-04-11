@@ -990,8 +990,10 @@ fn main() {
             println!("attend {} ({})", env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"));
         }
         Some("help") | Some("--help") | Some("-h") | None => {
+            let version = format!("v{} ({})", env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"));
             agent_fmt::Banner::new("ATTEND")
                 .subtitle("active awareness for Claude Code sessions")
+                .version(&version)
                 .gradient(&agent_fmt::GRADIENT_TEAL)
                 .print();
             println!("usage: attend <command>\n");

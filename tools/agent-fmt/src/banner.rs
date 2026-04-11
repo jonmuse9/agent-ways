@@ -42,6 +42,7 @@ pub struct Banner<'a> {
     text: &'a str,
     title: &'a str,
     subtitle: Option<&'a str>,
+    version: Option<&'a str>,
     gradient: &'a [&'a str],
 }
 
@@ -51,6 +52,7 @@ impl<'a> Banner<'a> {
             text,
             title: "A G E N T",
             subtitle: None,
+            version: None,
             gradient: &GRADIENT_CORAL,
         }
     }
@@ -62,6 +64,11 @@ impl<'a> Banner<'a> {
 
     pub fn subtitle(mut self, s: &'a str) -> Self {
         self.subtitle = Some(s);
+        self
+    }
+
+    pub fn version(mut self, v: &'a str) -> Self {
+        self.version = Some(v);
         self
     }
 
@@ -98,6 +105,9 @@ impl<'a> Banner<'a> {
 
         if let Some(sub) = self.subtitle {
             println!("  {DIM}{sub}{RESET}");
+        }
+        if let Some(ver) = self.version {
+            println!("  {DIM}{ver}{RESET}");
         }
         println!();
     }
