@@ -1,4 +1,4 @@
-use super::{Focus, Sensor};
+use sensor_trait::{Focus, Sensor};
 use std::collections::HashMap;
 use std::process::Command;
 use std::time::Duration;
@@ -94,6 +94,12 @@ impl ProcessSensor {
             "git",
         ];
         interesting.contains(&comm)
+    }
+}
+
+impl Default for ProcessSensor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

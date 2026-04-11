@@ -1,4 +1,4 @@
-use super::{Focus, Sensor};
+use sensor_trait::{Focus, Sensor};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -407,6 +407,12 @@ impl PeerSensor {
             }
             None => PeerStatus::Unknown,
         }
+    }
+}
+
+impl Default for PeerSensor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -1,4 +1,4 @@
-use super::{Focus, Sensor};
+use sensor_trait::{Focus, Sensor};
 use std::collections::HashSet;
 use std::process::Command;
 use std::time::Duration;
@@ -81,6 +81,12 @@ impl GitSensor {
             behind,
             head,
         })
+    }
+}
+
+impl Default for GitSensor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

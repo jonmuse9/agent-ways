@@ -1,0 +1,6 @@
+[package]
+name = "sensor-trait"
+version = "0.4.0"
+edition = "2021"
+description = "Sensor trait and runtime types for attend"
+license = "MIT"

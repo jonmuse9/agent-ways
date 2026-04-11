@@ -1,6 +1,11 @@
 [workspace]
 members = [
     "agent-fmt",
+    "sensor-trait",
+    "sensor-git",
+    "sensor-context",
+    "sensor-peers",
+    "sensor-processes",
     "ways-cli",
     "attend",
 ]

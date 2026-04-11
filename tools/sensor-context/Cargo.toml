@@ -1,0 +1,9 @@
+[package]
+name = "sensor-context"
+version = "0.4.0"
+edition = "2021"
+description = "Context sensor for attend — tracks context window usage and velocity"
+license = "MIT"
+
+[dependencies]
+sensor-trait = { path = "../sensor-trait" }

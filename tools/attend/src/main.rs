@@ -1,11 +1,9 @@
 mod config;
 mod state;
-mod tick;
-mod delta;
 mod emit;
 mod sensors;
 
-use sensors::{ContextSensor, Focus, GitSensor, PeerSensor, ProcessSensor, ScriptSensor, SensorSlot};
+use sensors::Focus;
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
@@ -122,81 +120,8 @@ fn cmd_run_with_catchup(catchup: bool) {
         format!("project + {}", names.join(", "))
     };
 
-    // Build sensor list from config
-    let mut enabled_names: Vec<String> = Vec::new();
-    let mut peer_sensor = PeerSensor::new();
-    if !catchup {
-        peer_sensor.mark_existing_as_seen(&focus);
-    }
-
-    let mut slots: Vec<SensorSlot> = Vec::new();
-
-    // Built-in sensors — check config for enabled/disabled and overrides
-    if cfg.sensors.get("context").map(|s| s.enabled).unwrap_or(true) {
-        let sc = cfg.sensors.get("context");
-        let sensor = ContextSensor::new();
-        slots.push(SensorSlot::new_with_config(
-            Box::new(sensor),
-            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(60)),
-            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(20)),
-            sc.map(|s| s.decay_threshold).unwrap_or(3),
-        ));
-        enabled_names.push("context".to_string());
-    }
-    if cfg.sensors.get("processes").map(|s| s.enabled).unwrap_or(true) {
-        let sc = cfg.sensors.get("processes");
-        slots.push(SensorSlot::new_with_config(
-            Box::new(ProcessSensor::new()),
-            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(30)),
-            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(5)),
-            sc.map(|s| s.decay_threshold).unwrap_or(5),
-        ));
-        enabled_names.push("processes".to_string());
-    }
-    if cfg.sensors.get("git").map(|s| s.enabled).unwrap_or(true) {
-        let sc = cfg.sensors.get("git");
-        slots.push(SensorSlot::new_with_config(
-            Box::new(GitSensor::new()),
-            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(30)),
-            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(10)),
-            sc.map(|s| s.decay_threshold).unwrap_or(4),
-        ));
-        enabled_names.push("git".to_string());
-    }
-    if cfg.sensors.get("peers").map(|s| s.enabled).unwrap_or(true) {
-        let sc = cfg.sensors.get("peers");
-        slots.push(SensorSlot::new_with_config(
-            Box::new(peer_sensor),
-            sc.map(|s| s.interval).unwrap_or(Duration::from_secs(30)),
-            sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(10)),
-            sc.map(|s| s.decay_threshold).unwrap_or(5),
-        ));
-        enabled_names.push("peers".to_string());
-    }
-
-    // Script sensors from config (+ entries with script: field)
-    for (name, sc) in &cfg.sensors {
-        if let Some(ref script) = sc.script {
-            if sc.enabled {
-                let sensor = ScriptSensor::new(
-                    name.clone(),
-                    script.clone(),
-                    focus.working_dir.clone(),
-                    sc.interval,
-                    sc.min_interval,
-                    sc.decay_threshold,
-                    sc.threshold,
-                );
-                slots.push(SensorSlot::new_with_config(
-                    Box::new(sensor),
-                    sc.interval,
-                    sc.min_interval,
-                    sc.decay_threshold,
-                ));
-                enabled_names.push(name.clone());
-            }
-        }
-    }
+    // Register sensors from config + feature flags
+    let (mut slots, enabled_names) = sensors::register_sensors(&cfg, &focus, catchup);
 
     // State persistence
     let session_id = own_session_id();
@@ -520,8 +445,13 @@ fn cmd_inbox() {
 }
 
 fn cmd_peers() {
-    let sensor = PeerSensor::new();
-    let peers = sensor.list_peers();
+    #[cfg(feature = "sensor-peers")]
+    let peers = {
+        let sensor = sensors::PeerSensor::new();
+        sensor.list_peers()
+    };
+    #[cfg(not(feature = "sensor-peers"))]
+    let peers: Vec<(String, String, String, String)> = Vec::new();
 
     if peers.is_empty() {
         println!("no active peer sessions");
@@ -590,8 +520,13 @@ fn cmd_send(args: &[String]) {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.clone());
 
-        let sensor = PeerSensor::new();
-        let peers = sensor.list_peers();
+        #[cfg(feature = "sensor-peers")]
+        let peers = {
+            let sensor = sensors::PeerSensor::new();
+            sensor.list_peers()
+        };
+        #[cfg(not(feature = "sensor-peers"))]
+        let peers: Vec<(String, String, String, String)> = Vec::new();
         let peer_paths: Vec<&str> = peers.iter().map(|(cwd, _, _, _)| cwd.as_str()).collect();
 
         if !peer_paths.contains(&resolved.as_str()) {
@@ -859,7 +794,10 @@ fn encode_project(path: &str) -> String {
 
 /// Delegate to the shared implementation in the peer sensor module.
 fn own_session_id() -> Option<String> {
-    sensors::find_own_session_id(std::process::id())
+    #[cfg(feature = "sensor-peers")]
+    { sensors::find_own_session_id(std::process::id()) }
+    #[cfg(not(feature = "sensor-peers"))]
+    { None }
 }
 
 // --- Entry point ---

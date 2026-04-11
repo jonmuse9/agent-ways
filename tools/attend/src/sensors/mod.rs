@@ -1,142 +1,125 @@
-mod context;
-mod git;
-mod peer;
-mod process;
+//! Sensor module — re-exports from sensor crates and local ScriptSensor.
+//!
+//! Sensor crates are wired in via feature flags. Each sensor is compiled only
+//! when its feature is enabled (default: all). Config controls runtime
+//! activation/deactivation independent of compilation.
+
 mod script;
 
-pub use context::ContextSensor;
-pub use git::GitSensor;
-pub use peer::{PeerSensor, find_own_session_id};
-pub use process::ProcessSensor;
+// Re-export from sensor-trait (always available)
+pub use sensor_trait::{Focus, Sensor, SensorSlot};
+
+// Re-export from sensor crates (feature-gated)
+#[cfg(feature = "sensor-git")]
+pub use sensor_git::GitSensor;
+
+#[cfg(feature = "sensor-context")]
+pub use sensor_context::ContextSensor;
+
+#[cfg(feature = "sensor-peers")]
+pub use sensor_peers::{PeerSensor, find_own_session_id};
+
+#[cfg(feature = "sensor-processes")]
+pub use sensor_processes::ProcessSensor;
+
+// ScriptSensor stays in attend — it's part of the orchestrator, not a sensor impl
 pub use script::ScriptSensor;
 
-use crate::delta::DeltaAccumulator;
-use crate::tick::AdaptiveInterval;
-use std::time::{Duration, Instant};
+// ── Sensor registration ─────────────────────────────────────────
 
-/// What Claude is currently focused on. Shapes sensor relevance and thresholds.
-#[derive(Clone, Debug)]
-pub struct Focus {
-    /// Short description of current work ("debugging auth module", "writing tests")
-    pub description: String,
-    /// Working directory — sensors can use this to scope observations
-    pub working_dir: String,
-    /// Keywords that increase sensor relevance when matched
-    pub keywords: Vec<String>,
-}
+use crate::config::Config;
+#[allow(unused_imports)]
+use std::time::Duration;
 
-impl Focus {
-    pub fn default_focus() -> Self {
-        Self {
-            description: "general session".to_string(),
-            working_dir: std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            keywords: Vec::new(),
-        }
-    }
-}
+/// Register all enabled sensors based on config and feature flags.
+///
+/// To add a new sensor crate:
+/// 1. Create the crate implementing sensor_trait::Sensor
+/// 2. Add it as an optional dep + feature in attend/Cargo.toml
+/// 3. Add a #[cfg(feature)] block below with register_builtin!
+///
+/// Config controls runtime: `-sensorname` in attend.yaml disables it.
+/// Feature flags control compilation: `--no-default-features` excludes it.
+#[allow(unused_variables)]
+pub fn register_sensors(
+    cfg: &Config,
+    focus: &Focus,
+    catchup: bool,
+) -> (Vec<SensorSlot>, Vec<String>) {
+    let mut slots: Vec<SensorSlot> = Vec::new();
+    let mut enabled_names: Vec<String> = Vec::new();
 
-/// A sensor observes some aspect of the environment or Claude's state.
-/// Sensors are polled by the tick loop on adaptive schedules.
-/// They return observations that feed into delta accumulators.
-pub trait Sensor {
-    /// Unique name for this sensor (used in output format and state keys)
-    fn name(&self) -> &str;
-
-    /// Poll the sensor's data source. Returns a list of observations.
-    /// Each observation is a (delta_magnitude, description) pair.
-    /// Empty vec = no change detected this tick.
-    fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)>;
-
-    /// Per-sensor emission threshold — accumulated magnitude needed before
-    /// this sensor is a candidate for disclosure
-    fn emission_threshold(&self) -> f64;
-
-    /// Adaptive interval configuration
-    fn base_interval(&self) -> Duration;
-    fn min_interval(&self) -> Duration;
-    #[allow(dead_code)]
-    fn decay_threshold(&self) -> u32;
-
-    /// Export state for checkpointing. Default: no state.
-    fn export_state(&self) -> Vec<(String, String)> { Vec::new() }
-
-    /// Import state from checkpoint. Default: no-op.
-    fn import_state(&mut self, _state: &[(String, String)]) {}
-}
-
-/// A sensor with its runtime state (interval, accumulator, scheduling)
-pub struct SensorSlot {
-    pub sensor: Box<dyn Sensor>,
-    pub interval: AdaptiveInterval,
-    pub accumulator: DeltaAccumulator,
-    pub next_fire: Instant,
-}
-
-impl SensorSlot {
-    #[allow(dead_code)]
-    pub fn new(sensor: Box<dyn Sensor>) -> Self {
-        let interval = AdaptiveInterval::new(
-            sensor.base_interval(),
-            sensor.min_interval(),
-            sensor.decay_threshold(),
-        );
-        Self {
-            accumulator: DeltaAccumulator::new(),
-            next_fire: Instant::now(),
-            interval,
-            sensor,
-        }
-    }
-
-    /// Create a SensorSlot with config-overridden intervals.
-    pub fn new_with_config(
-        sensor: Box<dyn Sensor>,
-        base: std::time::Duration,
-        min: std::time::Duration,
-        decay_threshold: u32,
-    ) -> Self {
-        let interval = AdaptiveInterval::new(base, min, decay_threshold);
-        Self {
-            accumulator: DeltaAccumulator::new(),
-            next_fire: Instant::now(),
-            interval,
-            sensor,
-        }
-    }
-
-    pub fn poll(&mut self, focus: &Focus) -> bool {
-        let observations = self.sensor.poll(focus);
-        if observations.is_empty() {
-            self.interval.on_quiet();
-            false
-        } else {
-            for (magnitude, description) in observations {
-                self.accumulator.accumulate(magnitude, description);
+    // Macro to reduce boilerplate for built-in sensor registration.
+    // Checks: feature compiled + config enabled → instantiate with config overrides.
+    #[allow(unused_macros)]
+    macro_rules! register_builtin {
+        ($name:expr, $sensor:expr, $default_interval:expr, $default_min:expr, $default_decay:expr) => {
+            if cfg.sensors.get($name).map(|s| s.enabled).unwrap_or(true) {
+                let sc = cfg.sensors.get($name);
+                slots.push(SensorSlot::new_with_config(
+                    Box::new($sensor),
+                    sc.map(|s| s.interval).unwrap_or(Duration::from_secs($default_interval)),
+                    sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs($default_min)),
+                    sc.map(|s| s.decay_threshold).unwrap_or($default_decay),
+                ));
+                enabled_names.push($name.to_string());
             }
-            self.interval.on_change();
-            true
+        };
+    }
+
+    // ── Built-in crate sensors (feature-gated) ──────────────────
+
+    #[cfg(feature = "sensor-context")]
+    register_builtin!("context", ContextSensor::new(), 60, 20, 3);
+
+    #[cfg(feature = "sensor-processes")]
+    register_builtin!("processes", ProcessSensor::new(), 30, 5, 5);
+
+    #[cfg(feature = "sensor-git")]
+    register_builtin!("git", GitSensor::new(), 30, 10, 4);
+
+    #[cfg(feature = "sensor-peers")]
+    {
+        if cfg.sensors.get("peers").map(|s| s.enabled).unwrap_or(true) {
+            let mut peer_sensor = PeerSensor::new();
+            if !catchup {
+                peer_sensor.mark_existing_as_seen(focus);
+            }
+            let sc = cfg.sensors.get("peers");
+            slots.push(SensorSlot::new_with_config(
+                Box::new(peer_sensor),
+                sc.map(|s| s.interval).unwrap_or(Duration::from_secs(30)),
+                sc.map(|s| s.min_interval).unwrap_or(Duration::from_secs(10)),
+                sc.map(|s| s.decay_threshold).unwrap_or(5),
+            ));
+            enabled_names.push("peers".to_string());
         }
     }
 
-    pub fn ready_to_disclose(&self) -> bool {
-        self.accumulator.magnitude >= self.sensor.emission_threshold()
+    // ── Script sensors (config-driven, always available) ────────
+
+    for (name, sc) in &cfg.sensors {
+        if let Some(ref script_path) = sc.script {
+            if sc.enabled {
+                let sensor = ScriptSensor::new(
+                    name.clone(),
+                    script_path.clone(),
+                    focus.working_dir.clone(),
+                    sc.interval,
+                    sc.min_interval,
+                    sc.decay_threshold,
+                    sc.threshold,
+                );
+                slots.push(SensorSlot::new_with_config(
+                    Box::new(sensor),
+                    sc.interval,
+                    sc.min_interval,
+                    sc.decay_threshold,
+                ));
+                enabled_names.push(name.clone());
+            }
+        }
     }
 
-    pub fn schedule_next(&mut self) {
-        self.next_fire = Instant::now() + self.interval.current;
-    }
-
-    pub fn name(&self) -> &str {
-        self.sensor.name()
-    }
-
-    pub fn export_state(&self) -> Vec<(String, String)> {
-        self.sensor.export_state()
-    }
-
-    pub fn import_state(&mut self, state: &[(String, String)]) {
-        self.sensor.import_state(state);
-    }
+    (slots, enabled_names)
 }

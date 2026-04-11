@@ -87,6 +87,11 @@ name = "attend"
 version = "0.4.0"
 dependencies = [
  "agent-fmt",
+ "sensor-context",
+ "sensor-git",
+ "sensor-peers",
+ "sensor-processes",
+ "sensor-trait",
 ]
 
 [[package]]
@@ -514,6 +519,38 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+
+[[package]]
+name = "sensor-context"
+version = "0.4.0"
+dependencies = [
+ "sensor-trait",
+]
+
+[[package]]
+name = "sensor-git"
+version = "0.4.0"
+dependencies = [
+ "sensor-trait",
+]
+
+[[package]]
+name = "sensor-peers"
+version = "0.4.0"
+dependencies = [
+ "sensor-trait",
+]
+
+[[package]]
+name = "sensor-processes"
+version = "0.4.0"
+dependencies = [
+ "sensor-trait",
+]
+
+[[package]]
+name = "sensor-trait"
+version = "0.4.0"
 
 [[package]]
 name = "serde"

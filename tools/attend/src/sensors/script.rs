@@ -7,7 +7,7 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::{Focus, Sensor};
+use sensor_trait::{Focus, Sensor};
 
 pub struct ScriptSensor {
     name: String,

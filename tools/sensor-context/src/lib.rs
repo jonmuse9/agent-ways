@@ -1,4 +1,4 @@
-use super::{Focus, Sensor};
+use sensor_trait::{Focus, Sensor};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -93,6 +93,12 @@ impl ContextSensor {
             return Some(0.0); // Already past
         }
         Some(remaining_pct / vel)
+    }
+}
+
+impl Default for ContextSensor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
