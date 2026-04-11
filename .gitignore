@@ -57,6 +57,8 @@
 !docs/hooks-and-ways/**/*.md
 !docs/images/
 !docs/images/*
+!docs/observations/
+!docs/observations/*.md
 !docs/research/
 !docs/research/*.md
 !docs/reference/
