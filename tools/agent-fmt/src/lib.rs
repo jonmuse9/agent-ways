@@ -1,8 +1,10 @@
-//! Shared terminal formatting for agent-ways tools.
+//! Shared terminal formatting and utilities for agent-ways tools.
 //!
-//! Provides ANSI-aware table rendering, banner display, and help formatting.
+//! Provides ANSI-aware table rendering, banner display, help formatting,
+//! and permission matching (ADR-116).
 
 mod banner;
+pub mod permissions;
 mod table;
 
 pub use banner::{Banner, print_commands, GRADIENT_CORAL, GRADIENT_TEAL};
