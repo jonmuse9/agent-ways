@@ -1,6 +1,6 @@
 [package]
 name = "sensor-peers"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Peer sensor for attend — discovers Claude Code sessions, reads signals, manages inbox"
 license = "MIT"
