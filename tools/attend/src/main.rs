@@ -5,7 +5,7 @@ mod delta;
 mod emit;
 mod sensors;
 
-use sensors::{ContextSensor, Focus, GitSensor, PeerSensor, ProcessSensor, Sensor, SensorSlot};
+use sensors::{ContextSensor, Focus, GitSensor, PeerSensor, ProcessSensor, ScriptSensor, Sensor, SensorSlot};
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
@@ -176,10 +176,25 @@ fn cmd_run_with_catchup(catchup: bool) {
 
     // Script sensors from config (+ entries with script: field)
     for (name, sc) in &cfg.sensors {
-        if sc.script.is_some() && sc.enabled {
-            // Script sensors will be registered here when the runner is built
-            enabled_names.push(format!("{}*", name)); // * = script sensor
-            eprintln!("[attend] config: script sensor '{}' declared but script runner not yet implemented", name);
+        if let Some(ref script) = sc.script {
+            if sc.enabled {
+                let sensor = ScriptSensor::new(
+                    name.clone(),
+                    script.clone(),
+                    focus.working_dir.clone(),
+                    sc.interval,
+                    sc.min_interval,
+                    sc.decay_threshold,
+                    sc.threshold,
+                );
+                slots.push(SensorSlot::new_with_config(
+                    Box::new(sensor),
+                    sc.interval,
+                    sc.min_interval,
+                    sc.decay_threshold,
+                ));
+                enabled_names.push(name.clone());
+            }
         }
     }
 

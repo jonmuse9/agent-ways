@@ -373,6 +373,14 @@ enum ShowCommand {
         #[arg(long)]
         session: String,
     },
+    /// Display guidance for an attend signal (ADR-114)
+    Attend {
+        /// Signal type (e.g., "context-pressure", "build-complete")
+        signal: String,
+        /// Session ID
+        #[arg(long)]
+        session: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -487,6 +495,11 @@ fn main() -> Result<()> {
             }
             ShowCommand::Core { session } => {
                 let out = cmd::show::core(&session)?;
+                if !out.is_empty() { print!("{out}"); }
+                Ok(())
+            }
+            ShowCommand::Attend { signal, session } => {
+                let out = cmd::show::attend(&signal, &session)?;
                 if !out.is_empty() { print!("{out}"); }
                 Ok(())
             }

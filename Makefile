@@ -78,9 +78,9 @@ ways:
 		echo "Pre-built binary installed."; \
 	elif command -v cargo >/dev/null 2>&1; then \
 		echo "No pre-built binary, building from source..."; \
-		cargo build --release --manifest-path tools/ways-cli/Cargo.toml; \
+		cargo build --release --manifest-path tools/Cargo.toml -p ways; \
 		mkdir -p bin; \
-		ln -sf $(CURDIR)/tools/ways-cli/target/release/ways $(WAYS_BIN); \
+		ln -sf $(CURDIR)/tools/target/release/ways $(WAYS_BIN); \
 		echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: No pre-built binary and cargo not found."; \
@@ -94,9 +94,9 @@ ways-rebuild:
 		echo "error: cargo not found. Install Rust: https://rustup.rs/"; \
 		exit 1; \
 	fi
-	cargo build --release --manifest-path tools/ways-cli/Cargo.toml
+	cargo build --release --manifest-path tools/Cargo.toml -p ways
 	@mkdir -p bin
-	@ln -sf $(CURDIR)/tools/ways-cli/target/release/ways $(WAYS_BIN)
+	@ln -sf $(CURDIR)/tools/target/release/ways $(WAYS_BIN)
 	@echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"
 
 # Build attend binary from workspace.
