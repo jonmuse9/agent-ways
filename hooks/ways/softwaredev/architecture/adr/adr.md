@@ -6,6 +6,7 @@ pattern: (^| )adr( |$)|architect|decision|design.?pattern|technical.?choice|trad
 files: docs/architecture/.*\.md$
 macro: prepend
 scope: agent, subagent
+requires: ["Bash(chmod:*)", "Bash(cp:*)", "Bash(mkdir:*)", "Bash(touch:*)"]
 ---
 <!-- epistemic: convention -->
 # ADR Way

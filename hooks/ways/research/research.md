@@ -4,6 +4,7 @@ vocabulary: research investigate explore find out compare evaluate analyze synth
 threshold: 2.0
 macro: append
 scope: agent
+requires: ["Bash(grep:*)"]
 ---
 <!-- epistemic: heuristic -->
 # Research Way

@@ -4,6 +4,7 @@ vocabulary: plan approach debate implement build work pick understand investigat
 threshold: 2.0
 scope: agent, subagent
 macro: prepend
+requires: ["Read", "Bash(find:*)", "Bash(wc:*)"]
 ---
 <!-- epistemic: convention -->
 # ADR Context — Read Before You Build

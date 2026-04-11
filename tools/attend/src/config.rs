@@ -38,6 +38,8 @@ pub struct SensorConfig {
     pub decay_threshold: u32,
     /// For script sensors: path to the script (relative to project root)
     pub script: Option<String>,
+    /// Permission requirements (ADR-116) — tool permissions this sensor needs.
+    pub requires: Vec<String>,
 }
 
 impl Default for GovernorConfig {
@@ -60,6 +62,7 @@ impl Default for Config {
             threshold: 1.5,
             decay_threshold: 3,
             script: None,
+            requires: vec!["Read".to_string()],
         });
         sensors.insert("git".to_string(), SensorConfig {
             enabled: true,
@@ -68,6 +71,7 @@ impl Default for Config {
             threshold: 2.0,
             decay_threshold: 4,
             script: None,
+            requires: vec!["Bash(git:*)".to_string()],
         });
         sensors.insert("peers".to_string(), SensorConfig {
             enabled: true,
@@ -76,6 +80,7 @@ impl Default for Config {
             threshold: 2.0,
             decay_threshold: 5,
             script: None,
+            requires: vec!["Read".to_string()],
         });
         sensors.insert("processes".to_string(), SensorConfig {
             enabled: true,
@@ -84,6 +89,7 @@ impl Default for Config {
             threshold: 2.0,
             decay_threshold: 5,
             script: None,
+            requires: vec!["Bash(ps:*)".to_string()],
         });
         Self {
             governor: GovernorConfig::default(),
@@ -245,6 +251,7 @@ fn apply_config(config: &mut Config, content: &str) {
                         threshold: 2.0,
                         decay_threshold: 4,
                         script: None,
+                        requires: Vec::new(),
                     });
                     current_sensor = name;
                 } else {
@@ -285,6 +292,17 @@ fn apply_config(config: &mut Config, content: &str) {
                         }
                         "enabled" => {
                             sensor.enabled = value == "true";
+                        }
+                        "requires" => {
+                            // Inline array: requires: [Bash(gh:*), Read]
+                            if value.starts_with('[') && value.ends_with(']') {
+                                let inner = &value[1..value.len() - 1];
+                                sensor.requires = inner
+                                    .split(',')
+                                    .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+                            }
                         }
                         _ => {}
                     }

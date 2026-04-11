@@ -5,6 +5,7 @@ files: \.(md|rs|sh|py|js|ts|json|yaml|yml|toml|go|rb|java|c|cpp|h|hpp|css|html|s
 redisclose: 10
 macro: prepend
 scope: agent, subagent
+requires: ["Bash(cut:*)", "Bash(git:*)", "Bash(sed:*)"]
 ---
 <!-- epistemic: heuristic -->
 # Branching Context

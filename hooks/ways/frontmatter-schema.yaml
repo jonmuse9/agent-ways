@@ -96,6 +96,12 @@ way:
       required: optional
       role: Run macro.sh alongside way content
 
+  permissions:
+    requires:
+      type: array
+      required: optional
+      role: Tool permissions this way needs (e.g. Bash(gh:*), Read). Audited against settings.json.
+
   extended:
     scan_exclude:
       type: regex

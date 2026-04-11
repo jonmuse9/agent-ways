@@ -4,6 +4,7 @@ vocabulary: write draft compose author proposal report presentation deck slides 
 threshold: 2.0
 macro: append
 scope: agent
+requires: ["Bash(grep:*)"]
 ---
 <!-- epistemic: heuristic -->
 # Writing Way

@@ -263,6 +263,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Permission audit — diff requires: fields against settings.json grants (ADR-116)
+    Permissions {
+        #[command(subcommand)]
+        action: PermissionsCommand,
+        /// Scan global ways (ignore project-local)
+        #[arg(long, global = true)]
+        global: bool,
+    },
     /// Governance provenance queries — report, trace, control, policy, gaps, stale, active, matrix, lint
     Governance {
         #[command(subcommand)]
@@ -397,6 +405,12 @@ enum ConfigCommand {
     Show,
     /// Show config file paths
     Path,
+}
+
+#[derive(Subcommand)]
+enum PermissionsCommand {
+    /// Audit requires: fields against settings.json grants
+    Audit,
 }
 
 #[derive(Subcommand)]
@@ -546,6 +560,11 @@ fn main() -> Result<()> {
         }
         Commands::Reset { session, all, confirm } => {
             cmd::reset::run(session.as_deref(), all, confirm)
+        }
+        Commands::Permissions { action, global } => {
+            match action {
+                PermissionsCommand::Audit => cmd::permissions::audit(global),
+            }
         }
         Commands::Governance { mode, json, global } => {
             let gov_mode = match mode {

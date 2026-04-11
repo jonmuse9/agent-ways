@@ -4,6 +4,7 @@ vocabulary: implement build begin start work execute plan breakdown parallelize 
 threshold: 2.0
 macro: append
 scope: agent
+requires: ["Read", "Bash(cat:*)", "Bash(find:*)", "Bash(wc:*)"]
 ---
 <!-- epistemic: convention -->
 # Implementation Way
