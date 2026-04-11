@@ -136,7 +136,6 @@ impl Rooms {
     }
 
     /// Get room names this session is in (for signal routing).
-    #[allow(dead_code)] // Used by signal routing (task 27)
     pub fn joined_room_names(&self) -> Vec<String> {
         self.my_rooms().into_iter().map(|(name, _)| name).collect()
     }

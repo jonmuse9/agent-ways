@@ -30,6 +30,9 @@ pub struct PeerSensor {
     own_session_id: Option<String>,
     /// First poll establishes baseline
     baseline_established: bool,
+    /// Additional signal directories to scan (e.g., room dirs from ADR-118).
+    /// Set by the orchestrator via `set_extra_scan_dirs()`.
+    extra_scan_dirs: Vec<PathBuf>,
 }
 
 #[allow(dead_code)]
@@ -83,7 +86,14 @@ impl PeerSensor {
             reply_hint_shown: false,
             own_session_id,
             baseline_established: false,
+            extra_scan_dirs: Vec::new(),
         }
+    }
+
+    /// Set additional signal directories to scan (e.g., room dirs).
+    /// Called by the orchestrator after room membership is known.
+    pub fn set_extra_scan_dirs(&mut self, dirs: Vec<PathBuf>) {
+        self.extra_scan_dirs = dirs;
     }
 
     /// Return a list of active peer sessions as (cwd, project_name, status, context_percent).
@@ -114,6 +124,8 @@ impl PeerSensor {
                 }
             }
         }
+        // Room directories (ADR-118)
+        scan_dirs.extend(self.extra_scan_dirs.iter().cloned());
 
         for dir in &scan_dirs {
             let entries = match fs::read_dir(dir) {
@@ -138,19 +150,19 @@ impl PeerSensor {
     }
 
     /// Read signal files from peers. Scans own project dir, broadcast dir,
-    /// and any dirs in the focus list. Returns observations for new signals.
+    /// focus list, and joined rooms. Returns observations for new signals.
     fn read_signals(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let mut observations = Vec::new();
         let base = signals_base();
 
-        // Directories to scan: own project + broadcast + focus group
+        // Directories to scan: own project + broadcast + focus group + rooms
         let own_encoded = encode_cwd(&focus.working_dir);
         let mut scan_dirs = vec![
             base.join(&own_encoded),
             base.join("_broadcast"),
         ];
 
-        // Add focus group dirs
+        // Add focus group dirs (deprecated, still works)
         let focus_file = base.join("focus");
         if let Ok(content) = fs::read_to_string(&focus_file) {
             for line in content.lines() {
@@ -160,6 +172,8 @@ impl PeerSensor {
                 }
             }
         }
+        // Room directories (ADR-118)
+        scan_dirs.extend(self.extra_scan_dirs.iter().cloned());
 
         let own_session_id = self.own_session_id.as_deref().unwrap_or("---none---");
 

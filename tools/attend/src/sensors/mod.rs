@@ -28,6 +28,7 @@ pub use script::ScriptSensor;
 // ── Sensor registration ─────────────────────────────────────────
 
 use crate::config::Config;
+use crate::rooms::Rooms;
 #[allow(unused_imports)]
 use std::time::Duration;
 
@@ -45,6 +46,7 @@ pub fn register_sensors(
     cfg: &Config,
     focus: &Focus,
     catchup: bool,
+    rooms: &Rooms,
 ) -> (Vec<SensorSlot>, Vec<String>) {
     let mut slots: Vec<SensorSlot> = Vec::new();
     let mut enabled_names: Vec<String> = Vec::new();
@@ -82,6 +84,13 @@ pub fn register_sensors(
     {
         if cfg.sensors.get("peers").map(|s| s.enabled).unwrap_or(true) {
             let mut peer_sensor = PeerSensor::new();
+            // Pass room directories for signal scanning (ADR-118)
+            let room_dirs: Vec<std::path::PathBuf> = rooms
+                .joined_room_names()
+                .into_iter()
+                .map(|name| rooms.room_dir(&name))
+                .collect();
+            peer_sensor.set_extra_scan_dirs(room_dirs);
             if !catchup {
                 peer_sensor.mark_existing_as_seen(focus);
             }

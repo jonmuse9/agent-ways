@@ -122,7 +122,11 @@ fn cmd_run_with_catchup(catchup: bool) {
     };
 
     // Register sensors from config + feature flags
-    let (mut slots, enabled_names) = sensors::register_sensors(&cfg, &focus, catchup);
+    // Initialize rooms for signal routing (ADR-118)
+    let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
+    let room_mgr = rooms::Rooms::new(&signals_base(), &session_id);
+
+    let (mut slots, enabled_names) = sensors::register_sensors(&cfg, &focus, catchup, &room_mgr);
 
     // State persistence
     let session_id = own_session_id();
@@ -469,9 +473,10 @@ fn cmd_peers() {
 }
 
 fn cmd_send(args: &[String]) {
-    // Parse flags: --broadcast, --to <project-path>
+    // Parse flags: --broadcast, --to <project-path>, --room <name>
     let mut broadcast = false;
     let mut target_dir: Option<String> = None;
+    let mut target_room: Option<String> = None;
     let mut message_parts: Vec<&str> = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -483,6 +488,15 @@ fn cmd_send(args: &[String]) {
                     target_dir = Some(args[i].clone());
                 } else {
                     eprintln!("attend send: --to requires a project path");
+                    std::process::exit(1);
+                }
+            }
+            "--room" => {
+                i += 1;
+                if i < args.len() {
+                    target_room = Some(args[i].clone());
+                } else {
+                    eprintln!("attend send: --room requires a room name");
                     std::process::exit(1);
                 }
             }
@@ -565,16 +579,24 @@ fn cmd_send(args: &[String]) {
     // --broadcast: _broadcast only (reaches everyone)
     // --to <path>: specific project only
     // default: own project + focus group (mirrors what we read)
+    let r = get_rooms();
     let dest_dirs: Vec<std::path::PathBuf> = if broadcast {
         vec![base.join("_broadcast")]
+    } else if let Some(ref room_name) = target_room {
+        vec![r.room_dir(room_name)]
     } else if let Some(ref path) = target_dir {
         let resolved = std::fs::canonicalize(path)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.clone());
         vec![base.join(encode_project(&resolved))]
     } else {
-        // Default: send to own project + all focus group peers
+        // Default: send to own project + joined rooms + focus group peers
         let mut dirs = vec![base.join(encode_project(&cwd))];
+        // Named rooms
+        for name in r.joined_room_names() {
+            dirs.push(r.room_dir(&name));
+        }
+        // Legacy focus group (deprecated, still works)
         let focus_file = base.join("focus");
         if let Ok(content) = std::fs::read_to_string(&focus_file) {
             for line in content.lines() {
@@ -599,8 +621,9 @@ fn cmd_send(args: &[String]) {
     let content = format!("{}|{}|{}|{}\n", from, project, cwd, message);
 
     let scope = if broadcast { "broadcast" }
+        else if target_room.is_some() { "room" }
         else if target_dir.is_some() { "directed" }
-        else if dest_dirs.len() > 1 { "focus group" }
+        else if dest_dirs.len() > 1 { "rooms+focus" }
         else { "project" };
 
     for dest_dir in &dest_dirs {
@@ -1200,8 +1223,9 @@ fn main() {
             ]);
             println!();
             agent_fmt::print_commands("send flags", &[
-                ("--broadcast", "Send to all projects, not just your own"),
-                ("--to <path>", "Send to a specific project's signals dir"),
+                ("--room <name>", "Send to a named room"),
+                ("--broadcast",   "Send to all agents"),
+                ("--to <path>",   "Send to a specific project path (legacy)"),
             ]);
         }
         Some(unknown) => {
