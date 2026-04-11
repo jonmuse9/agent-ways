@@ -283,16 +283,30 @@ fn lint_file(
         }
     }
 
+    // Attend signal handlers are matched by signal name, not semantic matching
+    let is_attend = fm_str.lines().any(|l| l.trim() == "type: attend");
+
     // Description/vocabulary conditional pairing
     let has_desc = has_field(&fm_str, "description");
     let has_vocab = has_field(&fm_str, "vocabulary");
-    if has_desc && !has_vocab {
+    if has_desc && !has_vocab && !is_attend {
         eprintln!("  WARNING: {rel} — description without vocabulary (semantic matching incomplete)");
         *warnings += 1;
     }
     if has_vocab && !has_desc {
         eprintln!("  WARNING: {rel} — vocabulary without description (semantic matching incomplete)");
         *warnings += 1;
+    }
+
+    // Attend-specific validation: signals field required
+    if is_attend {
+        let has_signals = fm_str.lines().any(|l| l.trim().starts_with("signals:"));
+        if !has_signals {
+            eprintln!("  ERROR: {rel} — trigger.type: attend requires signals field");
+            *errors += 1;
+        } else {
+            eprintln!("  INFO: {rel} — attend signal handler (matched by signal name, not semantic)");
+        }
     }
 
     // Threshold is numeric
