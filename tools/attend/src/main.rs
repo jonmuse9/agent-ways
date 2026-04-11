@@ -283,7 +283,7 @@ fn cmd_run_with_catchup(catchup: bool) {
                 batch.push((
                     slot.name().to_string(),
                     priority.to_string(),
-                    slot.accumulator.summary(),
+                    slot.accumulator.drain_events(),
                 ));
             }
 

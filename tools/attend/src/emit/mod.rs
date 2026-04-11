@@ -1,10 +1,13 @@
 use std::io::{self, Write};
 
 /// Emit a batch of sensor disclosures to stdout for Monitor delivery.
-/// All lines emitted within 200ms are batched by Monitor into one notification.
-pub fn emit_batch(disclosures: &[(String, String, String)]) {
-    for (sensor, priority, summary) in disclosures {
-        println!("[attend sensor={sensor} priority={priority}] {summary}");
+/// Each event is its own line — Monitor batches lines within 200ms into
+/// one notification, so rapid events group naturally without truncation.
+pub fn emit_batch(disclosures: &[(String, String, Vec<String>)]) {
+    for (sensor, priority, events) in disclosures {
+        for event in events {
+            println!("[attend sensor={sensor} priority={priority}] {event}");
+        }
     }
     io::stdout().flush().ok();
 }
