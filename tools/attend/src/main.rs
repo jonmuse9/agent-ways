@@ -154,7 +154,7 @@ fn cmd_run_with_catchup(catchup: bool) {
     }
 
     let sensor_list = enabled_names.join(", ");
-    println!("[attend] v{} ({}) — sensors: {} | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus add <path>",
+    println!("[attend] v{} ({}) — sensors: {} | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus on <name>",
         env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), sensor_list, focus_desc);
 
     let mut governor = DisclosureGovernor::new(

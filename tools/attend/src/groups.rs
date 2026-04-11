@@ -67,14 +67,21 @@ impl Groups {
         Ok(())
     }
 
-    /// Leave a named room.
+    /// Leave a named group.
     pub fn leave(&self, name: &str) -> Result<(), String> {
         let mut state = self.load_state();
         if let Some(entry) = state.get_mut(name) {
             entry.members.retain(|m| m != &self.session_id);
         }
+        // Clean up empty unpinned groups in one write
+        if state.get(name).is_some_and(|e| e.members.is_empty() && !e.pinned) {
+            let dir = self.group_dir(name);
+            if dir.is_dir() {
+                fs::remove_dir_all(&dir).ok();
+            }
+            state.remove(name);
+        }
         self.save_state(&state);
-        self.cleanup_if_empty(name, &state);
         Ok(())
     }
 
@@ -87,14 +94,21 @@ impl Groups {
         }
     }
 
-    /// Unpin a room.
+    /// Unpin a group.
     pub fn unpin(&self, name: &str) {
         let mut state = self.load_state();
         if let Some(entry) = state.get_mut(name) {
             entry.pinned = false;
-            self.save_state(&state);
         }
-        self.cleanup_if_empty(name, &state);
+        // Clean up if now empty and unpinned — one write
+        if state.get(name).is_some_and(|e| e.members.is_empty() && !e.pinned) {
+            let dir = self.group_dir(name);
+            if dir.is_dir() {
+                fs::remove_dir_all(&dir).ok();
+            }
+            state.remove(name);
+        }
+        self.save_state(&state);
     }
 
     /// Dissolve a room — remove it and notify members.
@@ -219,20 +233,6 @@ impl Groups {
         fs::write(&path, content).ok();
     }
 
-    fn cleanup_if_empty(&self, name: &str, state: &HashMap<String, GroupEntry>) {
-        if let Some(entry) = state.get(name) {
-            if entry.members.is_empty() && !entry.pinned {
-                let dir = self.group_dir(name);
-                if dir.is_dir() {
-                    fs::remove_dir_all(&dir).ok();
-                }
-                // Remove from state
-                let mut state = state.clone();
-                state.remove(name);
-                self.save_state(&state);
-            }
-        }
-    }
 }
 
 // ── Helpers ────────────────────────────────────────────────────
