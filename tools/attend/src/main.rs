@@ -154,8 +154,21 @@ fn cmd_run_with_catchup(catchup: bool) {
     }
 
     let sensor_list = enabled_names.join(", ");
-    println!("[attend] v{} ({}) — sensors: {} | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus on <name>",
-        env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), sensor_list, focus_desc);
+    let banner_fingerprint = format!(
+        "v{}:{}:{}:{}",
+        env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), sensor_list, focus_desc
+    );
+
+    // Suppress repeated startup banners — only emit full banner when config changes
+    let stamp_path = signals_base().join("_last_banner");
+    let prev_fingerprint = std::fs::read_to_string(&stamp_path).unwrap_or_default();
+    if banner_fingerprint == prev_fingerprint.trim() {
+        println!("[attend] restarted (unchanged)");
+    } else {
+        println!("[attend] v{} ({}) — sensors: {} | focus: {} | commands: attend send <msg>, attend inbox, attend peers, attend focus on <name>",
+            env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), sensor_list, focus_desc);
+        std::fs::write(&stamp_path, &banner_fingerprint).ok();
+    }
 
     let mut governor = DisclosureGovernor::new(
         cfg.governor.base_cooldown,
@@ -337,6 +350,52 @@ fn collect_snapshot(slots: &[sensors::SensorSlot]) -> state::StateSnapshot {
         }
     }
     snapshot
+}
+
+fn cmd_inbox_read(msg_id: &str) {
+    let base = signals_base();
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let own_encoded = encode_project(&cwd);
+    let r = get_groups();
+    let mut scan_dirs = vec![
+        base.join(&own_encoded),
+        base.join("_broadcast"),
+    ];
+    for name in r.joined_group_names() {
+        scan_dirs.push(r.group_dir(&name));
+    }
+
+    // Search for the signal file by ID
+    let target = format!("{msg_id}.signal");
+    for dir in &scan_dirs {
+        let path = dir.join(&target);
+        if path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let parts: Vec<&str> = content.splitn(4, '|').collect();
+                if parts.len() >= 4 {
+                    let from = parts[0];
+                    let project = parts[1];
+                    let source_cwd = parts[2];
+                    let message = parts[3].trim();
+                    let (kind, identity) = from.split_once(':').unwrap_or(("?", from));
+                    let sender = match kind {
+                        "claude" => format!("claude/{source_cwd}"),
+                        "external" => identity.to_string(),
+                        _ => format!("{project} ({from})"),
+                    };
+                    println!("From: {sender}");
+                    println!("ID:   {msg_id}");
+                    println!();
+                    println!("{message}");
+                    return;
+                }
+            }
+        }
+    }
+    eprintln!("message not found: {msg_id}");
+    std::process::exit(1);
 }
 
 fn cmd_inbox() {
@@ -1108,7 +1167,13 @@ fn main() {
             cmd_run_with_catchup(catchup);
         }
         Some("peers") => cmd_peers(),
-        Some("inbox") => cmd_inbox(),
+        Some("inbox") => {
+            if let Some(msg_id) = args.get(1) {
+                cmd_inbox_read(msg_id);
+            } else {
+                cmd_inbox();
+            }
+        }
         Some("status") => cmd_status(),
         Some("send") => {
             cmd_send(&args[1..]);

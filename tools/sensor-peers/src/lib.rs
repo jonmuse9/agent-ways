@@ -223,8 +223,9 @@ impl PeerSensor {
 
                     // Short messages inline, long messages get a mailbox pointer.
                     // Monitor truncates at ~500 chars; prefix eats ~100. Cap at 300.
+                    let msg_id = filename.trim_end_matches(".signal");
                     let display_msg = if message.len() > 300 {
-                        format!("{}... (full message in attend inbox)", &message[..297])
+                        format!("{}... (attend inbox {})", &message[..297], msg_id)
                     } else {
                         message.to_string()
                     };
