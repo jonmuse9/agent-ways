@@ -43,18 +43,6 @@ pub fn resolve_language() -> String {
     "en".to_string()
 }
 
-/// Legacy: read output_language from ways.json directly.
-/// Kept for callers outside the config chain. Prefer config::global().language.
-fn _ways_json_language() -> Option<String> {
-    let config = crate::util::home_dir().join(".claude/ways.json");
-    let content = std::fs::read_to_string(config).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-    parsed
-        .get("output_language")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
 /// Language config embedded at compile time from languages.json.
 pub const LANGUAGES_JSON: &str = include_str!("../../languages.json");
 

@@ -37,8 +37,6 @@ pub struct Config {
     pub disabled_domains: Vec<String>,
     /// Matcher preference: "auto", "embedding", "bm25"
     pub matcher: String,
-    /// Corpus staleness threshold in seconds (rebuild if older)
-    pub corpus_stale_secs: u64,
 }
 
 impl Default for Config {
@@ -50,7 +48,6 @@ impl Default for Config {
             language: "auto".to_string(),
             disabled_domains: Vec::new(),
             matcher: "auto".to_string(),
-            corpus_stale_secs: 3600,
         }
     }
 }
@@ -99,7 +96,11 @@ impl Config {
                 .collect();
         }
 
-        if let Some(engine) = v.get("engine").and_then(|v| v.as_str()) {
+        // Accept both field names: "engine" (new) and "semantic_engine" (legacy)
+        if let Some(engine) = v.get("engine")
+            .or_else(|| v.get("semantic_engine"))
+            .and_then(|v| v.as_str())
+        {
             self.matcher = engine.to_string();
         }
     }
@@ -129,9 +130,6 @@ impl Config {
         if let Some(v) = doc.get("default_scope").and_then(|v| v.as_str()) {
             self.default_scope = v.to_string();
         }
-        if let Some(v) = doc.get("corpus_stale_secs").and_then(|v| v.as_u64()) {
-            self.corpus_stale_secs = v;
-        }
         if let Some(disabled) = doc.get("disabled_domains").and_then(|v| v.as_sequence()) {
             self.disabled_domains = disabled
                 .iter()
@@ -156,7 +154,6 @@ impl Config {
 # language: en          # Output language (en, ja, auto)
 # matcher: auto         # Matching engine (auto, embedding, bm25)
 # bm25_threshold: 2.0   # Default BM25 score threshold
-# corpus_stale_secs: 3600  # Rebuild corpus if older than this
 # default_scope: agent  # Default scope for ways without explicit scope
 # disabled_domains: []  # Domains to disable (e.g., [ea, itops])
 ";

@@ -527,6 +527,8 @@ fn main() -> Result<()> {
                 Ok(())
             }
             ConfigCommand::Show => {
+                // Intentionally loads fresh from disk (not config::global()) —
+                // diagnostic command should always reflect current file state
                 let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
                     .unwrap_or_else(|_| std::env::var("PWD").unwrap_or_else(|_| ".".to_string()));
                 let cfg = config::Config::load(&project_dir);
