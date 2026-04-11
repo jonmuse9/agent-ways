@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::rooms::Rooms;
+use crate::groups::Groups;
 
 /// A scene definition.
 #[derive(Debug, Clone)]
@@ -39,7 +39,7 @@ pub fn load_scenes() -> HashMap<String, Scene> {
 }
 
 /// Activate a scene — reconfigure room membership to match the preset.
-pub fn activate(scene_name: &str, rooms: &Rooms) -> Result<String, String> {
+pub fn activate(scene_name: &str, groups: &Groups) -> Result<String, String> {
     let scenes = load_scenes();
     let scene = scenes
         .get(scene_name)
@@ -47,13 +47,13 @@ pub fn activate(scene_name: &str, rooms: &Rooms) -> Result<String, String> {
             scenes.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")))?;
 
     // Leave all current named rooms
-    for (name, _) in rooms.my_rooms() {
-        rooms.leave(&name).ok();
+    for (name, _) in groups.my_groups() {
+        groups.leave(&name).ok();
     }
 
     // Join the scene's rooms
     for room_name in &scene.rooms {
-        rooms.join(room_name, false)?;
+        groups.join(room_name, false)?;
     }
 
     if scene.rooms.is_empty() {

@@ -1,34 +1,34 @@
-//! Room management for attend (ADR-118).
+//! Named group management for attend (ADR-118).
 //!
-//! Rooms are named signal namespaces that agents join and leave dynamically.
-//! Storage: `@room-name/` directories under the signals base, with membership
-//! tracked in `_rooms.yaml`.
+//! Groups are named signal namespaces that agents focus on and release.
+//! Storage: `@group-name/` directories under the signals base, with membership
+//! tracked in `_groups.yaml`.
 //!
-//! Every agent is always in its implicit project room (from cwd).
-//! Named rooms are explicit and opt-in via `attend room join <name>`.
+//! Every agent is always in its implicit project group (from cwd).
+//! Named groups are explicit and opt-in via `attend focus on <name>`.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Room membership entry.
+/// Group membership entry.
 #[derive(Debug, Clone)]
-pub struct RoomEntry {
+pub struct GroupEntry {
     /// Whether this room persists when empty.
     pub pinned: bool,
     /// Session IDs currently in this room.
     pub members: Vec<String>,
 }
 
-/// Room state manager.
-pub struct Rooms {
+/// Group state manager.
+pub struct Groups {
     base: PathBuf,
     session_id: String,
 }
 
 const ROOM_PREFIX: &str = "@";
 
-impl Rooms {
+impl Groups {
     pub fn new(signals_base: &Path, session_id: &str) -> Self {
         Self {
             base: signals_base.to_path_buf(),
@@ -37,23 +37,23 @@ impl Rooms {
     }
 
     /// Path to a named room's signal directory.
-    pub fn room_dir(&self, name: &str) -> PathBuf {
+    pub fn group_dir(&self, name: &str) -> PathBuf {
         self.base.join(format!("{ROOM_PREFIX}{name}"))
     }
 
     /// Path to the rooms state file.
     fn state_path(&self) -> PathBuf {
-        self.base.join("_rooms.yaml")
+        self.base.join("_groups.yaml")
     }
 
     /// Join a named room. Creates the room if it doesn't exist.
     pub fn join(&self, name: &str, pin: bool) -> Result<(), String> {
-        validate_room_name(name)?;
-        let dir = self.room_dir(name);
+        validate_group_name(name)?;
+        let dir = self.group_dir(name);
         fs::create_dir_all(&dir).map_err(|e| format!("creating room dir: {e}"))?;
 
         let mut state = self.load_state();
-        let entry = state.entry(name.to_string()).or_insert(RoomEntry {
+        let entry = state.entry(name.to_string()).or_insert(GroupEntry {
             pinned: false,
             members: Vec::new(),
         });
@@ -107,7 +107,7 @@ impl Rooms {
         self.save_state(&state);
 
         // Remove the signal directory
-        let dir = self.room_dir(name);
+        let dir = self.group_dir(name);
         if dir.is_dir() {
             fs::remove_dir_all(&dir).ok();
         }
@@ -115,7 +115,7 @@ impl Rooms {
     }
 
     /// List rooms this session has joined.
-    pub fn my_rooms(&self) -> Vec<(String, bool)> {
+    pub fn my_groups(&self) -> Vec<(String, bool)> {
         let state = self.load_state();
         state
             .iter()
@@ -125,7 +125,7 @@ impl Rooms {
     }
 
     /// List all active rooms with member counts and pin state.
-    pub fn all_rooms(&self) -> Vec<(String, usize, bool)> {
+    pub fn all_groups(&self) -> Vec<(String, usize, bool)> {
         let state = self.load_state();
         let mut rooms: Vec<(String, usize, bool)> = state
             .iter()
@@ -136,8 +136,8 @@ impl Rooms {
     }
 
     /// Get room names this session is in (for signal routing).
-    pub fn joined_room_names(&self) -> Vec<String> {
-        self.my_rooms().into_iter().map(|(name, _)| name).collect()
+    pub fn joined_group_names(&self) -> Vec<String> {
+        self.my_groups().into_iter().map(|(name, _)| name).collect()
     }
 
     /// Get signal directories for all rooms this session should receive from.
@@ -150,8 +150,8 @@ impl Rooms {
         dirs.push(self.base.join(encode_project(project_dir)));
 
         // Named rooms
-        for name in self.joined_room_names() {
-            dirs.push(self.room_dir(&name));
+        for name in self.joined_group_names() {
+            dirs.push(self.group_dir(&name));
         }
 
         // Broadcast (always)
@@ -185,7 +185,7 @@ impl Rooms {
             .collect();
 
         for name in &to_remove {
-            let dir = self.room_dir(name);
+            let dir = self.group_dir(name);
             if dir.is_dir() {
                 fs::remove_dir_all(&dir).ok();
             }
@@ -201,28 +201,28 @@ impl Rooms {
 
     // ── State persistence ──────────────────────────────────────
 
-    fn load_state(&self) -> HashMap<String, RoomEntry> {
+    fn load_state(&self) -> HashMap<String, GroupEntry> {
         let path = self.state_path();
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
             Err(_) => return HashMap::new(),
         };
-        parse_rooms_yaml(&content)
+        parse_groups_yaml(&content)
     }
 
-    fn save_state(&self, state: &HashMap<String, RoomEntry>) {
+    fn save_state(&self, state: &HashMap<String, GroupEntry>) {
         let path = self.state_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).ok();
         }
-        let content = serialize_rooms_yaml(state);
+        let content = serialize_groups_yaml(state);
         fs::write(&path, content).ok();
     }
 
-    fn cleanup_if_empty(&self, name: &str, state: &HashMap<String, RoomEntry>) {
+    fn cleanup_if_empty(&self, name: &str, state: &HashMap<String, GroupEntry>) {
         if let Some(entry) = state.get(name) {
             if entry.members.is_empty() && !entry.pinned {
-                let dir = self.room_dir(name);
+                let dir = self.group_dir(name);
                 if dir.is_dir() {
                     fs::remove_dir_all(&dir).ok();
                 }
@@ -237,7 +237,7 @@ impl Rooms {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-fn validate_room_name(name: &str) -> Result<(), String> {
+fn validate_group_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("room name cannot be empty".to_string());
     }
@@ -276,7 +276,7 @@ fn encode_project(path: &str) -> String {
 // ── Minimal YAML parser/serializer ─────────────────────────────
 // Keeps attend dependency-free on serde.
 
-fn parse_rooms_yaml(content: &str) -> HashMap<String, RoomEntry> {
+fn parse_groups_yaml(content: &str) -> HashMap<String, GroupEntry> {
     let mut rooms = HashMap::new();
     let mut current_room: Option<String> = None;
     let mut current_pinned = false;
@@ -296,7 +296,7 @@ fn parse_rooms_yaml(content: &str) -> HashMap<String, RoomEntry> {
             if let Some(ref name) = current_room {
                 rooms.insert(
                     name.clone(),
-                    RoomEntry {
+                    GroupEntry {
                         pinned: current_pinned,
                         members: current_members.clone(),
                     },
@@ -333,7 +333,7 @@ fn parse_rooms_yaml(content: &str) -> HashMap<String, RoomEntry> {
     if let Some(ref name) = current_room {
         rooms.insert(
             name.clone(),
-            RoomEntry {
+            GroupEntry {
                 pinned: current_pinned,
                 members: current_members,
             },
@@ -343,7 +343,7 @@ fn parse_rooms_yaml(content: &str) -> HashMap<String, RoomEntry> {
     rooms
 }
 
-fn serialize_rooms_yaml(state: &HashMap<String, RoomEntry>) -> String {
+fn serialize_groups_yaml(state: &HashMap<String, GroupEntry>) -> String {
     let mut out = String::new();
     let mut names: Vec<&String> = state.keys().collect();
     names.sort();
@@ -365,15 +365,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_room_name() {
-        assert!(validate_room_name("deploy").is_ok());
-        assert!(validate_room_name("my-room").is_ok());
-        assert!(validate_room_name("").is_err());
-        assert!(validate_room_name("_internal").is_err());
-        assert!(validate_room_name("@bad").is_err());
-        assert!(validate_room_name("has/slash").is_err());
-        assert!(validate_room_name("has space").is_err());
-        assert!(validate_room_name("broadcast").is_err());
+    fn test_validate_group_name() {
+        assert!(validate_group_name("deploy").is_ok());
+        assert!(validate_group_name("my-room").is_ok());
+        assert!(validate_group_name("").is_err());
+        assert!(validate_group_name("_internal").is_err());
+        assert!(validate_group_name("@bad").is_err());
+        assert!(validate_group_name("has/slash").is_err());
+        assert!(validate_group_name("has space").is_err());
+        assert!(validate_group_name("broadcast").is_err());
     }
 
     #[test]
@@ -381,21 +381,21 @@ mod tests {
         let mut state = HashMap::new();
         state.insert(
             "deploy".to_string(),
-            RoomEntry {
+            GroupEntry {
                 pinned: true,
                 members: vec!["session-abc".to_string(), "session-xyz".to_string()],
             },
         );
         state.insert(
             "collab".to_string(),
-            RoomEntry {
+            GroupEntry {
                 pinned: false,
                 members: vec!["session-abc".to_string()],
             },
         );
 
-        let yaml = serialize_rooms_yaml(&state);
-        let parsed = parse_rooms_yaml(&yaml);
+        let yaml = serialize_groups_yaml(&state);
+        let parsed = parse_groups_yaml(&yaml);
 
         assert_eq!(parsed.len(), 2);
         assert!(parsed["deploy"].pinned);

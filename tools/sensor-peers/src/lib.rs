@@ -115,16 +115,7 @@ impl PeerSensor {
             base.join(&own_encoded),
             base.join("_broadcast"),
         ];
-        let focus_file = base.join("focus");
-        if let Ok(content) = fs::read_to_string(&focus_file) {
-            for line in content.lines() {
-                let line = line.trim();
-                if !line.is_empty() {
-                    scan_dirs.push(base.join(encode_cwd(line)));
-                }
-            }
-        }
-        // Room directories (ADR-118)
+        // Focus group directories (ADR-118 — named signal namespaces)
         scan_dirs.extend(self.extra_scan_dirs.iter().cloned());
 
         for dir in &scan_dirs {
@@ -162,17 +153,7 @@ impl PeerSensor {
             base.join("_broadcast"),
         ];
 
-        // Add focus group dirs (deprecated, still works)
-        let focus_file = base.join("focus");
-        if let Ok(content) = fs::read_to_string(&focus_file) {
-            for line in content.lines() {
-                let line = line.trim();
-                if !line.is_empty() {
-                    scan_dirs.push(base.join(encode_cwd(line)));
-                }
-            }
-        }
-        // Room directories (ADR-118)
+        // Focus group directories (ADR-118 — named signal namespaces)
         scan_dirs.extend(self.extra_scan_dirs.iter().cloned());
 
         let own_session_id = self.own_session_id.as_deref().unwrap_or("---none---");

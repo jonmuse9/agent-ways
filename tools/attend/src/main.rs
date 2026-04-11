@@ -1,5 +1,5 @@
 mod config;
-mod rooms;
+mod groups;
 mod scenes;
 mod state;
 mod emit;
@@ -111,23 +111,22 @@ fn cmd_run_with_catchup(catchup: bool) {
     // Load config: user scope → project scope overlay
     let cfg = config::Config::load(&focus.working_dir);
 
+    // Initialize rooms for signal routing (ADR-118)
+    let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
+    let group_mgr = groups::Groups::new(&signals_base(), &session_id);
+
     // Self-documenting startup
-    let focus_list = read_focus_list(&signals_base().join("focus"));
-    let focus_desc = if focus_list.is_empty() {
+    let my_groups = group_mgr.my_groups();
+    let focus_desc = if my_groups.is_empty() {
         "project only".to_string()
     } else {
-        let names: Vec<&str> = focus_list.iter()
-            .map(|p| p.rsplit('/').next().unwrap_or(p.as_str()))
-            .collect();
+        let names: Vec<&str> = my_groups.iter().map(|(n, _)| n.as_str()).collect();
         format!("project + {}", names.join(", "))
     };
 
     // Register sensors from config + feature flags
-    // Initialize rooms for signal routing (ADR-118)
-    let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
-    let room_mgr = rooms::Rooms::new(&signals_base(), &session_id);
 
-    let (mut slots, enabled_names) = sensors::register_sensors(&cfg, &focus, catchup, &room_mgr);
+    let (mut slots, enabled_names) = sensors::register_sensors(&cfg, &focus, catchup, &group_mgr);
 
     // State persistence
     let session_id = own_session_id();
@@ -349,18 +348,14 @@ fn cmd_inbox() {
 
     // Scan same dirs as the peer sensor: own project + broadcast + focus group
     let own_encoded = encode_project(&cwd);
+    let r = get_groups();
     let mut scan_dirs = vec![
         base.join(&own_encoded),
         base.join("_broadcast"),
     ];
-    let focus_file = base.join("focus");
-    if let Ok(content) = std::fs::read_to_string(&focus_file) {
-        for line in content.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                scan_dirs.push(base.join(encode_project(line)));
-            }
-        }
+    // Add focus group dirs
+    for name in r.joined_group_names() {
+        scan_dirs.push(r.group_dir(&name));
     }
 
     // Collect all messages with mtime for chronological ordering
@@ -451,7 +446,7 @@ fn cmd_inbox() {
 }
 
 fn cmd_peers() {
-    let r = get_rooms();
+    let r = get_groups();
 
     #[cfg(feature = "sensor-peers")]
     let peers = {
@@ -461,22 +456,22 @@ fn cmd_peers() {
     #[cfg(not(feature = "sensor-peers"))]
     let peers: Vec<(String, String, String, f64)> = Vec::new();
 
-    let my_rooms = r.my_rooms();
+    let my_focus = r.my_groups();
 
-    let mut t = agent_fmt::Table::new(&["Room", "Agent", "Status", "Context"]);
+    let mut t = agent_fmt::Table::new(&["Focus", "Agent", "Status", "Context"]);
     t.max_width(1, 24);
 
-    // Show self in project room
+    // Show self in project group
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let self_project = cwd.rsplit('/').next().unwrap_or("?");
     t.add(vec!["(project)", self_project, "working", ""]);
 
-    // Show named rooms we're in
-    for (room_name, pinned) in &my_rooms {
+    // Show named groups we're focused on
+    for (name, pinned) in &my_focus {
         let pin_marker = if *pinned { " (pinned)" } else { "" };
-        let label = format!("{room_name}{pin_marker}");
+        let label = format!("{name}{pin_marker}");
         t.add(vec![&label, "(you)", "", ""]);
     }
 
@@ -484,33 +479,31 @@ fn cmd_peers() {
     if !peers.is_empty() {
         t.add(vec!["", "", "", ""]);
         for (peer_cwd, project, status, ctx) in &peers {
-            // Determine room context: same project? in a shared room?
-            let room_label = if *peer_cwd == cwd {
+            let focus_label = if *peer_cwd == cwd {
                 "(project)".to_string()
             } else {
-                // Check if this peer's project name matches any room (heuristic)
                 String::new()
             };
-            t.add(vec![&room_label, project, status, &format!("{ctx:.0}%")]);
+            t.add(vec![&focus_label, project, status, &format!("{ctx:.0}%")]);
         }
     }
 
     t.print();
 
-    let room_count = my_rooms.len();
+    let focus_count = my_focus.len();
     let peer_count = peers.len();
     println!(
-        "  {} agent(s), {} room(s)",
+        "  {} agent(s), {} focus group(s)",
         peer_count + 1,
-        room_count + 1
+        focus_count + 1
     );
 }
 
 fn cmd_send(args: &[String]) {
-    // Parse flags: --broadcast, --to <project-path>, --room <name>
+    // Parse flags: --broadcast, --to <project-path>, --focus <name>
     let mut broadcast = false;
     let mut target_dir: Option<String> = None;
-    let mut target_room: Option<String> = None;
+    let mut target_focus: Option<String> = None;
     let mut message_parts: Vec<&str> = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -525,12 +518,12 @@ fn cmd_send(args: &[String]) {
                     std::process::exit(1);
                 }
             }
-            "--room" => {
+            "--focus" => {
                 i += 1;
                 if i < args.len() {
-                    target_room = Some(args[i].clone());
+                    target_focus = Some(args[i].clone());
                 } else {
-                    eprintln!("attend send: --room requires a room name");
+                    eprintln!("attend send: --focus requires a focus group name");
                     std::process::exit(1);
                 }
             }
@@ -592,19 +585,6 @@ fn cmd_send(args: &[String]) {
                     eprintln!("\ndid you mean: {}?", suggestion);
                 }
             }
-            // Show focus group if configured
-            let focus_file = base.join("focus");
-            if let Ok(content) = std::fs::read_to_string(&focus_file) {
-                let groups: Vec<&str> = content.lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .collect();
-                if !groups.is_empty() {
-                    eprintln!("\nfocus group (use `attend send` without --to to reach all):");
-                    for g in &groups {
-                        eprintln!("  {}", g);
-                    }
-                }
-            }
             std::process::exit(1);
         }
     }
@@ -613,11 +593,11 @@ fn cmd_send(args: &[String]) {
     // --broadcast: _broadcast only (reaches everyone)
     // --to <path>: specific project only
     // default: own project + focus group (mirrors what we read)
-    let r = get_rooms();
+    let r = get_groups();
     let dest_dirs: Vec<std::path::PathBuf> = if broadcast {
         vec![base.join("_broadcast")]
-    } else if let Some(ref room_name) = target_room {
-        vec![r.room_dir(room_name)]
+    } else if let Some(ref focus_name) = target_focus {
+        vec![r.group_dir(focus_name)]
     } else if let Some(ref path) = target_dir {
         let resolved = std::fs::canonicalize(path)
             .map(|p| p.to_string_lossy().to_string())
@@ -626,19 +606,9 @@ fn cmd_send(args: &[String]) {
     } else {
         // Default: send to own project + joined rooms + focus group peers
         let mut dirs = vec![base.join(encode_project(&cwd))];
-        // Named rooms
-        for name in r.joined_room_names() {
-            dirs.push(r.room_dir(&name));
-        }
-        // Legacy focus group (deprecated, still works)
-        let focus_file = base.join("focus");
-        if let Ok(content) = std::fs::read_to_string(&focus_file) {
-            for line in content.lines() {
-                let line = line.trim();
-                if !line.is_empty() {
-                    dirs.push(base.join(encode_project(line)));
-                }
-            }
+        // Focus groups (named signal namespaces)
+        for name in r.joined_group_names() {
+            dirs.push(r.group_dir(&name));
         }
         dirs
     };
@@ -655,9 +625,9 @@ fn cmd_send(args: &[String]) {
     let content = format!("{}|{}|{}|{}\n", from, project, cwd, message);
 
     let scope = if broadcast { "broadcast" }
-        else if target_room.is_some() { "room" }
+        else if target_focus.is_some() { "focus" }
         else if target_dir.is_some() { "directed" }
-        else if dest_dirs.len() > 1 { "rooms+focus" }
+        else if dest_dirs.len() > 1 { "focus" }
         else { "project" };
 
     for dest_dir in &dest_dirs {
@@ -718,17 +688,8 @@ fn cmd_status() {
     let own_count = count_signals(&own_dir);
     let broadcast_count = count_signals(&broadcast_dir);
 
-    let focus_file = base.join("focus");
-    let focus_peers: Vec<String> = if focus_file.exists() {
-        std::fs::read_to_string(&focus_file)
-            .unwrap_or_default()
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| l.to_string())
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let r = get_groups();
+    let my_focus = r.my_groups();
 
     // Single table: Section | Detail | Info
     let mut t = agent_fmt::Table::new(&["", "Detail", "Info"]);
@@ -755,12 +716,14 @@ fn cmd_status() {
     t.add(vec!["", "", ""]);
 
     // ── Focus section
-    if focus_peers.is_empty() {
+    if my_focus.is_empty() {
         t.add(vec!["focus", "project only", ""]);
     } else {
-        for (i, peer) in focus_peers.iter().enumerate() {
+        for (i, (name, pinned)) in my_focus.iter().enumerate() {
             let label = if i == 0 { "focus" } else { "" };
-            t.add(vec![label, "peer", peer]);
+            let pin = if *pinned { " (pinned)" } else { "" };
+            let info = format!("{name}{pin}");
+            t.add(vec![label, &info, ""]);
         }
     }
 
@@ -950,7 +913,7 @@ fn cmd_scene(args: &[String]) {
         }
     };
 
-    let r = get_rooms();
+    let r = get_groups();
     match scenes::activate(name, &r) {
         Ok(result) => println!("[attend] scene '{name}': {result}"),
         Err(e) => {
@@ -965,33 +928,33 @@ fn cmd_scenes() {
     let mut names: Vec<&String> = all.keys().collect();
     names.sort();
 
-    let mut t = agent_fmt::Table::new(&["Scene", "Rooms"]);
+    let mut t = agent_fmt::Table::new(&["Scene", "Focus groups"]);
     for name in &names {
         let scene = &all[*name];
-        let rooms_str = if scene.rooms.is_empty() {
+        let groups_str = if scene.rooms.is_empty() {
             "(none — project only)".to_string()
         } else {
             scene.rooms.join(", ")
         };
-        t.add(vec![name.as_str(), &rooms_str]);
+        t.add(vec![name.as_str(), &groups_str]);
     }
     t.print();
 }
 
-fn get_rooms() -> rooms::Rooms {
+fn get_groups() -> groups::Groups {
     let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
-    rooms::Rooms::new(&signals_base(), &session_id)
+    groups::Groups::new(&signals_base(), &session_id)
 }
 
-fn cmd_room(args: &[String]) {
-    let r = get_rooms();
+fn cmd_focus_new(args: &[String]) {
+    let r = get_groups();
 
     match args.first().map(|s| s.as_str()) {
-        Some("join") => {
+        Some("on") => {
             let name = match args.get(1) {
                 Some(n) => n,
                 None => {
-                    eprintln!("usage: attend room join <name> [--pin]");
+                    eprintln!("usage: attend focus on <name> [--pin]");
                     std::process::exit(1);
                 }
             };
@@ -999,68 +962,92 @@ fn cmd_room(args: &[String]) {
             match r.join(name, pin) {
                 Ok(()) => {
                     let suffix = if pin { " (pinned)" } else { "" };
-                    println!("[attend] room: joined {name}{suffix}");
+                    println!("[attend] focus: attending to {name}{suffix}");
                 }
                 Err(e) => {
-                    eprintln!("[attend] room: {e}");
+                    eprintln!("[attend] focus: {e}");
                     std::process::exit(1);
                 }
             }
         }
-        Some("leave") => {
+        Some("off") => {
             let name = match args.get(1) {
                 Some(n) => n,
                 None => {
-                    eprintln!("usage: attend room leave <name>");
+                    eprintln!("usage: attend focus off <name>");
                     std::process::exit(1);
                 }
             };
             r.leave(name).ok();
-            println!("[attend] room: left {name}");
+            println!("[attend] focus: released {name}");
+        }
+        Some("clear") => {
+            for (name, _) in r.my_groups() {
+                r.leave(&name).ok();
+            }
+            println!("[attend] focus: cleared (project only)");
         }
         Some("pin") => {
             let name = match args.get(1) {
                 Some(n) => n,
                 None => {
-                    eprintln!("usage: attend room pin <name>");
+                    eprintln!("usage: attend focus pin <name>");
                     std::process::exit(1);
                 }
             };
             r.pin(name);
-            println!("[attend] room: pinned {name}");
+            println!("[attend] focus: pinned {name}");
         }
         Some("unpin") => {
             let name = match args.get(1) {
                 Some(n) => n,
                 None => {
-                    eprintln!("usage: attend room unpin <name>");
+                    eprintln!("usage: attend focus unpin <name>");
                     std::process::exit(1);
                 }
             };
             r.unpin(name);
-            println!("[attend] room: unpinned {name}");
+            println!("[attend] focus: unpinned {name}");
         }
         Some("dissolve") => {
             let name = match args.get(1) {
                 Some(n) => n,
                 None => {
-                    eprintln!("usage: attend room dissolve <name>");
+                    eprintln!("usage: attend focus dissolve <name>");
                     std::process::exit(1);
                 }
             };
             let members = r.dissolve(name);
             if members.is_empty() {
-                println!("[attend] room: dissolved {name} (was empty)");
+                println!("[attend] focus: dissolved {name} (was empty)");
             } else {
-                println!("[attend] room: dissolved {name} ({} members removed)", members.len());
+                println!("[attend] focus: dissolved {name} ({} members released)", members.len());
             }
         }
+        Some("all") => {
+            r.cleanup_stale();
+            let all = r.all_groups();
+            if all.is_empty() {
+                println!("no active focus groups");
+                return;
+            }
+            let mut t = agent_fmt::Table::new(&["Focus", "Members", "Pinned"]);
+            t.align(1, agent_fmt::Align::Right);
+            for (name, count, pinned) in &all {
+                t.add(vec![
+                    name.as_str(),
+                    &count.to_string(),
+                    if *pinned { "yes" } else { "no" },
+                ]);
+            }
+            t.print();
+        }
         Some("list") | None => {
-            let my = r.my_rooms();
+            let my = r.my_groups();
             if my.is_empty() {
-                println!("not in any named rooms (project room only)");
+                println!("focus: project only");
             } else {
-                let mut t = agent_fmt::Table::new(&["Room", "Pinned"]);
+                let mut t = agent_fmt::Table::new(&["Focus", "Pinned"]);
                 for (name, pinned) in &my {
                     t.add(vec![name.as_str(), if *pinned { "yes" } else { "no" }]);
                 }
@@ -1068,109 +1055,10 @@ fn cmd_room(args: &[String]) {
             }
         }
         Some(unknown) => {
-            eprintln!("attend room: unknown subcommand '{unknown}' — try join, leave, list, pin, unpin, dissolve");
+            eprintln!("attend focus: unknown subcommand '{unknown}' — try on, off, list, all, clear, pin, unpin, dissolve");
             std::process::exit(1);
         }
     }
-}
-
-fn cmd_rooms() {
-    let r = get_rooms();
-    r.cleanup_stale();
-    let all = r.all_rooms();
-
-    if all.is_empty() {
-        println!("no active rooms");
-        return;
-    }
-
-    let mut t = agent_fmt::Table::new(&["Room", "Members", "Pinned"]);
-    t.align(1, agent_fmt::Align::Right);
-    for (name, count, pinned) in &all {
-        t.add(vec![
-            name.as_str(),
-            &count.to_string(),
-            if *pinned { "yes" } else { "no" },
-        ]);
-    }
-    t.print();
-}
-
-fn cmd_focus(args: &[String]) {
-    let focus_file = signals_base().join("focus");
-
-    match args.first().map(|s| s.as_str()) {
-        Some("add") => {
-            // attend focus add /path/to/project [/path/to/other ...]
-            if args.len() < 2 {
-                eprintln!("usage: attend focus add <project-path> [...]");
-                std::process::exit(1);
-            }
-            let mut existing = read_focus_list(&focus_file);
-            for path in &args[1..] {
-                let resolved = std::fs::canonicalize(path)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| path.clone());
-                if !existing.contains(&resolved) {
-                    existing.push(resolved.clone());
-                    eprintln!("[attend] focus: added {}", resolved);
-                }
-            }
-            write_focus_list(&focus_file, &existing);
-        }
-        Some("remove") | Some("rm") => {
-            if args.len() < 2 {
-                eprintln!("usage: attend focus remove <project-path> [...]");
-                std::process::exit(1);
-            }
-            let mut existing = read_focus_list(&focus_file);
-            for path in &args[1..] {
-                let resolved = std::fs::canonicalize(path)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| path.clone());
-                existing.retain(|p| p != &resolved);
-                eprintln!("[attend] focus: removed {}", resolved);
-            }
-            write_focus_list(&focus_file, &existing);
-        }
-        Some("clear") => {
-            std::fs::remove_file(&focus_file).ok();
-            eprintln!("[attend] focus: cleared (project-only mode)");
-        }
-        Some("list") | None => {
-            let list = read_focus_list(&focus_file);
-            if list.is_empty() {
-                println!("focus: project only (no peers in focus group)");
-            } else {
-                println!("focus: {} peers", list.len());
-                for p in &list {
-                    let name = p.rsplit('/').next().unwrap_or(p);
-                    println!("  {} ({})", name, encode_project(p));
-                }
-            }
-        }
-        Some(unknown) => {
-            eprintln!("attend focus: unknown subcommand '{}' — try add, remove, clear, list", unknown);
-            std::process::exit(1);
-        }
-    }
-}
-
-fn read_focus_list(path: &std::path::Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.trim().to_string())
-        .collect()
-}
-
-fn write_focus_list(path: &std::path::Path, list: &[String]) {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let content = list.join("\n") + "\n";
-    std::fs::write(path, content).ok();
 }
 
 // --- Permissions audit (ADR-116) ---
@@ -1225,20 +1113,14 @@ fn main() {
         Some("send") => {
             cmd_send(&args[1..]);
         }
-        Some("room") => {
-            cmd_room(&args[1..]);
-        }
-        Some("rooms") => {
-            cmd_rooms();
+        Some("focus") => {
+            cmd_focus_new(&args[1..]);
         }
         Some("scene") => {
             cmd_scene(&args[1..]);
         }
         Some("scenes") => {
             cmd_scenes();
-        }
-        Some("focus") => {
-            cmd_focus(&args[1..]);
         }
         Some("permissions") => {
             match args.get(1).map(|s| s.as_str()) {
@@ -1287,23 +1169,21 @@ fn main() {
                 .print();
             println!("usage: attend <command>\n");
             agent_fmt::print_commands("commands", &[
-                ("run",    "Start the sensor loop (use with Monitor for async delivery)"),
-                ("peers",  "List active Claude Code sessions"),
-                ("inbox",  "Read pending messages from peers"),
-                ("send",   "Send a signal to peer sessions"),
-                ("room",   "Join/leave named rooms (join, leave, list, pin, unpin, dissolve)"),
-                ("rooms",  "List all active rooms with members"),
-                ("scene",  "Activate a named scene (reconfigure room membership)"),
-                ("scenes", "List available scenes"),
-                ("focus",  "Manage focus group [deprecated — use room]"),
+                ("run",         "Start the sensor loop (use with Monitor for async delivery)"),
+                ("peers",       "List active Claude Code sessions and focus groups"),
+                ("inbox",       "Read pending messages from peers"),
+                ("send",        "Send a signal to peer sessions"),
+                ("focus",       "Manage attention groups (on, off, list, all, clear, pin, dissolve)"),
+                ("scene",       "Activate a named scene (reconfigure focus)"),
+                ("scenes",      "List available scenes"),
                 ("config",      "Manage configuration (init/show/path)"),
                 ("permissions", "Audit sensor permissions against settings.json"),
                 ("status",      "Show running instances, signals, and focus state"),
-                ("help",   "Show this help"),
+                ("help",        "Show this help"),
             ]);
             println!();
             agent_fmt::print_commands("send flags", &[
-                ("--room <name>", "Send to a named room"),
+                ("--focus <name>", "Send to a focus group"),
                 ("--broadcast",   "Send to all agents"),
                 ("--to <path>",   "Send to a specific project path (legacy)"),
             ]);
