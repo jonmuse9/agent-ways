@@ -974,51 +974,7 @@ fn cmd_permissions_audit() {
     }
 
     let results = permissions::audit(&requirements, &grants);
-
-    // Display
-    println!();
-    println!("  \x1b[1mAttend Permissions Audit\x1b[0m (ADR-116)");
-    println!();
-
-    if results.is_empty() {
-        println!("  No sensors declare requires: fields.");
-        println!();
-        return;
-    }
-
-    let mut table = agent_fmt::Table::new(&["Sensor", "Requires", "Status"]);
-    table.align(0, agent_fmt::Align::Left);
-    table.align(1, agent_fmt::Align::Left);
-    table.align(2, agent_fmt::Align::Left);
-
-    let mut missing_count = 0u32;
-    let mut missing_perms: Vec<String> = Vec::new();
-
-    for r in &results {
-        let status = if r.granted {
-            "\x1b[32mgranted\x1b[0m".to_string()
-        } else {
-            missing_count += 1;
-            if !missing_perms.contains(&r.requirement) {
-                missing_perms.push(r.requirement.clone());
-            }
-            "\x1b[31mMISSING\x1b[0m".to_string()
-        };
-        table.add(vec![&r.source, &r.requirement, &status]);
-    }
-
-    table.print();
-    println!();
-
-    if missing_count > 0 {
-        println!("  \x1b[33m{missing_count} missing permission(s).\x1b[0m Add to settings.json:");
-        for p in &missing_perms {
-            println!("    \"{p}\"");
-        }
-    } else {
-        println!("  \x1b[32mAll permissions granted.\x1b[0m");
-    }
-    println!();
+    permissions::display_audit("Attend Permissions Audit", "Sensor", &results, false);
 }
 
 // --- Entry point ---

@@ -8,3 +8,4 @@ license = "MIT"
 [dependencies]
 figlet-rs = "1.0.0"
 libc = "0.2.184"
+serde_json = "1"

@@ -138,68 +138,21 @@ pub fn load_settings_permissions(settings_path: &Path) -> Vec<Permission> {
         Err(_) => return Vec::new(),
     };
 
-    // Minimal JSON parsing — find "allow": [...] array
-    // Using serde_json would add a dependency to agent-fmt; parse manually instead.
-    let mut perms = Vec::new();
-    let mut in_allow = false;
+    let doc: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("\"allow\"") && trimmed.contains('[') {
-            in_allow = true;
-            // Check if there are entries on the same line
-            if let Some(start) = trimmed.find('[') {
-                for entry in extract_string_entries(&trimmed[start..]) {
-                    if let Some(p) = Permission::parse(&entry) {
-                        perms.push(p);
-                    }
-                }
-            }
-            if trimmed.contains(']') {
-                in_allow = false;
-            }
-            continue;
-        }
-        if in_allow {
-            if trimmed.contains(']') {
-                // Might have entries before the ]
-                for entry in extract_string_entries(trimmed) {
-                    if let Some(p) = Permission::parse(&entry) {
-                        perms.push(p);
-                    }
-                }
-                in_allow = false;
-                continue;
-            }
-            for entry in extract_string_entries(trimmed) {
-                if let Some(p) = Permission::parse(&entry) {
-                    perms.push(p);
-                }
-            }
-        }
-    }
-    perms
-}
+    let allow = match doc.get("permissions").and_then(|p| p.get("allow")).and_then(|a| a.as_array()) {
+        Some(arr) => arr,
+        None => return Vec::new(),
+    };
 
-/// Extract quoted strings from a line (e.g., `"Bash(git:*)"` → `Bash(git:*)`).
-fn extract_string_entries(line: &str) -> Vec<String> {
-    let mut entries = Vec::new();
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '"' {
-            let mut s = String::new();
-            for c in chars.by_ref() {
-                if c == '"' {
-                    break;
-                }
-                s.push(c);
-            }
-            if !s.is_empty() && s != "allow" {
-                entries.push(s);
-            }
-        }
-    }
-    entries
+    allow
+        .iter()
+        .filter_map(|v| v.as_str())
+        .filter_map(Permission::parse)
+        .collect()
 }
 
 /// Audit result for a single requirement.
@@ -234,6 +187,78 @@ pub fn audit(
         }
     }
     results
+}
+
+/// Display audit results as an agent-fmt Table.
+///
+/// `title` is the heading (e.g., "Permissions Audit" or "Attend Permissions Audit").
+/// `source_header` is the first column label (e.g., "Way" or "Sensor").
+/// `has_tpm` triggers a deprecation notice for trusted-project-macros.
+pub fn display_audit(
+    title: &str,
+    source_header: &str,
+    results: &[AuditResult],
+    has_tpm: bool,
+) {
+    use crate::{Align, Table};
+
+    const RESET: &str = "\x1b[0m";
+    const BOLD: &str = "\x1b[1m";
+    const GREEN: &str = "\x1b[32m";
+    const RED: &str = "\x1b[31m";
+    const YELLOW: &str = "\x1b[33m";
+
+    println!();
+    println!("  {BOLD}{title}{RESET} (ADR-116)");
+    println!();
+
+    if results.is_empty() {
+        println!("  No {source_header}s declare requires: fields.");
+        println!();
+        return;
+    }
+
+    let mut table = Table::new(&[source_header, "Requires", "Status"]);
+    table.align(0, Align::Left);
+    table.align(1, Align::Left);
+    table.align(2, Align::Left);
+
+    let mut missing_count = 0u32;
+    let mut missing_perms: Vec<String> = Vec::new();
+
+    for r in results {
+        let status = if r.granted {
+            format!("{GREEN}granted{RESET}")
+        } else {
+            missing_count += 1;
+            if !missing_perms.contains(&r.requirement) {
+                missing_perms.push(r.requirement.clone());
+            }
+            format!("{RED}MISSING{RESET}")
+        };
+        table.add(vec![&r.source, &r.requirement, &status]);
+    }
+
+    table.print();
+    println!();
+
+    if missing_count > 0 {
+        println!("  {YELLOW}{missing_count} missing permission(s).{RESET} Add to settings.json:");
+        for p in &missing_perms {
+            println!("    \"{p}\"");
+        }
+    } else {
+        println!("  {GREEN}All permissions granted.{RESET}");
+    }
+
+    if has_tpm {
+        println!();
+        println!("  {YELLOW}Deprecation:{RESET} ~/.claude/trusted-project-macros found.");
+        println!("  This file is deprecated — use requires: fields in way frontmatter instead.");
+        println!("  See ADR-116 for migration guidance.");
+    }
+
+    println!();
 }
 
 #[cfg(test)]

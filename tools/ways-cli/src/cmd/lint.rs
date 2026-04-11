@@ -690,12 +690,41 @@ fn scan_macro_requires(path: &Path) -> Vec<String> {
     };
 
     let mut found: Vec<&str> = Vec::new();
+    let mut heredoc_delim: Option<String> = None;
+
     for line in content.lines() {
         let trimmed = line.trim();
+
+        // Skip here-doc bodies — content between <<DELIM and DELIM
+        if let Some(ref delim) = heredoc_delim {
+            if trimmed == delim.as_str() {
+                heredoc_delim = None;
+            }
+            continue;
+        }
+        // Detect here-doc start: cat <<EOF, cat <<'EOF', cat <<"EOF"
+        if let Some(pos) = trimmed.find("<<") {
+            let after = trimmed[pos + 2..].trim_start_matches(&['-', '~'][..]);
+            let delim = after
+                .trim_start_matches('\'').trim_start_matches('"')
+                .split(|c: char| c.is_whitespace() || c == '\'' || c == '"')
+                .next()
+                .unwrap_or("");
+            if !delim.is_empty() {
+                heredoc_delim = Some(delim.to_string());
+            }
+        }
+
         // Skip comments and empty lines
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
+
+        // Extract commands from trap 'cmd args' — the quoted command string
+        if trimmed.starts_with("trap ") {
+            scan_trap_command(trimmed, EXTERNAL_COMMANDS, &mut found);
+        }
+
         // Look for external commands: word boundaries in the line
         for cmd in EXTERNAL_COMMANDS {
             if line_uses_command(trimmed, cmd) && !found.contains(cmd) {
@@ -788,14 +817,6 @@ fn shell_tokens(line: &str) -> Vec<&str> {
             expect_cmd = false;
         }
 
-        // trap 'cmd ...' — the first word inside the quotes is a command
-        if expect_cmd && w == "trap" {
-            // Next whitespace-separated token will be the quoted command
-            expect_cmd = false; // trap itself consumed
-            // We'll catch the command via the quote-stripping on the next token
-            // when it's not in command position, but we need a special case
-        }
-
         // These signal the next word is a command
         if word.ends_with('|') || word == "&&" || word == "||" || word.ends_with(';')
             || word == "|" || word.ends_with("$(") || word.ends_with('`')
@@ -804,6 +825,32 @@ fn shell_tokens(line: &str) -> Vec<&str> {
         }
     }
     tokens
+}
+
+/// Extract commands from trap 'cmd args' SIGNAL patterns.
+/// The command string is inside single or double quotes as the second argument.
+fn scan_trap_command<'a>(line: &'a str, external_commands: &[&'a str], found: &mut Vec<&'a str>) {
+    // Find the quoted command string: trap 'rm -rf ...' EXIT
+    let after_trap = line.strip_prefix("trap ").unwrap_or("").trim();
+    let (quote_char, start) = if after_trap.starts_with('\'') {
+        ('\'', 1)
+    } else if after_trap.starts_with('"') {
+        ('"', 1)
+    } else {
+        return; // no quoted command
+    };
+
+    if let Some(end) = after_trap[start..].find(quote_char) {
+        let cmd_str = &after_trap[start..start + end];
+        // Extract the first word as the command
+        if let Some(first_word) = cmd_str.split_whitespace().next() {
+            for cmd in external_commands {
+                if first_word == *cmd && !found.contains(cmd) {
+                    found.push(cmd);
+                }
+            }
+        }
+    }
 }
 
 /// Format requires list as YAML inline array for frontmatter.
@@ -842,67 +889,26 @@ fn insert_requires_field(content: &str, requires_line: &str) -> String {
 
 /// Parse requires: field from frontmatter as a list of strings.
 /// Handles both inline array [a, b] and YAML list (- a) formats.
+/// Delegate to shared implementation in permissions module.
 fn extract_requires_list(fm: &str) -> Option<Vec<String>> {
-    let prefix = "requires:";
-    for (i, line) in fm.lines().enumerate() {
-        if !line.starts_with(prefix) {
-            continue;
-        }
-        let rest = line[prefix.len()..].trim();
-
-        // Inline array: requires: ["Bash(gh:*)", "Read"]
-        if rest.starts_with('[') && rest.ends_with(']') {
-            let inner = &rest[1..rest.len() - 1];
-            let items: Vec<String> = inner
-                .split(',')
-                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            return Some(items);
-        }
-
-        // YAML list: requires:\n  - Bash(gh:*)
-        if rest.is_empty() {
-            let mut items = Vec::new();
-            for subsequent in fm.lines().skip(i + 1) {
-                let trimmed = subsequent.trim();
-                if let Some(val) = trimmed.strip_prefix("- ") {
-                    items.push(val.trim_matches('"').trim_matches('\'').to_string());
-                } else {
-                    break;
-                }
-            }
-            return Some(items);
-        }
-
-        return None;
-    }
-    None
+    super::permissions::extract_requires(fm)
 }
 
 /// Validate that a permission string is well-formed.
+///
+/// Intentionally stricter than `Permission::parse` — restricts tool names to
+/// the four Claude Code tools (Read, Write, Edit, Bash) rather than accepting
+/// any uppercase identifier. This catches typos like "Rad(foo)" that parse()
+/// would accept as structurally valid but aren't real Claude Code permissions.
 fn is_valid_permission(perm: &str) -> bool {
-    // Wildcard
-    if perm == "*" {
-        return true;
-    }
-    // Simple tool name: Read, Write, Edit, Bash
-    if matches!(perm, "Read" | "Write" | "Edit" | "Bash") {
-        return true;
-    }
-    // Tool(scope): Read(/path/**), Bash(git:*), Bash(*)
-    if let Some(paren_start) = perm.find('(') {
-        if !perm.ends_with(')') {
-            return false;
+    use agent_fmt::permissions::Permission;
+
+    match Permission::parse(perm) {
+        None => false,
+        Some(Permission::Wildcard) => true,
+        Some(Permission::Tool(ref t)) | Some(Permission::Scoped(ref t, _)) => {
+            matches!(t.as_str(), "Read" | "Write" | "Edit" | "Bash")
         }
-        let tool = &perm[..paren_start];
-        if !matches!(tool, "Read" | "Write" | "Edit" | "Bash") {
-            return false;
-        }
-        let scope = &perm[paren_start + 1..perm.len() - 1];
-        !scope.is_empty()
-    } else {
-        false
     }
 }
 

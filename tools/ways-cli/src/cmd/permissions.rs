@@ -1,7 +1,6 @@
 //! Permission audit — diff requires: fields against settings.json grants (ADR-116).
 
-use agent_fmt::permissions::{self, AuditResult};
-use agent_fmt::{Align, Table};
+use agent_fmt::permissions;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -48,7 +47,7 @@ pub fn audit(global: bool) -> Result<()> {
     let has_tpm = tpm_path.is_file();
 
     // Display results
-    display_audit(&results, has_tpm);
+    permissions::display_audit("Permissions Audit", "Way", &results, has_tpm);
 
     Ok(())
 }
@@ -115,7 +114,8 @@ fn extract_frontmatter(content: &str) -> Option<String> {
 }
 
 /// Parse requires: field from frontmatter.
-fn extract_requires(fm: &str) -> Option<Vec<String>> {
+/// Also used by lint.rs for validation and --fix.
+pub fn extract_requires(fm: &str) -> Option<Vec<String>> {
     let prefix = "requires:";
     for (i, line) in fm.lines().enumerate() {
         if !line.starts_with(prefix) {
@@ -153,60 +153,3 @@ fn extract_requires(fm: &str) -> Option<Vec<String>> {
     None
 }
 
-/// Display audit results as an agent-fmt Table.
-fn display_audit(results: &[AuditResult], has_tpm: bool) {
-    println!();
-    println!("  \x1b[1mPermissions Audit\x1b[0m (ADR-116)");
-    println!();
-
-    if results.is_empty() {
-        println!("  No ways declare requires: fields.");
-        println!("  Run `ways lint --fix --global` to auto-populate from macro.sh files.");
-        println!();
-        return;
-    }
-
-    let mut table = Table::new(&["Way", "Requires", "Status"]);
-    table.align(0, Align::Left);
-    table.align(1, Align::Left);
-    table.align(2, Align::Left);
-
-    let mut missing_count = 0u32;
-    let mut missing_perms: Vec<String> = Vec::new();
-
-    for r in results {
-        let status = if r.granted {
-            "\x1b[32mgranted\x1b[0m".to_string()
-        } else {
-            missing_count += 1;
-            if !missing_perms.contains(&r.requirement) {
-                missing_perms.push(r.requirement.clone());
-            }
-            "\x1b[31mMISSING\x1b[0m".to_string()
-        };
-        table.add(vec![&r.source, &r.requirement, &status]);
-    }
-
-    table.print();
-    println!();
-
-    if missing_count > 0 {
-        println!(
-            "  \x1b[33m{missing_count} missing permission(s).\x1b[0m Add to settings.json:"
-        );
-        for p in &missing_perms {
-            println!("    \"{p}\"");
-        }
-    } else {
-        println!("  \x1b[32mAll permissions granted.\x1b[0m");
-    }
-
-    if has_tpm {
-        println!();
-        println!("  \x1b[33mDeprecation:\x1b[0m ~/.claude/trusted-project-macros found.");
-        println!("  This file is deprecated — use requires: fields in way frontmatter instead.");
-        println!("  See ADR-116 for migration guidance.");
-    }
-
-    println!();
-}
