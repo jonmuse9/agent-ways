@@ -893,8 +893,8 @@ fn cmd_tune(apply: bool) {
     let step_multiplier = 1.25_f64;
     let peak_multiplier = 1.0 + (1.0 * step_multiplier); // peak at exactly burst_threshold
 
-    let burst_window_s = ((u2u_p90 * burst_threshold).max(300.0).min(3600.0)) as u64;
-    let abs_refractory_s = (a2u_median.max(15.0).min(300.0)) as u64;
+    let burst_window_s = (u2u_p90 * burst_threshold).clamp(300.0, 3600.0) as u64;
+    let abs_refractory_s = a2u_median.clamp(15.0, 300.0) as u64;
     let burst_window_min = burst_window_s as f64 / 60.0;
     let decay_per_minute = (peak_multiplier - 1.0) / (2.0 * burst_window_min);
 

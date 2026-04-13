@@ -21,6 +21,7 @@ pub struct GroupEntry {
 }
 
 /// Group state manager.
+#[derive(Clone)]
 pub struct Groups {
     base: PathBuf,
     session_id: String,
