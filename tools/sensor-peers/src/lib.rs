@@ -303,28 +303,29 @@ impl PeerSensor {
                     let boost = self.peer_engagement_boost(&from_owned);
                     let magnitude = base_magnitude * boost;
 
-                    // Truncate long messages inline. No mailbox pointer —
-                    // Claude should not need a second lookup. Each event is
-                    // its own Monitor line, so the ~500-char truncation limit
-                    // is per-event, not per-batch.
-                    let display_msg = if message.len() > 600 {
-                        format!("{}... [truncated, {} chars total]", &message[..600], message.len())
-                    } else {
-                        message.to_string()
-                    };
-
-                    // Include reply hint only on first peer message.
-                    // Hint uses the simplest possible form: no --to, no paths.
-                    if !self.reply_hint_shown {
-                        observations.push((magnitude, format!(
-                            "message from {}: {} (reply: attend send <msg>)",
-                            sender, display_msg
-                        )));
+                    // Chunk long messages at word boundaries so each event
+                    // stays under Monitor's ~400-char stdout line ceiling.
+                    // Multiple chunks arrive as separate events inside the
+                    // same 200ms batch, so Monitor groups them into one
+                    // notification for the recipient.
+                    let include_reply_hint = !self.reply_hint_shown;
+                    let chunks = chunk_message(message, MAX_CHUNK_BODY, MAX_CHUNKS);
+                    let total = chunks.len();
+                    for (i, chunk) in chunks.into_iter().enumerate() {
+                        let header = if total == 1 {
+                            format!("message from {}: ", sender)
+                        } else {
+                            format!("message from {} ({}/{}): ", sender, i + 1, total)
+                        };
+                        let body = if i == 0 && include_reply_hint {
+                            format!("{} (reply: attend send <msg>)", chunk)
+                        } else {
+                            chunk
+                        };
+                        observations.push((magnitude, format!("{}{}", header, body)));
+                    }
+                    if include_reply_hint {
                         self.reply_hint_shown = true;
-                    } else {
-                        observations.push((magnitude, format!(
-                            "message from {}: {}", sender, display_msg
-                        )));
                     }
                 }
 
@@ -763,4 +764,135 @@ pub fn find_own_session_id(own_pid: u32) -> Option<String> {
         }
     }
     None
+}
+
+// ── Message chunking ────────────────────────────────────────────
+
+/// Max body characters per chunk. Monitor truncates stdout lines around
+/// 400 chars; the `[attend sensor=peers priority=...] message from X (N/M): `
+/// prefix eats ~80 chars, leaving ~300 for the body. 280 gives headroom for
+/// the reply hint appended to the first chunk of a multi-chunk message.
+const MAX_CHUNK_BODY: usize = 280;
+
+/// Cap on chunks per message. A message that splits into more than this many
+/// pieces gets its tail replaced with an overflow hint pointing at the inbox.
+/// 3 is plenty for conversational chatter and stays well under Monitor's
+/// per-notification safety ceiling.
+const MAX_CHUNKS: usize = 3;
+
+/// Split a message into word-boundary chunks, each ≤ `chunk_size` characters,
+/// capped at `max_chunks`. Long messages get their tail replaced with an
+/// overflow hint on the final kept chunk.
+///
+/// Words longer than `chunk_size` get their own chunk that necessarily
+/// exceeds the limit — we refuse to corrupt UTF-8 by char-slicing mid-word.
+/// This is fine for peer chatter where single words are bounded by natural
+/// language, and rare-case overflow is still readable even if truncated.
+fn chunk_message(message: &str, chunk_size: usize, max_chunks: usize) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for word in message.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.chars().count() + 1 + word.chars().count() <= chunk_size {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            chunks.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    if chunks.len() > max_chunks {
+        let overflow_hint = " …see `attend inbox` for full message";
+        chunks.truncate(max_chunks);
+        if let Some(last) = chunks.last_mut() {
+            // Trim the tail of the last kept chunk to fit the overflow hint
+            // without pushing the chunk over its budget.
+            let target = chunk_size.saturating_sub(overflow_hint.chars().count());
+            while last.chars().count() > target {
+                last.pop();
+            }
+            // Pop any trailing partial word so the hint attaches cleanly.
+            while let Some(c) = last.chars().last() {
+                if c.is_whitespace() {
+                    last.pop();
+                    break;
+                }
+                last.pop();
+            }
+            last.push_str(overflow_hint);
+        }
+    }
+
+    // Guarantee at least one chunk for an empty message (preserves the
+    // "message from X:" notification even when the body is blank).
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_message_single_chunk() {
+        let chunks = chunk_message("hello there", 100, 3);
+        assert_eq!(chunks, vec!["hello there"]);
+    }
+
+    #[test]
+    fn long_message_splits_at_word_boundaries() {
+        // 3 words of 10 chars each = 30 chars; chunk size 15 → two chunks.
+        let msg = "aaaaaaaaaa bbbbbbbbbb cccccccccc";
+        let chunks = chunk_message(msg, 15, 3);
+        assert_eq!(chunks, vec!["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"]);
+    }
+
+    #[test]
+    fn word_joining_respects_budget() {
+        // "foo bar baz" is 11 chars; budget 11 → one chunk. Budget 10 → two.
+        assert_eq!(chunk_message("foo bar baz", 11, 3), vec!["foo bar baz"]);
+        assert_eq!(chunk_message("foo bar baz", 10, 3), vec!["foo bar", "baz"]);
+    }
+
+    #[test]
+    fn overflow_hint_replaces_tail_when_exceeds_max_chunks() {
+        // 5 chunks worth of content, max 3 chunks.
+        let msg = "aaaa bbbb cccc dddd eeee ffff gggg hhhh";
+        let chunks = chunk_message(msg, 10, 3);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.last().unwrap().contains("…see `attend inbox` for full message"));
+    }
+
+    #[test]
+    fn empty_message_yields_one_empty_chunk() {
+        let chunks = chunk_message("", 100, 3);
+        assert_eq!(chunks, vec![""]);
+    }
+
+    #[test]
+    fn single_word_longer_than_budget_still_emits() {
+        // A 30-char word with a 10-char budget — we refuse to mid-slice.
+        let msg = "supercalifragilisticexpialidocious trailing";
+        let chunks = chunk_message(msg, 10, 3);
+        // First chunk is the long word (exceeds budget — defensible fallback).
+        assert_eq!(chunks[0], "supercalifragilisticexpialidocious");
+        assert_eq!(chunks[1], "trailing");
+    }
+
+    #[test]
+    fn utf8_is_counted_by_chars_not_bytes() {
+        // "café" is 4 chars but 5 bytes. Budget 4 fits, budget 3 does not.
+        let msg = "café rouge";
+        assert_eq!(chunk_message(msg, 10, 3), vec!["café rouge"]);
+        assert_eq!(chunk_message(msg, 4, 3), vec!["café", "rouge"]);
+    }
 }
