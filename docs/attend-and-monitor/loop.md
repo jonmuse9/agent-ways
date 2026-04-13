@@ -2,7 +2,9 @@
 
 Attend is a single long-lived process that runs a timer-driven sensor loop. It has no threads, no async runtime, no event subscriptions. Each iteration looks at a priority queue of upcoming sensor polls, sleeps until the next one is due, polls everything that's ready, decides whether to emit, and goes back to sleep.
 
-This page covers the rhythm of one iteration, the phases a sensor passes through inside that iteration, and how observations leave attend and reach the agent through Monitor. It's the substrate document — every other page in this directory refers back to something here.
+This page covers the rhythm of one iteration, the phases a sensor passes through inside that iteration, and how observations leave attend and reach whoever is listening. It's the substrate document — every other page in this directory refers back to something here.
+
+Two consumers ride on top of this loop: an AI agent session (via `attend run` delivering lines through Monitor) and a human operator (via `attend chat` rendering the same signals in an interactive TUI). The loop itself doesn't know or care which is connected — both drink from the same signal bus, and both are subject to the same engagement and governor rules. See [`tui.md`](tui.md) for the human mode.
 
 ## The rhythm
 
@@ -212,6 +214,8 @@ There's no graceful shutdown hook. The `attend run` process is meant to be start
 
 ## Where to go from here
 
+- **Writing new sensors**: [`authoring-sensors.md`](authoring-sensors.md) — how to implement a crate sensor or external script sensor that plays nicely with this loop.
+- **Human mode**: [`tui.md`](tui.md) — the `attend chat` interactive TUI, same signal bus as the agent side.
 - **Sensors individually**: `sensors.md` covers what each built-in observes and how it emits.
 - **Engagement curve**: `engagement.md` covers the action potential model — why sensors go quiet after bursts.
 - **Signal format**: `signals.md` covers the wire format, on-disk layout, and lifecycle.
