@@ -248,16 +248,14 @@ impl PeerSensor {
                     continue;
                 }
 
-                // Read and parse: from|project|cwd|message
+                // Read and parse: `from|project|cwd|message` (legacy) or
+                // `from|project|cwd|re:id|message` (threaded, ADR-120).
                 let content = match fs::read_to_string(&path) {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
                 let content = content.trim();
-                let parts: Vec<&str> = content.splitn(4, '|').collect();
-                if parts.len() == 4 {
-                    let from = parts[0];
-
+                if let Some((from, project, source_cwd, message)) = parse_signal(content) {
                     // Skip our own signals — check the from field, not filename.
                     // from is "claude:session-id" or "external:user@terminal"
                     if let Some((_kind, identity)) = from.split_once(':') {
@@ -266,13 +264,9 @@ impl PeerSensor {
                             continue;
                         }
                     }
-                    let project = parts[1];
-                    let message = parts[3];
 
                     let (kind, identity) = from.split_once(':')
                         .unwrap_or(("unknown", from));
-
-                    let source_cwd = parts[2];
                     let sender = match kind {
                         "claude" => format!("claude/{}", source_cwd),
                         "external" => identity.to_string(),
@@ -856,6 +850,45 @@ fn chunk_message(message: &str, chunk_size: usize, max_chunks: usize) -> Vec<Str
     chunks
 }
 
+/// Signal IDs are filename stems in the form `<sender-id>-<timestamp>`,
+/// always `[A-Za-z0-9_-]+`. Used as the discriminator fence for the `re:`
+/// prefix so legacy prose like "re: the thing we discussed" doesn't get
+/// misparsed as threaded. Must stay in lockstep with the equivalent
+/// helper in `attend::main::is_valid_signal_id`.
+fn is_valid_signal_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Parsed signal tuple: `(from, project, cwd, message)`.
+///
+/// Accepts both the legacy 4-field format (`from|project|cwd|message`) and
+/// the 5-field threaded format (`from|project|cwd|re:signal-id|message`,
+/// ADR-120). The discriminator is a `re:<id>|` prefix on the field
+/// following `cwd` where `<id>` matches `is_valid_signal_id`. A malformed
+/// or ambiguous `re:` prefix degrades to legacy interpretation so real
+/// prose round-trips cleanly.
+///
+/// The threading id itself is dropped at parse time — the peer sensor
+/// doesn't currently render thread context. If that changes (e.g., a
+/// "replying to …" notification header), widen the return type instead
+/// of re-parsing downstream.
+pub(crate) fn parse_signal(content: &str) -> Option<(&str, &str, &str, &str)> {
+    let parts: Vec<&str> = content.splitn(4, '|').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let tail = parts[3];
+    let message = match tail.strip_prefix("re:").and_then(|rest| rest.split_once('|')) {
+        Some((id, msg)) if is_valid_signal_id(id) => msg,
+        // Either not threaded or the `re:` prefix is followed by text
+        // that doesn't look like a signal id — render the raw tail so
+        // legacy prose stays intact.
+        _ => tail,
+    };
+    Some((parts[0], parts[1], parts[2], message))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -928,5 +961,94 @@ mod tests {
         let msg = "café rouge";
         assert_eq!(chunk_message(msg, 10, 3), vec!["café rouge"]);
         assert_eq!(chunk_message(msg, 4, 3), vec!["café", "rouge"]);
+    }
+
+    // ── parse_signal ────────────────────────────────────────────────
+    //
+    // The parse rule: `re:` prefix on the field after `cwd` switches
+    // into threaded form and shifts the message forward by one field.
+    // Everything else stays legacy.
+
+    #[test]
+    fn parse_legacy_four_field_signal() {
+        let (from, project, cwd, message) =
+            parse_signal("claude:abc|proj|/home/a|hello there").unwrap();
+        assert_eq!(from, "claude:abc");
+        assert_eq!(project, "proj");
+        assert_eq!(cwd, "/home/a");
+        assert_eq!(message, "hello there");
+    }
+
+    #[test]
+    fn parse_threaded_five_field_signal_drops_re_id() {
+        // sensor-peers doesn't currently use the re: id — the parse helper
+        // strips it so the sensor's notification text stays clean.
+        let (_, _, _, message) = parse_signal(
+            "claude:abc|proj|/home/a|re:claude-abc-1743280000|reply body"
+        ).unwrap();
+        assert_eq!(message, "reply body");
+    }
+
+    #[test]
+    fn parse_preserves_pipes_in_legacy_message_tail() {
+        // The tail is splitn(4)-captured, so any pipes inside `message`
+        // stay intact — important when users paste markdown tables etc.
+        let (_, _, _, message) =
+            parse_signal("claude:abc|proj|/home/a|col1 | col2 | col3").unwrap();
+        assert_eq!(message, "col1 | col2 | col3");
+    }
+
+    #[test]
+    fn parse_preserves_pipes_in_threaded_message_tail() {
+        let (_, _, _, message) =
+            parse_signal("claude:abc|proj|/home/a|re:id-42|col1 | col2").unwrap();
+        assert_eq!(message, "col1 | col2");
+    }
+
+    #[test]
+    fn parse_rejects_fewer_than_four_fields() {
+        assert!(parse_signal("only|three|fields").is_none());
+        assert!(parse_signal("").is_none());
+    }
+
+    #[test]
+    fn parse_malformed_re_prefix_without_pipe_falls_back_to_raw_tail() {
+        // A `re:` prefix with no `|message` following is malformed —
+        // degrade to rendering the whole tail so the signal still shows
+        // up instead of vanishing.
+        let (_, _, _, message) =
+            parse_signal("claude:abc|proj|/home/a|re:alone").unwrap();
+        assert_eq!(message, "re:alone");
+    }
+
+    #[test]
+    fn parse_rejects_empty_reply_id() {
+        // Empty `re:` ID fails the is_valid_signal_id fence — the tail
+        // is rendered raw so the recipient still sees something instead
+        // of getting a silent drop.
+        let (_, _, _, message) =
+            parse_signal("claude:abc|proj|/home/a|re:|body").unwrap();
+        assert_eq!(message, "re:|body");
+    }
+
+    #[test]
+    fn parse_legacy_re_prose_falls_back_to_message() {
+        // Regression fence: a legacy sender writing prose that happens
+        // to start with "re:" must not be mistaken for a threaded reply.
+        // The id candidate "the thing we discussed" has a space, which
+        // fails is_valid_signal_id, so we render the whole tail.
+        let (_, _, _, message) = parse_signal(
+            "claude:abc|proj|/home/a|re: the thing we discussed|still open"
+        ).unwrap();
+        assert_eq!(message, "re: the thing we discussed|still open");
+    }
+
+    #[test]
+    fn parse_rejects_id_with_non_word_chars() {
+        // A re: prefix with what looks like a real id except it contains
+        // whitespace or punctuation other than `-`/`_` also falls back.
+        let (_, _, _, message) =
+            parse_signal("claude:abc|proj|/home/a|re:has spaces|body").unwrap();
+        assert_eq!(message, "re:has spaces|body");
     }
 }
