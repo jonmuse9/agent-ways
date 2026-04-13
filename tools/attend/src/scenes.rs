@@ -1,11 +1,11 @@
 //! Scene management for attend (ADR-118).
 //!
-//! A scene is a named preset that configures room membership.
+//! A scene is a named preset that configures focus group membership.
 //! Scenes live in `~/.config/attend/scenes.yaml`.
 //!
 //! Built-in defaults:
-//!   private — leave all named rooms (project room only)
-//!   open    — join the well-known "open" room
+//!   private — leave all focus groups (project scope only)
+//!   open    — join the well-known "open" group
 
 use std::collections::HashMap;
 use std::fs;
@@ -38,7 +38,7 @@ pub fn load_scenes() -> HashMap<String, Scene> {
     scenes
 }
 
-/// Activate a scene — reconfigure room membership to match the preset.
+/// Activate a scene — reconfigure focus group membership to match the preset.
 pub fn activate(scene_name: &str, groups: &Groups) -> Result<String, String> {
     let scenes = load_scenes();
     let scene = scenes
@@ -57,7 +57,7 @@ pub fn activate(scene_name: &str, groups: &Groups) -> Result<String, String> {
     }
 
     if scene.rooms.is_empty() {
-        Ok("project room only".to_string())
+        Ok("project scope only".to_string())
     } else {
         Ok(format!("joined: {}", scene.rooms.join(", ")))
     }

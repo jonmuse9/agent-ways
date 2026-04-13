@@ -17,6 +17,7 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub governor: GovernorConfig,
+    pub engagement: EngagementConfig,
     pub sensors: HashMap<String, SensorConfig>,
 }
 
@@ -26,6 +27,50 @@ pub struct GovernorConfig {
     pub base_cooldown: Duration,
     pub max_per_window: u32,
     pub rate_window: Duration,
+}
+
+/// Action potential engagement parameters (ADR-119).
+///
+/// Governs per-sensor refractory behavior: after a burst of disclosures,
+/// the sensor enters a refractory period where only high-magnitude events
+/// break through. This provides natural disengagement from conversations
+/// that have plateaued in value.
+///
+/// Sane defaults are sized for Claude's actual turn cadence. Use
+/// `attend tune` to auto-derive values from real session history.
+#[derive(Debug, Clone)]
+pub struct EngagementConfig {
+    /// Window for counting recent disclosures toward a burst.
+    pub burst_window: Duration,
+    /// Disclosures within burst_window needed to trigger refractory.
+    pub burst_threshold: usize,
+    /// Multiplier added per disclosure past the burst threshold.
+    pub step_multiplier: f64,
+    /// Absolute refractory: no disclosures at all for this long after burst.
+    pub absolute_refractory: Duration,
+    /// Relative refractory multiplier decays by this amount per minute.
+    pub decay_per_minute: f64,
+    /// Per-peer engagement window (used by sensor-peers for per-peer
+    /// magnitude boosting).
+    pub peer_activity_window: Duration,
+}
+
+impl Default for EngagementConfig {
+    fn default() -> Self {
+        Self {
+            // 15-minute window — sized so typical multi-turn conversations
+            // (with Claude turns averaging 60–120s) stay within it.
+            burst_window: Duration::from_secs(900),
+            burst_threshold: 3,
+            step_multiplier: 1.25,
+            // One Claude turn (~60s median) of complete silence after burst.
+            absolute_refractory: Duration::from_secs(60),
+            // Decay to rest over ~12 min (from peak 2.25).
+            decay_per_minute: 0.1,
+            // Match burst window.
+            peer_activity_window: Duration::from_secs(900),
+        }
+    }
 }
 
 /// Per-sensor configuration.
@@ -93,6 +138,7 @@ impl Default for Config {
         });
         Self {
             governor: GovernorConfig::default(),
+            engagement: EngagementConfig::default(),
             sensors,
         }
     }
@@ -144,6 +190,16 @@ governor:
   base_cooldown: 15
   max_per_window: 3
   rate_window: 120
+
+# Action potential engagement model (ADR-119).
+# Run `attend tune` to auto-derive these from real session history.
+engagement:
+  burst_window: 900          # seconds — burst counting window
+  burst_threshold: 3         # disclosures before refractory kicks in
+  step_multiplier: 1.25      # per-burst threshold elevation
+  absolute_refractory: 60    # seconds of complete suppression after burst
+  decay_per_minute: 0.1      # relative refractory decay rate
+  peer_activity_window: 900  # per-peer engagement window
 
 sensors:
   context:
@@ -226,6 +282,42 @@ fn apply_config(config: &mut Config, content: &str) {
                         "rate_window" => {
                             if let Ok(v) = value.parse::<u64>() {
                                 config.governor.rate_window = Duration::from_secs(v);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else if current_section == "engagement" {
+                if let Some((key, value)) = parse_kv(trimmed) {
+                    match key {
+                        "burst_window" => {
+                            if let Ok(v) = value.parse::<u64>() {
+                                config.engagement.burst_window = Duration::from_secs(v);
+                            }
+                        }
+                        "burst_threshold" => {
+                            if let Ok(v) = value.parse::<usize>() {
+                                config.engagement.burst_threshold = v;
+                            }
+                        }
+                        "step_multiplier" => {
+                            if let Ok(v) = value.parse::<f64>() {
+                                config.engagement.step_multiplier = v;
+                            }
+                        }
+                        "absolute_refractory" => {
+                            if let Ok(v) = value.parse::<u64>() {
+                                config.engagement.absolute_refractory = Duration::from_secs(v);
+                            }
+                        }
+                        "decay_per_minute" => {
+                            if let Ok(v) = value.parse::<f64>() {
+                                config.engagement.decay_per_minute = v;
+                            }
+                        }
+                        "peer_activity_window" => {
+                            if let Ok(v) = value.parse::<u64>() {
+                                config.engagement.peer_activity_window = Duration::from_secs(v);
                             }
                         }
                         _ => {}

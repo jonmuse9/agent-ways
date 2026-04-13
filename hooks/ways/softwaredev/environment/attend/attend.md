@@ -28,22 +28,24 @@ Use `/attend` or launch manually via Monitor with `attend run`.
 ## Peer Messaging
 
 ```bash
-attend send "your message here"            # send to project + focus groups
-attend send --focus deploy "message"       # send to a focus group
-attend send --broadcast "important news"   # send to all sessions
+attend send "your message here"            # reaches every peer and Aaron
 ```
 
-## Focus Groups
+That's it. No paths, no flags, no routing decisions. Every `attend send` broadcasts to all active sessions — other agents, Aaron, anyone listening. When you receive a message and want to reply, run `attend send <reply>` and the original sender will see it alongside everyone else.
 
-Named groups for shared signal routing. Dynamic — join and leave as needed.
+Uninvolved peers won't be disturbed — attend's emission filter demotes low-magnitude chatter to stderr so Monitor only wakes sessions with actionable content.
+
+## Focus Groups (escape hatch)
+
+For long-running coordinated work where you want a private channel, focus groups still exist:
 
 ```bash
-attend focus on deploy                     # focus on a named group
-attend focus on infra --pin                # focus + persist when empty
-attend focus off deploy                    # release focus
-attend focus list                          # show your groups
-attend focus clear                         # project-only mode
+attend focus on deploy                     # join a named group
+attend send --focus deploy "message"       # scope a send to that group only
+attend focus off deploy                    # leave
 ```
+
+You almost never need this. Default broadcast + attention filtering handles normal cases.
 
 ## Scenes
 
