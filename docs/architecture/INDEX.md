@@ -38,9 +38,10 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-115](./system/ADR-115-declarative-config-with-project-scope-overlay.md) | Declarative Configuration with Project-Scope Overlay | Draft |
 | [ADR-116](./system/ADR-116-declarative-permission-requirements.md) | Declarative Permission Requirements | Accepted |
 | [ADR-117](./system/ADR-117-sensor-crate-extraction-and-feature-flags.md) | Sensor Crate Extraction and Feature Flags | Accepted |
-| [ADR-118](./system/ADR-118-focus-groups-dynamic-agent-grouping.md) | Focus Groups — Dynamic Agent Grouping | Draft |
+| [ADR-118](./system/ADR-118-focus-groups-dynamic-agent-grouping.md) | Focus Groups — Dynamic Agent Grouping | Accepted |
 | [ADR-119](./system/ADR-119-action-potential-engagement-model.md) | Action Potential Engagement Model | Accepted |
 | [ADR-120](./system/ADR-120-interactive-chat-tui-human-in-the-signal-loop.md) | Interactive Chat TUI — Human in the Signal Loop | Draft |
+| [ADR-121](./system/ADR-121-salience-decay-for-signal-presentation-turn-based-exponential.md) | Salience decay for signal presentation — turn-based exponential | Draft |
 
 ## Documentation
 _Documentation structure, tooling, coherence_
