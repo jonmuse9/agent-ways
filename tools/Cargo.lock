@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-fmt"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "figlet-rs",
  "libc",
@@ -84,7 +84,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "attend"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "agent-fmt",
  "sensor-context",
@@ -523,42 +523,42 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sensor-context"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sensor-trait",
 ]
 
 [[package]]
 name = "sensor-disclosure"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sensor-trait",
 ]
 
 [[package]]
 name = "sensor-git"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sensor-trait",
 ]
 
 [[package]]
 name = "sensor-peers"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sensor-trait",
 ]
 
 [[package]]
 name = "sensor-processes"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sensor-trait",
 ]
 
 [[package]]
 name = "sensor-trait"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "serde"
@@ -718,7 +718,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "ways"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "agent-fmt",
  "anyhow",
