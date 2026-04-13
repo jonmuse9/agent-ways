@@ -18,7 +18,35 @@ use std::time::Duration;
 pub struct Config {
     pub governor: GovernorConfig,
     pub engagement: EngagementConfig,
+    pub cleanup: CleanupConfig,
     pub sensors: HashMap<String, SensorConfig>,
+}
+
+/// Background signal-file cleanup. Runs inside `attend run` so the signals
+/// base doesn't accumulate indefinitely. Defaults keep peer discussion
+/// readable for ~30 days, which is long enough to pick up a conversation
+/// the next day or the next week and short enough that nothing lives forever.
+#[derive(Debug, Clone)]
+pub struct CleanupConfig {
+    /// Master switch. Disable to skip auto-cleanup entirely.
+    pub enabled: bool,
+    /// How often the sensor loop runs a cleanup sweep.
+    pub interval: Duration,
+    /// Signal files older than this are removed by auto-cleanup.
+    pub retention: Duration,
+}
+
+impl Default for CleanupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            // Every 10 minutes — directory scan is O(files) and cheap.
+            interval: Duration::from_secs(600),
+            // 30 days — conservative enough that peer discussion threads
+            // stay readable across multi-day gaps.
+            retention: Duration::from_secs(30 * 86400),
+        }
+    }
 }
 
 /// Disclosure governor parameters.
@@ -139,6 +167,7 @@ impl Default for Config {
         Self {
             governor: GovernorConfig::default(),
             engagement: EngagementConfig::default(),
+            cleanup: CleanupConfig::default(),
             sensors,
         }
     }
@@ -200,6 +229,14 @@ engagement:
   absolute_refractory: 60    # seconds of complete suppression after burst
   decay_per_minute: 0.1      # relative refractory decay rate
   peer_activity_window: 900  # per-peer engagement window
+
+# Background signal-file cleanup. Runs inside `attend run` so the signals
+# base doesn't accumulate indefinitely. `attend cleanup` is the manual
+# escape hatch with --older-than / --all / --dry-run.
+cleanup:
+  enabled: true
+  interval: 600              # seconds — how often the sweep runs (10 min)
+  retention: 2592000         # seconds — age cutoff (30 days)
 
 sensors:
   context:
@@ -282,6 +319,25 @@ fn apply_config(config: &mut Config, content: &str) {
                         "rate_window" => {
                             if let Ok(v) = value.parse::<u64>() {
                                 config.governor.rate_window = Duration::from_secs(v);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else if current_section == "cleanup" {
+                if let Some((key, value)) = parse_kv(trimmed) {
+                    match key {
+                        "enabled" => {
+                            config.cleanup.enabled = value == "true";
+                        }
+                        "interval" => {
+                            if let Ok(v) = value.parse::<u64>() {
+                                config.cleanup.interval = Duration::from_secs(v);
+                            }
+                        }
+                        "retention" => {
+                            if let Ok(v) = value.parse::<u64>() {
+                                config.cleanup.retention = Duration::from_secs(v);
                             }
                         }
                         _ => {}
