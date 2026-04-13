@@ -68,7 +68,7 @@ An external sensor is declared in attend config:
 ```yaml
 sensors:
   +github-project:
-    script: .claude/sensors/github-project.sh
+    script: $XDG_DATA_HOME/attend/sensors/github-project.sh
     interval: 120        # base interval in seconds
     min_interval: 30     # fastest interval
     threshold: 2.0       # emission threshold
@@ -77,7 +77,29 @@ sensors:
       - Bash(gh:*)       # permission audit (ADR-116)
 ```
 
-The `+` prefix declares a new sensor beyond the built-ins. The `script:` field is a path relative to the working directory (or an absolute path). The script is executed via `bash` with cwd set to the working directory attend was launched in.
+The `+` prefix declares a new sensor beyond the built-ins.
+
+**Where the script lives is up to you.** Attend deliberately imposes no single "sensors dir." A script path can be:
+
+- **User-global** under `$XDG_DATA_HOME/attend/sensors/` — the XDG-convention default, survives across projects, lives in your own trusted data home
+- **Project-scoped** at `<project>/.claude/sensors/*.sh` — only active when attend runs from that repo; useful for sensors tied to a specific codebase
+- **An absolute path** to anywhere on disk — a personal tools repo, a team-shared scripts directory, `~/bin`, `/usr/local/lib/my-sensors/`, wherever you keep trusted executables
+
+The config parser expands `$HOME`, `~`, `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, `$XDG_STATE_HOME`, and `$XDG_CACHE_HOME` at load time, so `$XDG_DATA_HOME/attend/sensors/foo.sh` becomes an absolute path regardless of how attend is launched. This keeps configs portable across machines.
+
+The script is executed via `bash` with cwd set to the working directory attend was launched in. No arguments are passed.
+
+**Trust is the author's responsibility.** External sensors run arbitrary shell under your user — read every sensor before you enable it. Attend's design assumes sensors come from locations you already trust: your own data home, your own project dirs, your own tool repos. The parser will happily resolve any path, but if you point it at something you haven't audited, that's on you.
+
+**The shipped example.** Attend ships one reference external sensor at `tools/attend/examples/xdg-downloads.sh` in the agent-ways repo. The default user-scope config declares it as `+xdg-downloads:` with `enabled: false`. The intended workflow is:
+
+1. Open `$XDG_CONFIG_HOME/attend/config.yaml` and find the `+xdg-downloads:` block
+2. Follow the comment to copy the script from the agent-ways repo into `$XDG_DATA_HOME/attend/sensors/`
+3. Read the script — it's ~80 lines of bash, most of it comments explaining the pattern
+4. Flip `enabled: true`
+5. Restart attend
+
+After that, new files landing in your XDG Downloads directory trigger notifications via the magnitude hierarchy documented in the script header (1 file → 2.0, small batch → 2.5, burst → 3.0).
 
 **The subprocess contract:**
 

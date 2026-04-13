@@ -151,7 +151,7 @@ sensors:
 ```yaml
 sensors:
   +github-project:
-    script: .claude/sensors/github-project.sh
+    script: $XDG_DATA_HOME/attend/sensors/github-project.sh
     interval: 300
     min_interval: 60
     threshold: 2.5
@@ -160,7 +160,15 @@ sensors:
       - Bash(gh:*)
 ```
 
-The `+` prefix declares a new sensor beyond the built-ins. Script paths are relative to the working directory (or absolute).
+The `+` prefix declares a new sensor beyond the built-ins. Script paths are deliberately unconstrained — they can be:
+
+- **User-global**, under `$XDG_DATA_HOME/attend/sensors/` (the convention this config documents by default). Survives across projects; lives in your own trusted script dir.
+- **Project-scoped**, at `.claude/sensors/name.sh` in a specific repo. Only loads when attend runs from that project.
+- **Absolute paths** to anywhere on disk — your personal tools repo, a team-shared scripts dir, `~/bin`, wherever you keep trusted executables.
+
+Attend only cares that the path resolves and that the script respects the subprocess contract. The `$HOME`, `~`, and `$XDG_*` prefixes are expanded by the config parser, so `$XDG_DATA_HOME/...` in config becomes an absolute path at load time. This keeps configs portable across machines.
+
+**The shipped example.** Attend ships one external sensor at `tools/attend/examples/xdg-downloads.sh` in the agent-ways repo as a reference implementation. The default user-scope config declares it as `+xdg-downloads:` with `enabled: false`. To actually run it you copy the script to a trusted location you control (the comment in the default config walks through `$XDG_DATA_HOME/attend/sensors/` as the XDG-convention choice), review it, and flip `enabled: true`. The "copy to a trusted path, review, then enable" workflow is intentional — external sensors run arbitrary shell under your user, and you should always audit a sensor's code before letting it run.
 
 ### Per-sensor keys
 
