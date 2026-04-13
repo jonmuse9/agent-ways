@@ -22,7 +22,7 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 |-----|-------|--------|
 | [ADR-100](./system/ADR-100-ways-scaffolding-wizard.md) | Ways Scaffolding Wizard | Draft |
 | [ADR-101](./system/ADR-101-wormhole-relay-protocol-for-cross-instance-agent-communication.md) | Wormhole relay protocol for cross-instance agent communication | Deprecated |
-| [ADR-102](./system/ADR-102-irc-based-local-agent-communication.md) | IRC-based local agent communication | Abandoned |
+| [ADR-102](./system/ADR-102-irc-based-local-agent-communication.md) | IRC-based local agent communication | Deprecated |
 | [ADR-103](./system/ADR-103-checks-epoch-distance-aware-confidence-sensors-for-ways.md) | Checks — Epoch-Distance-Aware Confidence Sensors for Ways | Accepted |
 | [ADR-104](./system/ADR-104-token-gated-way-re-disclosure-for-long-context-windows.md) | Token-Gated Way Re-Disclosure for Long Context Windows | Accepted |
 | [ADR-105](./system/ADR-105-progressive-disclosure-for-way-trees.md) | Progressive Disclosure for Way Trees | Accepted |
@@ -32,9 +32,15 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-109](./system/ADR-109-project-scope-way-embedding-with-manifest-based-staleness-detection.md) | Project-Scope Way Embedding with Manifest-Based Staleness Detection | Draft |
 | [ADR-110](./system/ADR-110-way-file-separation-and-graph-compatible-structure.md) | Way File Separation and Graph-Compatible Structure | Draft |
 | [ADR-111](./system/ADR-111-unified-ways-cli-single-binary-tool-consolidation.md) | Unified `ways` CLI — Single Binary Tool Consolidation | Accepted |
-| [ADR-112](./system/ADR-112-session-ledger-and-knowledge-graph-integration.md) | Session Ledger and Knowledge Graph Integration | Draft |
-| [ADR-113](./system/ADR-113-attend-active-awareness-module.md) | `attend` — Active Awareness Module as Executive Layer | Draft |
-| [ADR-114](./system/ADR-114-attend-as-insistent-way-trigger-type.md) | `attend` Events as an Insistent Way Trigger Type | Draft |
+| [ADR-112](./system/ADR-112-session-ledger-and-knowledge-graph-integration.md) | Session Ledger with Optional Knowledge Graph Enhancement | Draft |
+| [ADR-113](./system/ADR-113-attend-active-awareness-module.md) | `attend` — Active Awareness Module | Accepted |
+| [ADR-114](./system/ADR-114-attend-as-insistent-way-trigger-type.md) | `attend` Events as an Insistent Way Trigger Type | Accepted |
+| [ADR-115](./system/ADR-115-declarative-config-with-project-scope-overlay.md) | Declarative Configuration with Project-Scope Overlay | Draft |
+| [ADR-116](./system/ADR-116-declarative-permission-requirements.md) | Declarative Permission Requirements | Accepted |
+| [ADR-117](./system/ADR-117-sensor-crate-extraction-and-feature-flags.md) | Sensor Crate Extraction and Feature Flags | Accepted |
+| [ADR-118](./system/ADR-118-focus-groups-dynamic-agent-grouping.md) | Focus Groups — Dynamic Agent Grouping | Draft |
+| [ADR-119](./system/ADR-119-action-potential-engagement-model.md) | Action Potential Engagement Model | Accepted |
+| [ADR-120](./system/ADR-120-interactive-chat-tui-human-in-the-signal-loop.md) | Interactive Chat TUI — Human in the Signal Loop | Draft |
 
 ## Documentation
 _Documentation structure, tooling, coherence_

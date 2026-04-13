@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 /// Group membership entry.
 #[derive(Debug, Clone)]
 pub struct GroupEntry {
-    /// Whether this room persists when empty.
+    /// Whether this group persists when empty.
     pub pinned: bool,
-    /// Session IDs currently in this room.
+    /// Session IDs currently in this group.
     pub members: Vec<String>,
 }
 
@@ -26,7 +26,7 @@ pub struct Groups {
     session_id: String,
 }
 
-const ROOM_PREFIX: &str = "@";
+const GROUP_PREFIX: &str = "@";
 
 impl Groups {
     pub fn new(signals_base: &Path, session_id: &str) -> Self {
@@ -36,21 +36,21 @@ impl Groups {
         }
     }
 
-    /// Path to a named room's signal directory.
+    /// Path to a named group's signal directory.
     pub fn group_dir(&self, name: &str) -> PathBuf {
-        self.base.join(format!("{ROOM_PREFIX}{name}"))
+        self.base.join(format!("{GROUP_PREFIX}{name}"))
     }
 
-    /// Path to the rooms state file.
+    /// Path to the groups state file.
     fn state_path(&self) -> PathBuf {
         self.base.join("_groups.yaml")
     }
 
-    /// Join a named room. Creates the room if it doesn't exist.
+    /// Join a named group. Creates the group if it doesn't exist.
     pub fn join(&self, name: &str, pin: bool) -> Result<(), String> {
         validate_group_name(name)?;
         let dir = self.group_dir(name);
-        fs::create_dir_all(&dir).map_err(|e| format!("creating room dir: {e}"))?;
+        fs::create_dir_all(&dir).map_err(|e| format!("creating group dir: {e}"))?;
 
         let mut state = self.load_state();
         let entry = state.entry(name.to_string()).or_insert(GroupEntry {
@@ -85,7 +85,7 @@ impl Groups {
         Ok(())
     }
 
-    /// Pin a room so it persists when empty.
+    /// Pin a group so it persists when empty.
     pub fn pin(&self, name: &str) {
         let mut state = self.load_state();
         if let Some(entry) = state.get_mut(name) {
@@ -111,7 +111,7 @@ impl Groups {
         self.save_state(&state);
     }
 
-    /// Dissolve a room — remove it and notify members.
+    /// Dissolve a group — remove it and notify members.
     pub fn dissolve(&self, name: &str) -> Vec<String> {
         let mut state = self.load_state();
         let members = state
@@ -149,18 +149,18 @@ impl Groups {
         rooms
     }
 
-    /// Get room names this session is in (for signal routing).
+    /// Get group names this session is focused on (for signal routing).
     pub fn joined_group_names(&self) -> Vec<String> {
         self.my_groups().into_iter().map(|(name, _)| name).collect()
     }
 
     /// Get signal directories for all rooms this session should receive from.
     #[allow(dead_code)] // Used by signal routing (task 27)
-    /// Includes: project room, joined named rooms, broadcast.
+    /// Includes: project scope, joined focus groups, broadcast.
     pub fn receive_dirs(&self, project_dir: &str) -> Vec<PathBuf> {
         let mut dirs = Vec::new();
 
-        // Project room (always)
+        // Project scope (always)
         dirs.push(self.base.join(encode_project(project_dir)));
 
         // Named rooms
@@ -239,13 +239,13 @@ impl Groups {
 
 fn validate_group_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
-        return Err("room name cannot be empty".to_string());
+        return Err("group name cannot be empty".to_string());
     }
     if name.starts_with('_') || name.starts_with('@') {
-        return Err("room name cannot start with _ or @".to_string());
+        return Err("group name cannot start with _ or @".to_string());
     }
     if name.contains('/') || name.contains(' ') {
-        return Err("room name cannot contain / or spaces".to_string());
+        return Err("group name cannot contain / or spaces".to_string());
     }
     if name == "broadcast" {
         return Err("'broadcast' is reserved".to_string());
@@ -290,9 +290,9 @@ fn parse_groups_yaml(content: &str) -> HashMap<String, GroupEntry> {
 
         let indent = line.len() - line.trim_start().len();
 
-        // Top-level: room name
+        // Top-level: group name
         if indent == 0 && trimmed.ends_with(':') {
-            // Save previous room
+            // Save previous group
             if let Some(ref name) = current_room {
                 rooms.insert(
                     name.clone(),
@@ -308,7 +308,7 @@ fn parse_groups_yaml(content: &str) -> HashMap<String, GroupEntry> {
             continue;
         }
 
-        // Second-level: room properties
+        // Second-level: group properties
         if indent == 2 {
             if let Some((key, value)) = trimmed.split_once(':') {
                 let key = key.trim();
@@ -329,7 +329,7 @@ fn parse_groups_yaml(content: &str) -> HashMap<String, GroupEntry> {
         }
     }
 
-    // Save last room
+    // Save last group
     if let Some(ref name) = current_room {
         rooms.insert(
             name.clone(),
