@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install claude-code-config into ~/.claude
+# Install agent-ways into ~/.claude
 #
 # This is a gateway, not a butler. It checks readiness, detects complexity,
 # and either proceeds with a clean install or tells you what to sort out first.
@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-UPSTREAM_REPO="aaronsb/claude-code-config"
+UPSTREAM_REPO="aaronsb/agent-ways"
 UPSTREAM_URL="https://github.com/${UPSTREAM_REPO}"
 DEST="${HOME}/.claude"
 
@@ -36,7 +36,7 @@ fi
 
 show_help() {
   cat <<HELP
-${BOLD}claude-code-config installer${RESET}
+${BOLD}agent-ways installer${RESET}
 
 ${CYAN}Usage:${RESET}
   scripts/install.sh                           Install from local clone
@@ -107,23 +107,23 @@ if [[ "$BOOTSTRAP" == "true" ]]; then
   check_prereqs
 
   echo ""
-  echo -e "${BOLD}claude-code-config bootstrap${RESET}"
+  echo -e "${BOLD}agent-ways bootstrap${RESET}"
   echo -e "Fetching latest from ${CYAN}${UPSTREAM_REPO}${RESET}..."
   echo ""
 
   BOOTSTRAP_DIR=$(mktemp -d)
   trap 'rm -rf "$BOOTSTRAP_DIR"' EXIT
 
-  if ! git clone --depth 1 "$UPSTREAM_URL" "$BOOTSTRAP_DIR/claude-code-config" 2>&1; then
+  if ! git clone --depth 1 "$UPSTREAM_URL" "$BOOTSTRAP_DIR/agent-ways" 2>&1; then
     echo -e "${RED}Failed to clone ${UPSTREAM_URL}${RESET}"
     exit 1
   fi
 
-  CLONE="$BOOTSTRAP_DIR/claude-code-config"
+  CLONE="$BOOTSTRAP_DIR/agent-ways"
 
   # Verify the clone
   if [[ ! -f "$CLONE/hooks/check-config-updates.sh" ]]; then
-    echo -e "${RED}Clone doesn't look like claude-code-config.${RESET}"
+    echo -e "${RED}Clone doesn't look like agent-ways.${RESET}"
     exit 1
   fi
 
@@ -148,7 +148,7 @@ fi
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [[ ! -f "$SRC/hooks/check-config-updates.sh" ]]; then
-  echo -e "${RED}Not running from a claude-code-config repo.${RESET}"
+  echo -e "${RED}Not running from an agent-ways repo.${RESET}"
   echo "Use --bootstrap to clone and install, or cd to the repo first."
   exit 1
 fi
@@ -156,7 +156,7 @@ fi
 check_prereqs
 
 echo ""
-echo -e "${BOLD}claude-code-config installer${RESET}"
+echo -e "${BOLD}agent-ways installer${RESET}"
 echo -e "Source: ${CYAN}${SRC}${RESET}"
 echo -e "Target: ${CYAN}${DEST}${RESET}"
 echo ""
@@ -212,7 +212,7 @@ if [[ -d "$DEST" ]]; then
 
   # --- Existing files: complexity detected ---
   if [[ "$CLOBBER" == "false" ]]; then
-    echo -e "${YELLOW}~/.claude/ already exists and isn't a claude-code-config install.${RESET}"
+    echo -e "${YELLOW}~/.claude/ already exists and isn't an agent-ways install.${RESET}"
     echo ""
 
     if [[ "$HAS_GIT" == "true" ]]; then

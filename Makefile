@@ -1,4 +1,4 @@
-# claude-code-config
+# agent-ways
 # Top-level Makefile — build, install, and release.
 #
 # Quick start:   make setup
@@ -15,7 +15,7 @@ XDG_BIN = $(or $(XDG_BIN_HOME),$(HOME)/.local/bin)
 # --- Primary targets ---
 
 help:
-	@echo "claude-code-config"
+	@echo "agent-ways"
 	@echo ""
 	@echo "  make setup        Build ways CLI + attend + fetch embedding model + corpus"
 	@echo "  make install      Full first-time setup (hooks + tools + PATH)"

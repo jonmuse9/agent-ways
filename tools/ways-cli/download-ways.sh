@@ -16,7 +16,7 @@ OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m | sed 's/arm64/aarch64/')
 PLATFORM="${OS}-${ARCH}"
 
-GH_REPO="aaronsb/claude-code-config"
+GH_REPO="aaronsb/agent-ways"
 RELEASE_TAG="${WAYS_RELEASE:-latest}"
 BIN_NAME="ways-${PLATFORM}"
 

@@ -16,7 +16,7 @@ OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 PLATFORM="${OS}-${ARCH}"
 
-GH_REPO="aaronsb/claude-code-config"
+GH_REPO="aaronsb/agent-ways"
 RELEASE_TAG="${WAY_EMBED_RELEASE:-latest}"
 BIN_NAME="way-embed-${PLATFORM}"
 XDG_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}"

@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security issue, please report it by [opening a private security advisory](https://github.com/aaronsb/claude-code-config/security/advisories/new) rather than a public issue.
+If you discover a security issue, please report it by [opening a private security advisory](https://github.com/aaronsb/agent-ways/security/advisories/new) rather than a public issue.
 
 ## Scope
 

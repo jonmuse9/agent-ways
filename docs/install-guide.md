@@ -1,11 +1,11 @@
 # Installation Guide
 
-This guide covers installing claude-code-config when the path isn't a straight line — existing files, custom config, previous installs, or forks you want to keep in sync.
+This guide covers installing agent-ways when the path isn't a straight line — existing files, custom config, previous installs, or forks you want to keep in sync.
 
 If you're starting fresh with no `~/.claude/` directory, you don't need this guide:
 
 ```bash
-git clone https://github.com/aaronsb/claude-code-config ~/.claude
+git clone https://github.com/aaronsb/agent-ways ~/.claude
 cd ~/.claude && make setup
 ```
 
@@ -44,7 +44,7 @@ cp -a ~/.claude/memory ~/claude-config-backup/ 2>/dev/null
 mv ~/.claude ~/.claude-pre-install
 
 # 3. Install
-git clone https://github.com/aaronsb/claude-code-config ~/.claude
+git clone https://github.com/aaronsb/agent-ways ~/.claude
 cd ~/.claude && make setup
 
 # 4. Restore your files
@@ -59,7 +59,7 @@ Your settings are `.gitignore`d in this repo, so they won't conflict with update
 
 ## Scenario 2: You have your own git tracking
 
-**Signs:** `~/.claude/.git/` exists, but it's your own repo — not a clone or fork of claude-code-config.
+**Signs:** `~/.claude/.git/` exists, but it's your own repo — not a clone or fork of agent-ways.
 
 This means you're already version-controlling your Claude config. Good instinct. The question is whether you want to adopt this framework or keep your own.
 
@@ -72,7 +72,7 @@ cp -a ~/.claude ~/.claude-my-version
 # Remove your .git and install ours
 rm -rf ~/.claude/.git
 rm -rf ~/.claude    # or mv to backup
-git clone https://github.com/aaronsb/claude-code-config ~/.claude
+git clone https://github.com/aaronsb/agent-ways ~/.claude
 cd ~/.claude && make setup
 
 # Cherry-pick your customizations back in
@@ -90,9 +90,9 @@ Read through this repo and copy the parts you want into your own config. The key
 
 This is more work but gives you full control.
 
-## Scenario 3: Previous claude-code-config install
+## Scenario 3: Previous agent-ways install
 
-**Signs:** `~/.claude/.git/` exists and origin points to `aaronsb/claude-code-config` or your fork of it.
+**Signs:** `~/.claude/.git/` exists and origin points to `aaronsb/agent-ways` or your fork of it.
 
 You're already installed. Just update:
 
@@ -110,11 +110,11 @@ The installer detects this automatically and runs the update path.
 ```bash
 # 1. Fork on GitHub first (use the web UI)
 # 2. Clone your fork
-git clone https://github.com/YOUR-USERNAME/claude-code-config ~/.claude
+git clone https://github.com/YOUR-USERNAME/agent-ways ~/.claude
 
 # 3. Set up upstream tracking
 cd ~/.claude
-git remote add upstream https://github.com/aaronsb/claude-code-config
+git remote add upstream https://github.com/aaronsb/agent-ways
 
 # 4. Set up semantic matching
 make setup
