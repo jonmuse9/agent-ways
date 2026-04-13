@@ -84,13 +84,17 @@ pub fn register_sensors(
     {
         if cfg.sensors.get("peers").map(|s| s.enabled).unwrap_or(true) {
             let mut peer_sensor = PeerSensor::new();
-            // Pass focus group directories for signal scanning (ADR-118)
-            let group_dirs: Vec<std::path::PathBuf> = groups
-                .joined_group_names()
-                .into_iter()
-                .map(|name| groups.group_dir(&name))
-                .collect();
-            peer_sensor.set_extra_scan_dirs(group_dirs);
+            // Register a provider that re-reads group membership on every
+            // poll, so mid-session focus-group join/leave is reflected
+            // without restarting the sensor loop (ADR-118 + issue #15).
+            let groups_for_scan = groups.clone();
+            peer_sensor.set_extra_scan_dirs_provider(std::sync::Arc::new(move || {
+                groups_for_scan
+                    .joined_group_names()
+                    .into_iter()
+                    .map(|name| groups_for_scan.group_dir(&name))
+                    .collect()
+            }));
             // Align per-peer engagement window with global engagement config.
             peer_sensor.set_peer_activity_window(cfg.engagement.peer_activity_window);
             if !catchup {

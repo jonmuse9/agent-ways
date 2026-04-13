@@ -11,3 +11,10 @@ WAYS_BIN="${HOME}/.claude/bin/ways"
 if [[ ! -x "$WAYS_BIN" ]]; then
   exit 0
 fi
+
+# Avoid racing with foreground git commits. `git status` / `describe --dirty`
+# and similar read-ish operations normally take .git/index.lock to refresh the
+# stat cache; GIT_OPTIONAL_LOCKS=0 tells git to skip that lock. Hooks run
+# opportunistically alongside user git activity, so optional locks are always
+# safe here — we never rely on the cache being rewritten.
+export GIT_OPTIONAL_LOCKS=0

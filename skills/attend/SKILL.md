@@ -52,6 +52,8 @@ attend send --broadcast "important announcement for all sessions"
 attend send --to /home/user/other-project "directed message"
 ```
 
+Keep messages under ~400 characters. Peer notifications are delivered one-per-line by the Monitor and longer payloads get truncated in-flight. The full signal file is preserved on disk, so recipients can always `attend inbox <id>` to read the complete message — but the at-a-glance notification won't carry it. Concise is the design, not a workaround.
+
 ### Focus groups
 
 Named groups that agents focus on for shared signal routing. Groups are dynamic — join and leave as needed.

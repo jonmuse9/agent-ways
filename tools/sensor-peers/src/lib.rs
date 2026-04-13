@@ -3,7 +3,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// Callback that returns the current set of extra signal directories
+/// (typically focus-group dirs). Called on every scan so mid-session
+/// group join/leave is reflected without restarting the sensor loop.
+pub type ExtraScanDirsFn = Arc<dyn Fn() -> Vec<PathBuf> + Send + Sync>;
 
 /// Discovers peer Claude Code sessions by reading ~/.claude/sessions/*.json
 /// and their transcript files. Same discovery pattern as abtop.
@@ -30,9 +36,12 @@ pub struct PeerSensor {
     own_session_id: Option<String>,
     /// First poll establishes baseline
     baseline_established: bool,
-    /// Additional signal directories to scan (e.g., room dirs from ADR-118).
-    /// Set by the orchestrator via `set_extra_scan_dirs()`.
-    extra_scan_dirs: Vec<PathBuf>,
+    /// Provider that returns additional signal directories to scan on each
+    /// poll (e.g., focus-group dirs from ADR-118). A closure lets the sensor
+    /// pick up focus-group joins and leaves that happen after startup
+    /// without the orchestrator having to push updates. Set via
+    /// `set_extra_scan_dirs_provider()`.
+    extra_scan_dirs_fn: Option<ExtraScanDirsFn>,
     /// Per-peer message timestamps for engagement-based magnitude boosting.
     /// Keyed by "from" field (e.g., "claude:<session_id>").
     /// When the same peer sends multiple messages in a window, their
@@ -95,7 +104,7 @@ impl PeerSensor {
             reply_hint_shown: false,
             own_session_id,
             baseline_established: false,
-            extra_scan_dirs: Vec::new(),
+            extra_scan_dirs_fn: None,
             peer_activity: HashMap::new(),
             peer_activity_window: Duration::from_secs(900),
         }
@@ -118,9 +127,9 @@ impl PeerSensor {
     /// 3 messages between agents takes 5-10 minutes of wall clock.
     ///
     /// - 1st message in window: 1.0x (entry level, fires at rest)
-    /// - 2nd message:           1.75x (participant emerging)
-    /// - 3rd+ message:          2.5x (established conversation partner —
-    ///                          reliably breaks through refractory)
+    /// - 2nd message: 1.75x (participant emerging)
+    /// - 3rd+ message: 2.5x (established conversation partner — reliably
+    ///   breaks through refractory)
     fn peer_engagement_boost(&mut self, from: &str) -> f64 {
         let now = Instant::now();
         let window = self.peer_activity_window;
@@ -141,10 +150,19 @@ impl PeerSensor {
         }
     }
 
-    /// Set additional signal directories to scan (e.g., room dirs).
-    /// Called by the orchestrator after room membership is known.
-    pub fn set_extra_scan_dirs(&mut self, dirs: Vec<PathBuf>) {
-        self.extra_scan_dirs = dirs;
+    /// Register a provider for additional signal directories. The closure
+    /// is invoked on every scan, so mid-session focus-group join/leave
+    /// propagates without restarting the sensor loop.
+    pub fn set_extra_scan_dirs_provider(&mut self, f: ExtraScanDirsFn) {
+        self.extra_scan_dirs_fn = Some(f);
+    }
+
+    /// Current snapshot of extra scan dirs. Empty if no provider is set.
+    fn current_extra_scan_dirs(&self) -> Vec<PathBuf> {
+        match &self.extra_scan_dirs_fn {
+            Some(f) => f(),
+            None => Vec::new(),
+        }
     }
 
     /// Return a list of active peer sessions as (cwd, project_name, status, context_percent).
@@ -167,7 +185,7 @@ impl PeerSensor {
             base.join("_broadcast"),
         ];
         // Focus group directories (ADR-118 — named signal namespaces)
-        scan_dirs.extend(self.extra_scan_dirs.iter().cloned());
+        scan_dirs.extend(self.current_extra_scan_dirs());
 
         for dir in &scan_dirs {
             let entries = match fs::read_dir(dir) {
@@ -205,7 +223,7 @@ impl PeerSensor {
         ];
 
         // Focus group directories (ADR-118 — named signal namespaces)
-        scan_dirs.extend(self.extra_scan_dirs.iter().cloned());
+        scan_dirs.extend(self.current_extra_scan_dirs());
 
         let own_session_id: String = self.own_session_id
             .clone()
