@@ -84,13 +84,15 @@ pub fn register_sensors(
     {
         if cfg.sensors.get("peers").map(|s| s.enabled).unwrap_or(true) {
             let mut peer_sensor = PeerSensor::new();
-            // Pass room directories for signal scanning (ADR-118)
+            // Pass focus group directories for signal scanning (ADR-118)
             let group_dirs: Vec<std::path::PathBuf> = groups
                 .joined_group_names()
                 .into_iter()
                 .map(|name| groups.group_dir(&name))
                 .collect();
             peer_sensor.set_extra_scan_dirs(group_dirs);
+            // Align per-peer engagement window with global engagement config.
+            peer_sensor.set_peer_activity_window(cfg.engagement.peer_activity_window);
             if !catchup {
                 peer_sensor.mark_existing_as_seen(focus);
             }

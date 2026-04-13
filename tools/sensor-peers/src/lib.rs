@@ -1,9 +1,9 @@
 use sensor_trait::{Focus, Sensor};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Discovers peer Claude Code sessions by reading ~/.claude/sessions/*.json
 /// and their transcript files. Same discovery pattern as abtop.
@@ -33,6 +33,15 @@ pub struct PeerSensor {
     /// Additional signal directories to scan (e.g., room dirs from ADR-118).
     /// Set by the orchestrator via `set_extra_scan_dirs()`.
     extra_scan_dirs: Vec<PathBuf>,
+    /// Per-peer message timestamps for engagement-based magnitude boosting.
+    /// Keyed by "from" field (e.g., "claude:<session_id>").
+    /// When the same peer sends multiple messages in a window, their
+    /// subsequent messages get a magnitude boost so they can break through
+    /// the elevated refractory threshold in the peer sensor.
+    peer_activity: HashMap<String, VecDeque<Instant>>,
+    /// Sliding window for per-peer engagement boost calculation.
+    /// Set via `set_peer_activity_window` from attend's engagement config.
+    peer_activity_window: Duration,
 }
 
 #[allow(dead_code)]
@@ -87,6 +96,48 @@ impl PeerSensor {
             own_session_id,
             baseline_established: false,
             extra_scan_dirs: Vec::new(),
+            peer_activity: HashMap::new(),
+            peer_activity_window: Duration::from_secs(900),
+        }
+    }
+
+    /// Set the per-peer engagement window. Called by the orchestrator
+    /// to align with the attend engagement config.
+    pub fn set_peer_activity_window(&mut self, window: Duration) {
+        self.peer_activity_window = window;
+    }
+
+    /// Compute the magnitude boost for a peer based on their recent activity.
+    /// Records the current message and returns the boost multiplier.
+    ///
+    /// The boost creates a gradient: messages from peers who've been actively
+    /// exchanging messages climb above the elevated refractory threshold
+    /// while background broadcasts stay at baseline and get suppressed.
+    ///
+    /// Window is 10 minutes — sized to Claude's actual turn cadence, where
+    /// 3 messages between agents takes 5-10 minutes of wall clock.
+    ///
+    /// - 1st message in window: 1.0x (entry level, fires at rest)
+    /// - 2nd message:           1.75x (participant emerging)
+    /// - 3rd+ message:          2.5x (established conversation partner —
+    ///                          reliably breaks through refractory)
+    fn peer_engagement_boost(&mut self, from: &str) -> f64 {
+        let now = Instant::now();
+        let window = self.peer_activity_window;
+        let history = self.peer_activity.entry(from.to_string()).or_default();
+        // Prune old entries
+        while let Some(front) = history.front() {
+            if now.duration_since(*front) > window {
+                history.pop_front();
+            } else {
+                break;
+            }
+        }
+        history.push_back(now);
+        match history.len() {
+            0 | 1 => 1.0,
+            2 => 1.75,
+            _ => 2.5,
         }
     }
 
@@ -156,7 +207,9 @@ impl PeerSensor {
         // Focus group directories (ADR-118 — named signal namespaces)
         scan_dirs.extend(self.extra_scan_dirs.iter().cloned());
 
-        let own_session_id = self.own_session_id.as_deref().unwrap_or("---none---");
+        let own_session_id: String = self.own_session_id
+            .clone()
+            .unwrap_or_else(|| "---none---".to_string());
 
         for dir in &scan_dirs {
             let entries = match fs::read_dir(dir) {
@@ -213,7 +266,7 @@ impl PeerSensor {
                     let dir_name = dir.file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("");
-                    let magnitude = if dir_name == own_encoded {
+                    let base_magnitude: f64 = if dir_name == own_encoded {
                         7.0 // directed to us — someone used --to
                     } else if dir_name == "_broadcast" {
                         4.0 // broadcast — important but not targeted
@@ -221,20 +274,33 @@ impl PeerSensor {
                         5.0 // focus group — relevant peer
                     };
 
-                    // Short messages inline, long messages get a mailbox pointer.
-                    // Monitor truncates at ~500 chars; prefix eats ~100. Cap at 300.
-                    let msg_id = filename.trim_end_matches(".signal");
-                    let display_msg = if message.len() > 300 {
-                        format!("{}... (attend inbox {})", &message[..297], msg_id)
+                    // Boost by peer engagement: repeated messages from the
+                    // same peer within a window increase magnitude, so active
+                    // conversation partners break through elevated refractory
+                    // thresholds while uninvolved broadcasts stay at baseline
+                    // (and get suppressed when the peer sensor is refractory).
+                    // This is the "auto-grouping" mechanism — conversation
+                    // emerges from observed traffic rather than explicit config.
+                    let from_owned = from.to_string();
+                    let boost = self.peer_engagement_boost(&from_owned);
+                    let magnitude = base_magnitude * boost;
+
+                    // Truncate long messages inline. No mailbox pointer —
+                    // Claude should not need a second lookup. Each event is
+                    // its own Monitor line, so the ~500-char truncation limit
+                    // is per-event, not per-batch.
+                    let display_msg = if message.len() > 600 {
+                        format!("{}... [truncated, {} chars total]", &message[..600], message.len())
                     } else {
                         message.to_string()
                     };
 
-                    // Include reply hint only on first peer message
+                    // Include reply hint only on first peer message.
+                    // Hint uses the simplest possible form: no --to, no paths.
                     if !self.reply_hint_shown {
                         observations.push((magnitude, format!(
-                            "message from {}: {} (reply: attend send --to {} <msg>)",
-                            sender, display_msg, source_cwd
+                            "message from {}: {} (reply: attend send <msg>)",
+                            sender, display_msg
                         )));
                         self.reply_hint_shown = true;
                     } else {

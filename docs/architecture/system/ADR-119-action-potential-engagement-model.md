@@ -1,6 +1,6 @@
 ---
-status: Draft
-date: 2026-04-11
+status: Accepted
+date: 2026-04-12
 deciders:
   - aaronsb
   - claude
@@ -160,6 +160,33 @@ This provides intrinsic motivation without task assignment. The agent periodical
 8. Add idle/motivation sensor as a new sensor crate (sensor-motivation or sensor-idle)
 9. Wire motivation sensor to reflection-overdue way
 10. Tune parameters empirically through multi-agent conversation sessions
+
+## Implementation Status
+
+Steps 1–6 landed in the initial Accepted revision:
+
+- `EngagementState` in `sensor-trait` with `with_params` constructor
+- `SensorSlot` owns `engagement: EngagementState` and consults it in both `poll()` (per-event gating) and `ready_to_disclose()` (aggregate check)
+- Absolute refractory: `in_absolute_refractory()` hard-blocks while within `absolute_refractory` of the last burst disclosure
+- Relative refractory: `current_multiplier()` linearly decays from peak toward 1.0 at `decay_per_minute`
+- Per-event gating (beyond the ADR): during relative refractory each observation must individually clear `base × multiplier` to be accumulated. Sub-threshold events are silently dropped rather than deferred — true disengagement, not delayed firing
+- `EngagementConfig` section in `attend/config.yaml` exposes all six knobs (`burst_window`, `burst_threshold`, `step_multiplier`, `absolute_refractory`, `decay_per_minute`, `peer_activity_window`); defaults are sized to Claude's actual turn cadence, not biological neuron kinetics
+- `attend tune` surveys the 10 most-recent projects × 5 most-recent sessions each, parses JSONL transcripts, computes assistant→user and user→user gap percentiles, and derives the engagement config from those stats. `--apply` rewrites the engagement section in place
+
+### Composition with peer engagement (auto-grouping)
+
+The action potential model only regulates *when* a sensor may fire. To achieve the "auto-grouping" effect — where active conversation partners break through refractory while uninvolved peers get suppressed — `sensor-peers` pairs the refractory model with a per-peer magnitude boost: messages from peers who've sent multiple messages within `peer_activity_window` get 1.75× (2nd message) or 2.5× (3rd+ message) their base magnitude. The boost lifts their events above the elevated refractory threshold while unboosted broadcasts stay below it and are dropped by the per-event gate. Conversation topology emerges from observed traffic rather than explicit group configuration.
+
+### Urgency escape
+
+Directed messages (sent with `--to <project>` so they land in the recipient's project signal dir rather than `_broadcast`) start at base magnitude 7.0 — above the elevated threshold even during burst refractory. This preserves the ADR's "HELP: production is down" urgency discrimination without any special-case logic.
+
+### Not yet implemented
+
+- Step 7: refractory state in `attend status` output (current sensor tick log shows it; status table does not)
+- Step 8: idle/motivation sensor for intrinsic self-prompting
+- Step 9: motivation sensor wiring to a reflection-overdue way
+- Step 10: long-horizon empirical tuning (initial defaults are from a single session survey)
 
 ## References
 
