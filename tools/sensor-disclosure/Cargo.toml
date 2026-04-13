@@ -1,0 +1,9 @@
+[package]
+name = "sensor-disclosure"
+version = "0.5.0"
+edition = "2021"
+description = "Disclosure sensor for attend — reheats affordance instructions (messaging, etc.) on token-distance drift"
+license = "MIT"
+
+[dependencies]
+sensor-trait = { path = "../sensor-trait" }

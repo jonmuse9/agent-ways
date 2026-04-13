@@ -1,4 +1,4 @@
-use sensor_trait::{Focus, Sensor};
+use sensor_trait::{extract_json_u64, Focus, Sensor};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -303,28 +303,29 @@ impl PeerSensor {
                     let boost = self.peer_engagement_boost(&from_owned);
                     let magnitude = base_magnitude * boost;
 
-                    // Truncate long messages inline. No mailbox pointer —
-                    // Claude should not need a second lookup. Each event is
-                    // its own Monitor line, so the ~500-char truncation limit
-                    // is per-event, not per-batch.
-                    let display_msg = if message.len() > 600 {
-                        format!("{}... [truncated, {} chars total]", &message[..600], message.len())
-                    } else {
-                        message.to_string()
-                    };
-
-                    // Include reply hint only on first peer message.
-                    // Hint uses the simplest possible form: no --to, no paths.
-                    if !self.reply_hint_shown {
-                        observations.push((magnitude, format!(
-                            "message from {}: {} (reply: attend send <msg>)",
-                            sender, display_msg
-                        )));
+                    // Chunk long messages at word boundaries so each event
+                    // stays under Monitor's ~400-char stdout line ceiling.
+                    // Multiple chunks arrive as separate events inside the
+                    // same 200ms batch, so Monitor groups them into one
+                    // notification for the recipient.
+                    let include_reply_hint = !self.reply_hint_shown;
+                    let chunks = chunk_message(message, MAX_CHUNK_BODY, MAX_CHUNKS);
+                    let total = chunks.len();
+                    for (i, chunk) in chunks.into_iter().enumerate() {
+                        let header = if total == 1 {
+                            format!("message from {}: ", sender)
+                        } else {
+                            format!("message from {} ({}/{}): ", sender, i + 1, total)
+                        };
+                        let body = if i == 0 && include_reply_hint {
+                            format!("{} (reply: attend send <msg>)", chunk)
+                        } else {
+                            chunk
+                        };
+                        observations.push((magnitude, format!("{}{}", header, body)));
+                    }
+                    if include_reply_hint {
                         self.reply_hint_shown = true;
-                    } else {
-                        observations.push((magnitude, format!(
-                            "message from {}: {}", sender, display_msg
-                        )));
                     }
                 }
 
@@ -716,19 +717,6 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// Quick-and-dirty JSON number extraction without serde.
-fn extract_json_u64(json: &str, key: &str) -> Option<u64> {
-    // Try "key":value (no quotes around number)
-    let pattern = format!("\"{}\":", key);
-    let start = json.find(&pattern)? + pattern.len();
-    let rest = json[start..].trim_start();
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-    if end == 0 {
-        return None;
-    }
-    rest[..end].parse().ok()
-}
-
 /// Find our own session ID by walking up the process tree to the claude parent,
 /// then matching against ~/.claude/sessions/*.json.
 /// Find the Claude session ID for the current process by walking up the
@@ -763,4 +751,182 @@ pub fn find_own_session_id(own_pid: u32) -> Option<String> {
         }
     }
     None
+}
+
+// ── Message chunking ────────────────────────────────────────────
+
+/// Max body characters per chunk.
+///
+/// Monitor truncates stdout lines around 400 characters. The full event
+/// line the emit pipeline produces looks like:
+///
+/// ```text
+/// [attend sensor=peers priority=high] message from {sender} ({i}/{n}): {body}{reply_hint?}
+/// ```
+///
+/// With a long sender name the prefix overhead can reach ~80 characters.
+/// The reply hint (` (reply: attend send <msg>)`) is 29 characters and is
+/// appended to the first chunk's body when shown. Reserving both:
+///
+/// ```text
+/// 400 − 80 (prefix) − 29 (reply hint) = 291 chars available for body
+/// ```
+///
+/// We use 260 to leave a defensible safety margin against prefix variation
+/// (longer sender paths, large (N/M) counters) and to ensure even a fully
+/// packed first chunk with reply hint stays clearly under the ceiling —
+/// 260 + 29 + 80 = 369, ~30 chars below 400.
+const MAX_CHUNK_BODY: usize = 260;
+
+/// Cap on chunks per message. A message that splits into more than this many
+/// pieces gets its tail replaced with an overflow hint pointing at the inbox.
+/// 3 is plenty for conversational chatter and stays well under Monitor's
+/// per-notification safety ceiling.
+const MAX_CHUNKS: usize = 3;
+
+/// Split a message into word-boundary chunks, each ≤ `chunk_size` characters,
+/// capped at `max_chunks`. Long messages get their tail replaced with an
+/// overflow hint on the final kept chunk.
+///
+/// Words longer than `chunk_size` get their own chunk that necessarily
+/// exceeds the limit — we refuse to corrupt UTF-8 by char-slicing mid-word.
+/// This is fine for peer chatter where single words are bounded by natural
+/// language, and rare-case overflow is still readable even if truncated.
+fn chunk_message(message: &str, chunk_size: usize, max_chunks: usize) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for word in message.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.chars().count() + 1 + word.chars().count() <= chunk_size {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            chunks.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    if chunks.len() > max_chunks {
+        let overflow_hint = " …see `attend inbox` for full message";
+        let hint_chars = overflow_hint.chars().count();
+        chunks.truncate(max_chunks);
+        if let Some(last) = chunks.last_mut() {
+            // Only trim the last chunk if the budget can meaningfully fit
+            // the hint. If chunk_size is smaller than the hint itself
+            // (pathological tiny budget), skip trimming — the chunk will
+            // exceed the nominal budget but will still carry its content
+            // plus the hint. A slightly over-budget chunk with context
+            // beats an empty chunk that only carries the hint.
+            if chunk_size > hint_chars {
+                let target = chunk_size - hint_chars;
+                let original_len = last.chars().count();
+                while last.chars().count() > target {
+                    last.pop();
+                }
+                let did_trim = last.chars().count() < original_len;
+                // If we actually trimmed and the remaining content still
+                // has whitespace to cut back to, strip the partial word at
+                // the tail so the hint attaches at a clean word boundary.
+                // If the last chunk is a single unbroken word (pathological
+                // long-word case) or we didn't trim at all, leave it alone.
+                if did_trim && last.chars().any(|c| c.is_whitespace()) {
+                    while let Some(c) = last.chars().last() {
+                        last.pop();
+                        if c.is_whitespace() {
+                            break;
+                        }
+                    }
+                }
+            }
+            last.push_str(overflow_hint);
+        }
+    }
+
+    // Guarantee at least one chunk for an empty message (preserves the
+    // "message from X:" notification even when the body is blank).
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_message_single_chunk() {
+        let chunks = chunk_message("hello there", 100, 3);
+        assert_eq!(chunks, vec!["hello there"]);
+    }
+
+    #[test]
+    fn long_message_splits_at_word_boundaries() {
+        // 3 words of 10 chars each = 30 chars; chunk size 15 → two chunks.
+        let msg = "aaaaaaaaaa bbbbbbbbbb cccccccccc";
+        let chunks = chunk_message(msg, 15, 3);
+        assert_eq!(chunks, vec!["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"]);
+    }
+
+    #[test]
+    fn word_joining_respects_budget() {
+        // "foo bar baz" is 11 chars; budget 11 → one chunk. Budget 10 → two.
+        assert_eq!(chunk_message("foo bar baz", 11, 3), vec!["foo bar baz"]);
+        assert_eq!(chunk_message("foo bar baz", 10, 3), vec!["foo bar", "baz"]);
+    }
+
+    #[test]
+    fn overflow_hint_replaces_tail_when_exceeds_max_chunks() {
+        // 5 chunks worth of content, max 3 chunks.
+        let msg = "aaaa bbbb cccc dddd eeee ffff gggg hhhh";
+        let chunks = chunk_message(msg, 10, 3);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.last().unwrap().contains("…see `attend inbox` for full message"));
+    }
+
+    #[test]
+    fn empty_message_yields_one_empty_chunk() {
+        let chunks = chunk_message("", 100, 3);
+        assert_eq!(chunks, vec![""]);
+    }
+
+    #[test]
+    fn single_word_longer_than_budget_still_emits() {
+        // A 30-char word with a 10-char budget — we refuse to mid-slice.
+        let msg = "supercalifragilisticexpialidocious trailing";
+        let chunks = chunk_message(msg, 10, 3);
+        // First chunk is the long word (exceeds budget — defensible fallback).
+        assert_eq!(chunks[0], "supercalifragilisticexpialidocious");
+        assert_eq!(chunks[1], "trailing");
+    }
+
+    #[test]
+    fn overflow_preserves_content_when_last_chunk_has_no_whitespace() {
+        // Simulate: many short words, then a single long unbroken word
+        // as the final kept chunk's content. The overflow trim must not
+        // annihilate the long word just because there's no whitespace
+        // inside it — it's better to be slightly over budget than empty.
+        let msg = "a b c d e f g h i j aaaaaaaaaaaaaaaaaaaaa continuation tail";
+        let chunks = chunk_message(msg, 10, 3);
+        assert_eq!(chunks.len(), 3);
+        let last = chunks.last().unwrap();
+        assert!(last.contains("…see `attend inbox` for full message"));
+        // The pre-hint portion must not be empty.
+        let hint_idx = last.find(" …see").unwrap();
+        assert!(hint_idx > 0, "chunk content was annihilated before hint: {:?}", last);
+    }
+
+    #[test]
+    fn utf8_is_counted_by_chars_not_bytes() {
+        // "café" is 4 chars but 5 bytes. Budget 4 fits, budget 3 does not.
+        let msg = "café rouge";
+        assert_eq!(chunk_message(msg, 10, 3), vec!["café rouge"]);
+        assert_eq!(chunk_message(msg, 4, 3), vec!["café", "rouge"]);
+    }
 }

@@ -458,3 +458,46 @@ impl SensorSlot {
         self.sensor.import_state(state);
     }
 }
+
+// ── Shared parsing utilities ────────────────────────────────────
+
+/// Quick-and-dirty JSON u64 extraction without pulling serde into the
+/// sensor crates. Finds `"key":value` (whitespace-tolerant after the colon)
+/// and parses the leading digit run as a u64. Returns `None` if the key is
+/// absent, the value is non-numeric, or the run is empty.
+///
+/// Lives here so `sensor-context`, `sensor-peers`, and `sensor-disclosure`
+/// don't each carry their own copy. Good enough for the `ways context --json`
+/// and signal-file formats the sensors consume.
+pub fn extract_json_u64(text: &str, key: &str) -> Option<u64> {
+    let pattern = format!("\"{}\":", key);
+    let start = text.find(&pattern)? + pattern.len();
+    let rest = text[start..].trim_start();
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    rest[..end].parse().ok()
+}
+
+#[cfg(test)]
+mod util_tests {
+    use super::*;
+
+    #[test]
+    fn extract_json_u64_basic() {
+        assert_eq!(extract_json_u64(r#"{"tokens_used":12345}"#, "tokens_used"), Some(12345));
+        assert_eq!(extract_json_u64(r#"{"tokens_used": 12345}"#, "tokens_used"), Some(12345));
+        assert_eq!(extract_json_u64(r#"{"tokens_used":0}"#, "tokens_used"), Some(0));
+    }
+
+    #[test]
+    fn extract_json_u64_missing_key() {
+        assert_eq!(extract_json_u64(r#"{"other":1}"#, "tokens_used"), None);
+    }
+
+    #[test]
+    fn extract_json_u64_non_numeric() {
+        assert_eq!(extract_json_u64(r#"{"tokens_used":"str"}"#, "tokens_used"), None);
+    }
+}

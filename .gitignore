@@ -143,6 +143,8 @@ hooks/ways/.obsidian/
 !tools/sensor-peers/**
 !tools/sensor-processes/
 !tools/sensor-processes/**
+!tools/sensor-disclosure/
+!tools/sensor-disclosure/**
 !tools/ways-cli/
 !tools/ways-cli/**
 # ways-cli build artifacts (tracked via .gitignore inside ways-cli/)

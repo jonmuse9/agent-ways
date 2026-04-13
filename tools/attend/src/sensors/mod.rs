@@ -22,6 +22,9 @@ pub use sensor_peers::{PeerSensor, find_own_session_id};
 #[cfg(feature = "sensor-processes")]
 pub use sensor_processes::ProcessSensor;
 
+#[cfg(feature = "sensor-disclosure")]
+pub use sensor_disclosure::DisclosureSensor;
+
 // ScriptSensor stays in attend — it's part of the orchestrator, not a sensor impl
 pub use script::ScriptSensor;
 
@@ -79,6 +82,9 @@ pub fn register_sensors(
 
     #[cfg(feature = "sensor-git")]
     register_builtin!("git", GitSensor::new(), 30, 10, 4);
+
+    #[cfg(feature = "sensor-disclosure")]
+    register_builtin!("disclosure", DisclosureSensor::new(), 60, 20, 3);
 
     #[cfg(feature = "sensor-peers")]
     {

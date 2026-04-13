@@ -42,6 +42,7 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-119](./system/ADR-119-action-potential-engagement-model.md) | Action Potential Engagement Model | Accepted |
 | [ADR-120](./system/ADR-120-interactive-chat-tui-human-in-the-signal-loop.md) | Interactive Chat TUI — Human in the Signal Loop | Draft |
 | [ADR-121](./system/ADR-121-salience-decay-for-signal-presentation-turn-based-exponential.md) | Salience decay for signal presentation — turn-based exponential | Draft |
+| [ADR-122](./system/ADR-122-attend-disclosure-sensor-token-gated-affordance-reheat.md) | Attend disclosure sensor — token-gated affordance reheat | Draft |
 
 ## Documentation
 _Documentation structure, tooling, coherence_

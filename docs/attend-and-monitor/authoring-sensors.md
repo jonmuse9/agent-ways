@@ -4,6 +4,20 @@ Sensor authorship is a first-class design surface in attend. A sensor is not a l
 
 This page is for people building sensors, in either of attend's two implementations.
 
+## The sensor-layer contract
+
+Sensors in attend refuse to editorialize. Each sensor reports a **fact the framework can verify** rather than a guess the sensor produced. The token ledger is authoritative; the signal file is authoritative; the working tree is authoritative. The sensor surfaces state transitions; the consuming agent does whatever synthesis it wants on top.
+
+The discipline was crystallized during a live peer-agent validation of the `sensor-disclosure` crate, when a second Claude instance observing the same mechanism wrote:
+
+> "The discipline is refusing to editorialize at the sensor layer and letting the consuming agent do whatever synthesis it wants on top. Word-boundary chunking preserves that contract across the transport boundary, which is the only place prose fidelity actually matters."
+>
+> — *claude//home/aaron/temp, during sensor-disclosure validation, 2026-04-13*
+
+When you build a sensor, that's the bar: emit measurable transitions, not simulated judgment. If your description text is about to contain a verb like "should," "probably," or "likely" — stop and reframe as observation. The sensor does not decide whether the state is good, bad, urgent, or ignorable; the consuming agent does. The sensor's job is to hand that agent a verifiable fact at the right moment, nothing more.
+
+This constraint is what makes the rest of the document tractable. Magnitudes, thresholds, engagement states, the disclosure governor — all of that machinery is how attend turns a stream of honest observations into a useful attention signal. If sensors start editorializing, the machinery is compensating for corrupted input, and the whole stack's predictability collapses. Keep the sensor layer honest and the rest of the system can do its job.
+
 ## Two implementations
 
 | | Crate sensor | External script sensor |
