@@ -55,6 +55,10 @@
 !docs/hooks-and-ways/*.md
 !docs/hooks-and-ways/**/
 !docs/hooks-and-ways/**/*.md
+!docs/attend-and-monitor/
+!docs/attend-and-monitor/*.md
+!docs/attend-and-monitor/**/
+!docs/attend-and-monitor/**/*.md
 !docs/images/
 !docs/images/*
 !docs/observations/
