@@ -1,5 +1,5 @@
 ---
-description: Managing claude-code-config as a project — upstream tracking against Claude Code releases, ADR reconciliation, release discipline, maintaining relevance
+description: Managing agent-ways as a project — upstream tracking against Claude Code releases, ADR reconciliation, release discipline, maintaining relevance
 vocabulary: upstream changelog release version claude-code update adr status reconcile drift stale dormant shipped implemented current behind project pulse health review audit recently changed since last relevance feature gap opportunity
 threshold: 2.5
 scope: agent
@@ -11,7 +11,7 @@ when:
 
 ## This Project's Relationship to Claude Code
 
-claude-code-config is an opinionated framework built *on top of* Claude Code. It adds ways, skills, hooks, ADR tooling, governance, and structured thinking — none of which ship with Claude Code itself. But every capability we build depends on Claude Code's primitives (hooks, settings, skills, MCP, permissions).
+agent-ways is an opinionated framework built *on top of* Claude Code. It adds ways, skills, hooks, ADR tooling, governance, and structured thinking — none of which ship with Claude Code itself. But every capability we build depends on Claude Code's primitives (hooks, settings, skills, MCP, permissions).
 
 When Claude Code changes, we may need to adapt, adopt, or deliberately ignore.
 

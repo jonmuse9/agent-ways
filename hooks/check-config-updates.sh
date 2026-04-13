@@ -1,11 +1,11 @@
 #!/bin/bash
-# Check if claude-code-config is up to date with upstream
+# Check if agent-ways is up to date with upstream
 # Handles four install scenarios: direct clone, fork, renamed clone, plugin
 #
 # Detection order:
 #   1. Is ~/.claude a git repo? If not, exit.
-#   2. Is origin aaronsb/claude-code-config? → direct clone
-#   3. Is origin a fork of aaronsb/claude-code-config? → fork
+#   2. Is origin aaronsb/agent-ways? → direct clone
+#   3. Is origin a fork of aaronsb/agent-ways? → fork
 #   4. Does .claude-upstream marker exist? → renamed clone (org internal copy)
 #   5. Is CLAUDE_PLUGIN_ROOT set? → plugin install
 #
@@ -13,7 +13,7 @@
 # Writes state to cache file; display is handled by `ways show core`.
 
 CLAUDE_DIR="${HOME}/.claude"
-UPSTREAM_REPO="aaronsb/claude-code-config"
+UPSTREAM_REPO="aaronsb/agent-ways"
 UPSTREAM_URL="https://github.com/${UPSTREAM_REPO}"
 UPSTREAM_MARKER="${CLAUDE_DIR}/.claude-upstream"
 CACHE_FILE="/tmp/.claude-config-update-state-$(id -u)"

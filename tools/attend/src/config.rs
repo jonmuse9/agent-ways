@@ -256,6 +256,37 @@ sensors:
     min_interval: 5
     threshold: 2.0
 
+  # Example external sensor — disabled by default.
+  #
+  # To enable:
+  #   1. Copy the example script from the agent-ways repo to a path
+  #      where you keep trusted user scripts. XDG-convention default:
+  #        mkdir -p $XDG_DATA_HOME/attend/sensors
+  #        cp tools/attend/examples/xdg-downloads.sh \
+  #           $XDG_DATA_HOME/attend/sensors/
+  #      (Or put it anywhere you trust — ~/bin, .claude/sensors/ in a
+  #      project dir, a team-shared tools repo, wherever.)
+  #   2. Review the script. External sensors run arbitrary shell under
+  #      your user. You should read any sensor before enabling it.
+  #   3. Flip `enabled: true` below.
+  #
+  # Sensor sources are deliberately unconstrained — they can be
+  # user-global (like this example), project-scoped in .claude/sensors/,
+  # or absolute paths to anywhere on disk. attend only cares that the
+  # path resolves and the script respects the subprocess contract
+  # documented in docs/attend-and-monitor/authoring-sensors.md.
+  #
+  # This particular example watches XDG Downloads for new files and
+  # demonstrates the magnitude-as-design-lever pattern — a single new
+  # file fires at 2.0, a batch fires at 3.0.
+  +xdg-downloads:
+    script: $XDG_DATA_HOME/attend/sensors/xdg-downloads.sh
+    enabled: false
+    interval: 120
+    min_interval: 30
+    threshold: 2.0
+    decay_threshold: 3
+
 # Project-scope example (in .claude/attend.yaml):
 #
 # sensors:
@@ -436,7 +467,7 @@ fn apply_config(config: &mut Config, content: &str) {
                             }
                         }
                         "script" => {
-                            sensor.script = Some(value.to_string());
+                            sensor.script = Some(expand_path(value));
                         }
                         "enabled" => {
                             sensor.enabled = value == "true";
@@ -458,6 +489,25 @@ fn apply_config(config: &mut Config, content: &str) {
             }
         }
     }
+}
+
+/// Expand `$HOME`, `~`, `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and
+/// `$XDG_STATE_HOME` inside a config value. Keeps script paths portable
+/// across installs without depending on the caller's cwd.
+fn expand_path(value: &str) -> String {
+    let mut out = value.to_string();
+    if let Ok(home) = std::env::var("HOME") {
+        if out.starts_with("~/") {
+            out = format!("{home}{}", &out[1..]);
+        }
+        out = out.replace("$HOME", &home);
+    }
+    for var in &["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] {
+        if let Ok(val) = std::env::var(var) {
+            out = out.replace(&format!("${var}"), &val);
+        }
+    }
+    out
 }
 
 /// Parse "key: value" from a trimmed line.

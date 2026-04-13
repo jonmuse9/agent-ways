@@ -158,7 +158,7 @@ pub(crate) fn update_status_text() -> String {
     let cached_type = get("type").unwrap_or_default();
     let behind: u32 = get("behind").and_then(|s| s.parse().ok()).unwrap_or(0);
     let has_upstream = get("has_upstream").unwrap_or_default() == "true";
-    let upstream_repo = "aaronsb/claude-code-config";
+    let upstream_repo = "aaronsb/agent-ways";
 
     if behind == 0 {
         return String::new();
