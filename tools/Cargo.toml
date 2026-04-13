@@ -6,6 +6,7 @@ members = [
     "sensor-context",
     "sensor-peers",
     "sensor-processes",
+    "sensor-disclosure",
     "ways-cli",
     "attend",
 ]
