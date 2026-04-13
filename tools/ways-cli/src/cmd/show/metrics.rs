@@ -78,6 +78,7 @@ pub(crate) fn count_siblings(way_id: &str, project_dir: &str, session_id: &str) 
 /// Get a human-readable version string from git describe.
 pub(crate) fn git_version(repo: &Path) -> String {
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .args(["-C", &repo.display().to_string(), "describe", "--tags", "--match", "v*", "--always", "--dirty"])
         .output();
 
@@ -190,6 +191,7 @@ pub(crate) fn update_status_text() -> String {
 /// Return dirty file status from git.
 pub(crate) fn dirty_status_text(claude_dir: &Path) -> String {
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .args(["-C", &claude_dir.display().to_string(), "status", "--short"])
         .output();
 

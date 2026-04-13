@@ -207,6 +207,7 @@ impl Sensor for GitSensor {
 /// Run a git command and return trimmed stdout, or None on failure.
 fn git_cmd(dir: &str, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(dir)
         .args(args)
