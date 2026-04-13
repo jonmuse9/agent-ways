@@ -1,4 +1,4 @@
-use sensor_trait::{Focus, Sensor};
+use sensor_trait::{extract_json_u64, Focus, Sensor};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -717,19 +717,6 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// Quick-and-dirty JSON number extraction without serde.
-fn extract_json_u64(json: &str, key: &str) -> Option<u64> {
-    // Try "key":value (no quotes around number)
-    let pattern = format!("\"{}\":", key);
-    let start = json.find(&pattern)? + pattern.len();
-    let rest = json[start..].trim_start();
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-    if end == 0 {
-        return None;
-    }
-    rest[..end].parse().ok()
-}
-
 /// Find our own session ID by walking up the process tree to the claude parent,
 /// then matching against ~/.claude/sessions/*.json.
 /// Find the Claude session ID for the current process by walking up the
@@ -768,11 +755,28 @@ pub fn find_own_session_id(own_pid: u32) -> Option<String> {
 
 // ── Message chunking ────────────────────────────────────────────
 
-/// Max body characters per chunk. Monitor truncates stdout lines around
-/// 400 chars; the `[attend sensor=peers priority=...] message from X (N/M): `
-/// prefix eats ~80 chars, leaving ~300 for the body. 280 gives headroom for
-/// the reply hint appended to the first chunk of a multi-chunk message.
-const MAX_CHUNK_BODY: usize = 280;
+/// Max body characters per chunk.
+///
+/// Monitor truncates stdout lines around 400 characters. The full event
+/// line the emit pipeline produces looks like:
+///
+/// ```text
+/// [attend sensor=peers priority=high] message from {sender} ({i}/{n}): {body}{reply_hint?}
+/// ```
+///
+/// With a long sender name the prefix overhead can reach ~80 characters.
+/// The reply hint (` (reply: attend send <msg>)`) is 29 characters and is
+/// appended to the first chunk's body when shown. Reserving both:
+///
+/// ```text
+/// 400 − 80 (prefix) − 29 (reply hint) = 291 chars available for body
+/// ```
+///
+/// We use 260 to leave a defensible safety margin against prefix variation
+/// (longer sender paths, large (N/M) counters) and to ensure even a fully
+/// packed first chunk with reply hint stays clearly under the ceiling —
+/// 260 + 29 + 80 = 369, ~30 chars below 400.
+const MAX_CHUNK_BODY: usize = 260;
 
 /// Cap on chunks per message. A message that splits into more than this many
 /// pieces gets its tail replaced with an overflow hint pointing at the inbox.
@@ -809,21 +813,35 @@ fn chunk_message(message: &str, chunk_size: usize, max_chunks: usize) -> Vec<Str
 
     if chunks.len() > max_chunks {
         let overflow_hint = " …see `attend inbox` for full message";
+        let hint_chars = overflow_hint.chars().count();
         chunks.truncate(max_chunks);
         if let Some(last) = chunks.last_mut() {
-            // Trim the tail of the last kept chunk to fit the overflow hint
-            // without pushing the chunk over its budget.
-            let target = chunk_size.saturating_sub(overflow_hint.chars().count());
-            while last.chars().count() > target {
-                last.pop();
-            }
-            // Pop any trailing partial word so the hint attaches cleanly.
-            while let Some(c) = last.chars().last() {
-                if c.is_whitespace() {
+            // Only trim the last chunk if the budget can meaningfully fit
+            // the hint. If chunk_size is smaller than the hint itself
+            // (pathological tiny budget), skip trimming — the chunk will
+            // exceed the nominal budget but will still carry its content
+            // plus the hint. A slightly over-budget chunk with context
+            // beats an empty chunk that only carries the hint.
+            if chunk_size > hint_chars {
+                let target = chunk_size - hint_chars;
+                let original_len = last.chars().count();
+                while last.chars().count() > target {
                     last.pop();
-                    break;
                 }
-                last.pop();
+                let did_trim = last.chars().count() < original_len;
+                // If we actually trimmed and the remaining content still
+                // has whitespace to cut back to, strip the partial word at
+                // the tail so the hint attaches at a clean word boundary.
+                // If the last chunk is a single unbroken word (pathological
+                // long-word case) or we didn't trim at all, leave it alone.
+                if did_trim && last.chars().any(|c| c.is_whitespace()) {
+                    while let Some(c) = last.chars().last() {
+                        last.pop();
+                        if c.is_whitespace() {
+                            break;
+                        }
+                    }
+                }
             }
             last.push_str(overflow_hint);
         }
@@ -886,6 +904,22 @@ mod tests {
         // First chunk is the long word (exceeds budget — defensible fallback).
         assert_eq!(chunks[0], "supercalifragilisticexpialidocious");
         assert_eq!(chunks[1], "trailing");
+    }
+
+    #[test]
+    fn overflow_preserves_content_when_last_chunk_has_no_whitespace() {
+        // Simulate: many short words, then a single long unbroken word
+        // as the final kept chunk's content. The overflow trim must not
+        // annihilate the long word just because there's no whitespace
+        // inside it — it's better to be slightly over budget than empty.
+        let msg = "a b c d e f g h i j aaaaaaaaaaaaaaaaaaaaa continuation tail";
+        let chunks = chunk_message(msg, 10, 3);
+        assert_eq!(chunks.len(), 3);
+        let last = chunks.last().unwrap();
+        assert!(last.contains("…see `attend inbox` for full message"));
+        // The pre-hint portion must not be empty.
+        let hint_idx = last.find(" …see").unwrap();
+        assert!(hint_idx > 0, "chunk content was annihilated before hint: {:?}", last);
     }
 
     #[test]

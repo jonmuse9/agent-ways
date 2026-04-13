@@ -12,7 +12,7 @@
 //! State is `HashMap<Component, u64>` on the sensor struct — in-process memory
 //! only, clean-restart semantics by construction.
 
-use sensor_trait::{Focus, Sensor};
+use sensor_trait::{extract_json_u64, Focus, Sensor};
 use std::collections::HashMap;
 use std::process::Command;
 use std::time::Duration;
@@ -81,8 +81,8 @@ impl DisclosureSensor {
             return None;
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let tokens_used = extract_u64(&stdout, "tokens_used")?;
-        let tokens_total = extract_u64(&stdout, "tokens_total")?;
+        let tokens_used = extract_json_u64(&stdout, "tokens_used")?;
+        let tokens_total = extract_json_u64(&stdout, "tokens_total")?;
         Some((tokens_used, tokens_total))
     }
 
@@ -104,16 +104,18 @@ impl Default for DisclosureSensor {
     }
 }
 
-impl Sensor for DisclosureSensor {
-    fn name(&self) -> &str {
-        "disclosure"
-    }
-
-    fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)> {
-        let (tokens_used, tokens_total) = match self.read_tokens_used(focus) {
-            Some(pair) => pair,
-            None => return Vec::new(),
-        };
+impl DisclosureSensor {
+    /// Pure ledger-transition logic, extracted from `poll` so it can be
+    /// unit-tested without shelling out to `ways context --json`.
+    ///
+    /// For each registered component, decides whether it should fire this
+    /// tick (missing marker OR distance ≥ threshold) and, if so, appends
+    /// an observation and stamps the new baseline into the ledger.
+    fn check_and_stamp(
+        &mut self,
+        tokens_used: u64,
+        tokens_total: u64,
+    ) -> Vec<(f64, String)> {
         if tokens_total == 0 {
             return Vec::new();
         }
@@ -133,6 +135,20 @@ impl Sensor for DisclosureSensor {
         }
 
         observations
+    }
+}
+
+impl Sensor for DisclosureSensor {
+    fn name(&self) -> &str {
+        "disclosure"
+    }
+
+    fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)> {
+        let (tokens_used, tokens_total) = match self.read_tokens_used(focus) {
+            Some(pair) => pair,
+            None => return Vec::new(),
+        };
+        self.check_and_stamp(tokens_used, tokens_total)
     }
 
     fn emission_threshold(&self) -> f64 {
@@ -160,31 +176,9 @@ impl Sensor for DisclosureSensor {
     // is the designed clean-restart behavior.
 }
 
-// ── Helpers ────────────────────────────────────────────────────
-
-/// Extract a u64 from JSON-like text: `"key":value`. Mirrors the parser in
-/// `sensor-context` to avoid pulling in `serde_json` for a two-field read.
-fn extract_u64(text: &str, key: &str) -> Option<u64> {
-    let pattern = format!("\"{}\":", key);
-    let start = text.find(&pattern)? + pattern.len();
-    let rest = text[start..].trim_start();
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-    if end == 0 {
-        return None;
-    }
-    rest[..end].parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn extract_u64_basic() {
-        assert_eq!(extract_u64(r#"{"tokens_used": 12345}"#, "tokens_used"), Some(12345));
-        assert_eq!(extract_u64(r#"{"tokens_used":0}"#, "tokens_used"), Some(0));
-        assert_eq!(extract_u64(r#"{"other":1}"#, "tokens_used"), None);
-    }
 
     #[test]
     fn component_registry_has_messaging_body() {
@@ -195,22 +189,90 @@ mod tests {
     }
 
     #[test]
-    fn first_poll_fires_every_component() {
-        // Can't call poll() without a working `ways` binary, but we can
-        // verify the ledger logic directly by walking the registry.
-        let sensor = DisclosureSensor::new();
-        assert!(sensor.ledger.is_empty());
-        // Every component should be unknown at construction time.
-        for &c in Component::all() {
-            assert!(!sensor.ledger.contains_key(&c));
-        }
-    }
-
-    #[test]
     fn format_observation_contains_tag_and_body() {
         let sensor = DisclosureSensor::new();
         let obs = sensor.format_observation(Component::Messaging);
         assert!(obs.starts_with("reheat: attend affordances — messaging"));
         assert!(obs.contains("attend send"));
+    }
+
+    // ── Ledger transition tests (exercise check_and_stamp directly
+    //    so no `ways context --json` subprocess is needed). ──
+
+    const TOKENS_TOTAL: u64 = 1_000_000; // Opus 1M window — threshold at 250k.
+    const THRESHOLD: u64 = TOKENS_TOTAL * REDISCLOSE_PCT / 100;
+
+    #[test]
+    fn first_check_fires_every_component_and_stamps_ledger() {
+        let mut sensor = DisclosureSensor::new();
+        assert!(sensor.ledger.is_empty());
+
+        let obs = sensor.check_and_stamp(100_000, TOKENS_TOTAL);
+
+        assert_eq!(obs.len(), Component::all().len());
+        assert_eq!(sensor.ledger.len(), Component::all().len());
+        for &c in Component::all() {
+            assert_eq!(sensor.ledger.get(&c), Some(&100_000));
+        }
+    }
+
+    #[test]
+    fn second_check_below_threshold_is_silent() {
+        let mut sensor = DisclosureSensor::new();
+        sensor.check_and_stamp(100_000, TOKENS_TOTAL); // baseline
+        let obs = sensor.check_and_stamp(200_000, TOKENS_TOTAL); // +100k < 250k
+        assert!(obs.is_empty(), "expected no fire at sub-threshold drift, got {:?}", obs);
+        // Ledger is unchanged (still stamped at baseline).
+        for &c in Component::all() {
+            assert_eq!(sensor.ledger.get(&c), Some(&100_000));
+        }
+    }
+
+    #[test]
+    fn second_check_at_threshold_refires_and_restamps() {
+        let mut sensor = DisclosureSensor::new();
+        sensor.check_and_stamp(100_000, TOKENS_TOTAL); // baseline
+        let obs = sensor.check_and_stamp(100_000 + THRESHOLD, TOKENS_TOTAL); // exactly at threshold
+        assert_eq!(obs.len(), Component::all().len());
+        for &c in Component::all() {
+            assert_eq!(sensor.ledger.get(&c), Some(&(100_000 + THRESHOLD)));
+        }
+    }
+
+    #[test]
+    fn second_check_above_threshold_refires_and_restamps() {
+        let mut sensor = DisclosureSensor::new();
+        sensor.check_and_stamp(100_000, TOKENS_TOTAL);
+        let obs = sensor.check_and_stamp(500_000, TOKENS_TOTAL); // +400k > 250k
+        assert_eq!(obs.len(), Component::all().len());
+        for &c in Component::all() {
+            assert_eq!(sensor.ledger.get(&c), Some(&500_000));
+        }
+    }
+
+    #[test]
+    fn saturating_sub_guards_against_token_regression() {
+        // If tokens_used regresses (compaction, transcript rewrite), distance
+        // saturates to 0 rather than underflowing. A component below threshold
+        // stays silent rather than firing spuriously.
+        let mut sensor = DisclosureSensor::new();
+        sensor.check_and_stamp(500_000, TOKENS_TOTAL); // baseline at 500k
+        let obs = sensor.check_and_stamp(100_000, TOKENS_TOTAL); // regressed to 100k
+        assert!(obs.is_empty(), "regression must not refire, got {:?}", obs);
+        // Ledger still carries the prior (higher) baseline.
+        for &c in Component::all() {
+            assert_eq!(sensor.ledger.get(&c), Some(&500_000));
+        }
+    }
+
+    #[test]
+    fn zero_tokens_total_is_silent_safeguard() {
+        // If `ways context --json` ever returns 0 for the window (shouldn't
+        // happen, but guard exists), the sensor emits nothing rather than
+        // dividing by zero or computing a nonsense threshold.
+        let mut sensor = DisclosureSensor::new();
+        let obs = sensor.check_and_stamp(100_000, 0);
+        assert!(obs.is_empty());
+        assert!(sensor.ledger.is_empty());
     }
 }

@@ -107,7 +107,12 @@ Rejected on the substrate-separation principle from ADR-113 and the discipline n
 
 Compromise between in-memory and fully persistent: write disclosure markers to disk but expire them automatically after some wall-clock window (e.g., 1 hour). Reduces stale-state risk by ensuring markers do not outlive the process state they describe for long.
 
-Rejected because TTL adds complexity without closing the failure mode. During the TTL window, a crashed-and-restarted attend still inherits stale state. The simpler solution (no persistence) has strictly better failure characteristics and is strictly easier to reason about.
+Rejected for four independent reasons:
+
+1. **TTL does not close the stale-state failure mode.** During the TTL window, a crashed-and-restarted attend still inherits suppression state it cannot explain. The window only narrows the exposure; it does not eliminate it. The in-memory solution eliminates it entirely by construction.
+2. **It introduces a file-I/O failure surface the in-memory design avoids entirely.** A disk-backed ledger has to handle read errors, write errors, disk-full conditions, filesystem corruption, concurrent-access races between multiple attend instances, and the inevitable edge cases around partial writes during a crash. The ledger data is a `HashMap<Component, u64>` — three to five entries in the extensible case. Accepting all of that failure surface to persist a handful of integers is a bad trade.
+3. **TTL tuning is a configuration surface with no defensible default.** "How long should my disclosure markers live?" is a question with no good answer: short TTLs defeat the purpose (the next `attend run` re-teaches anyway), long TTLs reintroduce the stale-state problem we are trying to avoid, and middle values have no principled basis. The in-memory solution has no such tuning knob — the lifetime of the ledger is exactly the lifetime of the attend process, which is the only defensible scope.
+4. **It would be inconsistent with the rest of attend's persistence story.** `state.rs`'s existing `StateSnapshot` does not TTL its checkpoints — they persist indefinitely and are only overwritten on the next clean write. Introducing TTL semantics exclusively for disclosure markers would create a new and inconsistent pattern the rest of the codebase does not share. The simpler path is to keep the existing persistence discipline (opt in deliberately, never TTL) and put the disclosure ledger cleanly outside that discipline entirely.
 
 ## Validation
 

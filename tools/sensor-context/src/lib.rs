@@ -1,4 +1,4 @@
-use sensor_trait::{Focus, Sensor};
+use sensor_trait::{extract_json_u64, Focus, Sensor};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -51,8 +51,8 @@ impl ContextSensor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Parse JSON fields without serde
-        let tokens_used = extract_u64(&stdout, "tokens_used")?;
-        let tokens_total = extract_u64(&stdout, "tokens_total")?;
+        let tokens_used = extract_json_u64(&stdout, "tokens_used")?;
+        let tokens_total = extract_json_u64(&stdout, "tokens_total")?;
         let pct_used = extract_f64(&stdout, "pct_used")?;
 
         Some(ContextReading {
@@ -243,16 +243,6 @@ impl Sensor for ContextSensor {
                 self.disclosed_thresholds.len());
         }
     }
-}
-
-/// Extract a u64 from JSON-like text: "key":value
-fn extract_u64(text: &str, key: &str) -> Option<u64> {
-    let pattern = format!("\"{}\":", key);
-    let start = text.find(&pattern)? + pattern.len();
-    let rest = text[start..].trim_start();
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-    if end == 0 { return None; }
-    rest[..end].parse().ok()
 }
 
 /// Extract an f64 from JSON-like text: "key":value
