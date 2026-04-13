@@ -230,7 +230,10 @@ impl Groups {
             fs::create_dir_all(parent).ok();
         }
         let content = serialize_groups_yaml(state);
-        fs::write(&path, content).ok();
+        let tmp = path.with_extension("yaml.tmp");
+        if fs::write(&tmp, &content).is_ok() {
+            fs::rename(&tmp, &path).ok();
+        }
     }
 
 }
