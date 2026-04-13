@@ -130,17 +130,51 @@ A future extension could make this list configurable; today it's hardcoded.
 | Event | Magnitude | Example |
 |---|---|---|
 | process started | 2.0 | `cargo started` |
-| process exited | 2.0 | `cargo exited. Use \`ways show attend build-complete --session $CLAUDE_SESSION_ID\` for next steps` |
+| process exited (non-build) | 2.0 | `nvim exited` |
+| build exited, no marker | 2.5 | `cargo exited. Use \`ways show attend build-complete --session $CLAUDE_SESSION_ID\` for next steps` |
+| build exited (success) | 2.5 | `cargo exited (success). …` |
+| build exited (failure, code N) | 3.5 | `cargo exited (failure, code 101). …` |
 
-Exit events include an affordance string pointing at the build-complete way. Start and exit are both 2.0 — neither is more important than the other.
+Exit events on build tools include an affordance string pointing at the build-complete way. Failures get a louder magnitude (3.5) so they break through refractory gating — success is quieter (2.5) because most successful builds don't need the agent's attention.
+
+### Opt-in: exit-code awareness via a build-status marker
+
+The sensor observes `ps` diffs, so by the time it notices an exit the process is already gone — it can't read the exit code directly. To enrich build exits with success/failure context, wrap your build command so it writes a single-line marker file when it finishes:
+
+```
+$XDG_STATE_HOME/attend/last-build-status    # or ~/.local/state/attend/last-build-status
+```
+
+Format: `cmd|exit_code|unix_ts`, e.g. `cargo|101|1712983456`. A minimal shell wrapper:
+
+```sh
+attend_build() {
+  "$@"
+  local code=$?
+  local dir="${XDG_STATE_HOME:-$HOME/.local/state}/attend"
+  mkdir -p "$dir"
+  printf '%s|%d|%d\n' "$1" "$code" "$(date +%s)" > "$dir/last-build-status"
+  return $code
+}
+
+# usage: attend_build cargo build
+```
+
+The sensor reads this file on each poll. When it detects an exit for a build tool *and* the marker's `cmd` matches *and* the marker timestamp is within 60 s, it enriches the event. Otherwise it falls back to the legacy "X exited" text — there's no penalty for skipping the wrapper.
+
+**Known limits of v1.**
+
+- **Single-slot, global marker.** There's one marker file for the whole machine. Two concurrent `cargo build` invocations in different directories will last-writer-wins, and a quick `cargo --version` that happens inside the 60 s window can mask a real build's failure. For single-user, single-project sessions the aliasing is rare; for parallel builds across projects you'll want a smarter wrapper that keys the marker filename on `$PWD` or `$CLAUDE_SESSION_ID`. Widening the marker to a per-session slot is tracked as a follow-up.
+- **Non-atomic write.** The wrapper above uses `> "$dir/last-build-status"`. For a ~30-byte payload on local ext4/xfs this is effectively atomic (one `write()` syscall, well under a page), but on NFS or if the wrapper is killed mid-write the reader could see a truncated line. `parse_marker` treats malformed input as "no fresh marker" (falls back to legacy text), so the actual failure mode is bounded — but if you're on a networked filesystem, prefer an atomic `printf … > "$tmp" && mv "$tmp" "$dst"`.
 
 ### State the sensor carries
 
 - Previous snapshot: map of app name → instance count
+- Most recently parsed build-status marker (if any) and its mtime
 
 ### What it doesn't do
 
-Doesn't capture stdout/stderr from the watched processes. Doesn't track exit codes. Doesn't distinguish success from failure — "cargo exited" fires whether the build succeeded or errored. For exit-code awareness, pair this with an external script sensor that watches `$?` or parses a build output file.
+Doesn't capture stdout/stderr from the watched processes. Without the build-status marker, it also doesn't know exit codes — plain `ps` diffs can't see a return status after the fact.
 
 Also doesn't batch multiple events from the same build tool. If `cargo` starts, then `rustc` starts as a child, then `rustc` exits, then `cargo` exits, that's four events. Smoothing build lifecycles into "build started → build finished" aggregate events is a known todo (see issue #2 — "build event batching").
 
