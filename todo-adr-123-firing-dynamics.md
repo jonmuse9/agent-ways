@@ -97,19 +97,23 @@ Where the new engine starts doing actual work for ways. Phase C turns theoretica
   - **What:** Walk `hooks/ways/**/*.md`, convert `redisclose: N` to either `curve: { type: Exponential, half_life: <N converted to tokens> }` or `curve: { type: Flat, suppression: <N> }` depending on intended semantic (exponential as default for smooth fade; flat if step-function was genuinely wanted). `N` is currently a percentage of context window — convert using `REDISCLOSE_PCT` logic assuming 200k default, round to reasonable values.
   - **Done when:** Every way has an explicit `curve:` field. `rg 'redisclose:' hooks/ways/` returns nothing. `lint-ways` passes.
 
-- [ ] **C3. Delete the `redisclose` parser and constant.**
+- [x] **C3. Delete the `redisclose` parser and constant.**
   - **What:** Remove `REDISCLOSE_PCT` from `tools/ways-cli/src/session.rs`, `token_distance_exceeded`, and any `redisclose` reader in `frontmatter.rs`. Grep tree for `redisclose` to confirm no references remain.
   - **Done when:** `rg redisclose` returns nothing except historical mentions in docs/ADRs.
+  - **Scope note:** The legacy *field* (`redisclose: N` in frontmatter), the `REDISCLOSE_PCT` constant, and `token_distance_exceeded` are deleted. `detect_legacy_redisclose()` remains in `frontmatter.rs` as the rejection path (calls from `parse()`), and `way_redisclosed` lives on as an event name in the analytics log (`cmd/stats.rs`, `cmd/rethink.rs`, `cmd/show/mod.rs`). The `redisclose_threshold_k` visualization variables in `cmd/render.rs`, `cmd/list.rs`, `cmd/rethink.rs`, `cmd/context.rs` are a separate cleanup — they hard-code a 25% threshold for progress-bar rendering that's no longer meaningful under per-way curves. Leaving as a follow-up so C3 stays scoped to the firing path.
 
-- [ ] **C4. Wire per-way `EngagementState` into `session.rs`.**
+- [x] **C4. Wire per-way `EngagementState` into `session.rs`.**
   - **What:** Each way gets a persistent `EngagementState` per session, keyed by way ID. Store in the same session-state directory structure as existing markers. Tick source: `get_token_position(session_id)`. On way match: `should_fire(current_tick, stimulus_magnitude)`; if passes, `record_fire(current_tick, magnitude)`. Start magnitude at `1.0`; tune later.
   - **Done when:** Ways fire through the engine instead of through the old step-function check. Existing session markers are migrated or cleared.
+  - **Implementation notes:** Per-way state lives at `{session_dir}/way-engagement/{way_id_with_slashes_escaped}.json` as JSON-serialized `EngagementState`. Used the outward-gate semantic (`current_salience < REFIRE_FLOOR` with `REFIRE_FLOOR = 0.5`) rather than the inward gate — for ways with exponential curves the inward multiplier is always 1.0 so the inward gate carries no information, while the salience decay is the load-bearing signal. New API: `FireOutcome { FirstFire, ReFire, Suppressed }`, `session::way_fire_outcome(way, session, curve)`, `session::record_way_fire(way, session, curve)`. Old marker paths (`way_is_shown`, `stamp_way_marker`, `stamp_way_epoch`, `stamp_way_tokens`) stay in place — they serve tree-metrics and scan-time "has this way been seen" queries. show/mod.rs stamps both the engine state and the legacy markers on each fire, so both systems stay consistent.
+  - **Bugfix folded in:** Flipped `Curve::Flat::salience_at` — it was returning `0.0 during suppression, 1.0 after` which inverts the "salience = loudness" semantic used for Exponential. Corrected to `1.0 during suppression window, 0.0 after` so the uniform caller rule "re-inject when salience < REFIRE_FLOOR" works the same way for Flat as Exponential (both fire at exactly `N` ticks post-fire for their equivalent parameterization).
 
-- [ ] **C5. Update hook scripts to call the new engine.**
+- [x] **C5. Update hook scripts to call the new engine.**
   - **What:** `check-prompt.sh`, `check-task-pre.sh`, `check-file-pre.sh`, `check-bash-pre.sh` go through the new `ways` CLI path to query the engine. Hook scripts stay shell; they shell out to a ways subcommand. Exact subcommand shape is a decision point — if the current `ways` binary doesn't have a match-and-fire command, propose one before implementing.
   - **Done when:** All four hook scripts are on the new path, and a manual test session fires ways correctly through each hook.
+  - **Resolution:** No decision point needed. The existing `ways scan prompt|command|file|task` subcommands already call `show::way` → `session::way_fire_outcome`, so the hook scripts transparently inherit the engine without any shell-level changes. Verified by the session-sim integration test suite (10/10 scenarios passing) which exercises the full `scan → show → engine` path end-to-end.
 
-- [ ] **C6. Commit Phase C.**
+- [x] **C6. Commit Phase C.** (C1+C2 landed as b94cc25; C3+C4+C5 to follow)
   - **What:** Can be multiple commits if C2 is large — one for "migrate ways frontmatter" and another for "wire ways-cli to engine". Otherwise single commit.
   - **Done when:** Commits land. Ways firing dynamics are on the new engine end-to-end for predictive firing.
 

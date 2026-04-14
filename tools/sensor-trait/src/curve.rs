@@ -88,8 +88,14 @@ impl Curve {
                 }
                 current
             }
+            // Flat salience is the mirror of its suppression semantic:
+            // "loud" (1.0) for the first `suppression` ticks post-fire,
+            // then "faded" (0.0) thereafter. This keeps the uniform
+            // caller rule "re-inject when salience < floor" working the
+            // same way for Flat as for Exponential — the Flat variant is
+            // just the discontinuous analog of the same fade shape.
             Curve::Flat { suppression } => {
-                if delta >= *suppression {
+                if delta < *suppression {
                     1.0
                 } else {
                     0.0
@@ -217,11 +223,12 @@ mod tests {
 
     #[test]
     fn flat_salience_is_step() {
+        // Salience = loudness: loud right after fire, faded past suppression.
         let c = Curve::Flat { suppression: 500 };
-        assert_eq!(c.salience_at(0), 0.0);
-        assert_eq!(c.salience_at(499), 0.0);
-        assert_eq!(c.salience_at(500), 1.0);
-        assert_eq!(c.salience_at(10_000), 1.0);
+        assert_eq!(c.salience_at(0), 1.0);
+        assert_eq!(c.salience_at(499), 1.0);
+        assert_eq!(c.salience_at(500), 0.0);
+        assert_eq!(c.salience_at(10_000), 0.0);
     }
 
     #[test]

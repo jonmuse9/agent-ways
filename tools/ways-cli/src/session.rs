@@ -6,8 +6,14 @@
 
 use std::path::{Path, PathBuf};
 
-/// Re-disclosure fires when a way has drifted this % of the context window.
-const REDISCLOSE_PCT: u64 = 25;
+use sensor_trait::{Curve, EngagementState, Tick};
+
+/// Floor on `EngagementState::current_salience` below which a re-fire is
+/// considered warranted. Tuned so that `Curve::Exponential { half_life: H }`
+/// re-fires at exactly `H` ticks post-fire (salience there is 0.5), and
+/// `Curve::Flat { suppression: N }` re-fires at exactly `N` ticks (the
+/// step from 1.0 to 0.0 lands below the floor).
+const REFIRE_FLOOR: f64 = 0.5;
 
 // ── Session directory ──────────────────────────────────────────
 
@@ -216,39 +222,81 @@ pub fn stamp_way_tokens(way_id: &str, session_id: &str, position: u64) {
     let _ = std::fs::write(&path, position.to_string());
 }
 
-/// Check if token distance exceeds re-disclosure threshold.
-/// Returns Some(distance) if exceeded, None if not.
-/// `redisclose_pct` overrides the global default when set (per-way frontmatter).
-pub fn token_distance_exceeded(way_id: &str, session_id: &str, redisclose_pct: Option<u64>) -> Option<u64> {
-    let tokens_path = session_dir(session_id).join("way-tokens").join(way_id).join(".value");
-    let last_tokens = read_u64_path(&tokens_path);
-    let current = get_token_position(session_id);
-    let distance = current.saturating_sub(last_tokens);
+// ── ADR-123 engine integration ─────────────────────────────────
 
-    let pct = redisclose_pct.unwrap_or(REDISCLOSE_PCT);
-    let context_window = detect_context_window(session_id);
-    let threshold = context_window * pct / 100;
+/// Outcome of querying the firing-dynamics engine for a way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FireOutcome {
+    /// Way has never fired this session — first fire always allowed.
+    FirstFire,
+    /// Way has fired before; salience has decayed below the floor.
+    /// Re-injection warranted.
+    ReFire,
+    /// Way has fired recently; salience is still loud. Suppress.
+    Suppressed,
+}
 
-    if distance >= threshold {
-        Some(distance)
-    } else {
-        None
+impl FireOutcome {
+    pub fn is_allowed(self) -> bool {
+        matches!(self, Self::FirstFire | Self::ReFire)
+    }
+
+    pub fn is_redisclosure(self) -> bool {
+        matches!(self, Self::ReFire)
     }
 }
 
-/// Detect context window size from the model in use (current session).
-pub fn detect_context_window(_session_id: &str) -> u64 {
-    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
-        .unwrap_or_else(|_| std::env::var("PWD").unwrap_or_else(|_| ".".to_string()));
-    let project_slug = project_dir.replace(['/', '.'], "-");
-    let conv_dir = home_dir().join(format!(".claude/projects/{project_slug}"));
+fn engagement_path(way_id: &str, session_id: &str) -> PathBuf {
+    session_dir(session_id)
+        .join("way-engagement")
+        .join(format!("{}.json", way_id.replace('/', "__")))
+}
 
-    let transcript = match find_newest_jsonl(&conv_dir) {
-        Some(t) => t,
-        None => return 200_000,
-    };
+fn load_engagement(way_id: &str, session_id: &str, curve: &Curve) -> EngagementState {
+    let path = engagement_path(way_id, session_id);
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<EngagementState>(&s).ok())
+        .unwrap_or_else(|| EngagementState::new(curve.clone()))
+}
 
-    context_window_from_transcript(&transcript)
+fn save_engagement(way_id: &str, session_id: &str, state: &EngagementState) {
+    let path = engagement_path(way_id, session_id);
+    ensure_parent(&path);
+    if let Ok(serialized) = serde_json::to_string(state) {
+        let _ = std::fs::write(&path, serialized);
+    }
+}
+
+/// Query the ADR-123 firing engine: should this way fire at the current
+/// tick, and if so is it a first-fire or a re-fire?
+///
+/// The caller supplies the way's `curve` from its parsed frontmatter.
+/// Tick source is `get_token_position(session_id)`.
+pub fn way_fire_outcome(
+    way_id: &str,
+    session_id: &str,
+    curve: &Curve,
+) -> FireOutcome {
+    let state = load_engagement(way_id, session_id, curve);
+    if !state.has_fired() {
+        return FireOutcome::FirstFire;
+    }
+    let current_tick: Tick = get_token_position(session_id);
+    if state.current_salience(current_tick) < REFIRE_FLOOR {
+        FireOutcome::ReFire
+    } else {
+        FireOutcome::Suppressed
+    }
+}
+
+/// Record that a way fired at the current tick, updating and persisting
+/// its engagement state.
+pub fn record_way_fire(way_id: &str, session_id: &str, curve: &Curve) {
+    let current_tick: Tick = get_token_position(session_id);
+    let mut state = load_engagement(way_id, session_id, curve);
+    state.record_fire(current_tick, 1.0);
+    save_engagement(way_id, session_id, &state);
 }
 
 /// Detect context window for a specific session by project path and session ID.

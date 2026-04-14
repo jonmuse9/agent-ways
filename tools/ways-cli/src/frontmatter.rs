@@ -17,17 +17,11 @@ pub struct Frontmatter {
     pub scope: Option<String>,
     #[serde(default)]
     pub embed_threshold: Option<f64>,
-    /// ADR-123 firing-dynamics curve. Migration-phase: optional during
-    /// C1 (parser lands), becomes required after C2 (all ways migrated)
-    /// and C3 (legacy `redisclose` parser removed).
+    /// ADR-123 firing-dynamics curve. Required for ways that fire
+    /// predictively or reactively; optional during parse for static
+    /// consumers (tune/corpus/graph) that don't invoke the engine.
     #[serde(default)]
-    #[allow(dead_code)] // consumed by session.rs in C4
     pub curve: Option<Curve>,
-    /// Legacy pre-ADR-123 redisclose threshold. Tolerated during the
-    /// migration window; rejected by `parse` once C3 lands.
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub redisclose: Option<u64>,
 }
 
 /// Extract YAML frontmatter from a way file.
@@ -37,6 +31,9 @@ pub fn parse(path: &Path) -> Result<Frontmatter> {
 
     let yaml_str = extract_frontmatter_str(&content)
         .with_context(|| format!("no frontmatter in {}", path.display()))?;
+
+    detect_legacy_redisclose(&yaml_str)
+        .with_context(|| format!("legacy frontmatter in {}", path.display()))?;
 
     serde_yaml::from_str(&yaml_str)
         .with_context(|| format!("parsing frontmatter in {}", path.display()))
@@ -61,10 +58,8 @@ fn extract_frontmatter_str(content: &str) -> Option<String> {
 }
 
 /// Scan raw frontmatter YAML for a top-level `redisclose:` field.
-/// Returns a migration-pointing error if present. Used by the parser
-/// once ADR-123 Phase C3 deletes the legacy field — during C1 it lands
-/// as a standalone helper so the rejection test can drive it directly.
-#[allow(dead_code)] // wired into parse() in C3
+/// Returns a migration-pointing error if present. Called from `parse`
+/// so any leftover legacy field errors loudly at load time (ADR-123 C3).
 pub fn detect_legacy_redisclose(yaml_str: &str) -> Result<()> {
     for line in yaml_str.lines() {
         let trimmed = line.trim_start();
@@ -258,10 +253,13 @@ curve:
     }
 
     #[test]
-    fn curve_field_is_optional_during_migration() {
-        let fm = parse_yaml("description: legacy way\nredisclose: 25\n");
+    fn curve_field_is_optional_for_static_consumers() {
+        // Static consumers like `ways tune` and `ways corpus` parse way
+        // frontmatter but don't invoke the firing engine, so a missing
+        // curve: block must not error at parse time. The engine path in
+        // session.rs enforces presence at the fire site.
+        let fm = parse_yaml("description: no curve\n");
         assert!(fm.curve.is_none());
-        assert_eq!(fm.redisclose, Some(25));
     }
 
     #[test]

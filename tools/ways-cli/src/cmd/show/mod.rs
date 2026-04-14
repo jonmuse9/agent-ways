@@ -9,7 +9,7 @@ use anyhow::Result;
 use serde_json::json;
 use std::path::Path;
 
-use crate::session;
+use crate::{frontmatter, session};
 use helpers::{extract_field, extract_attend_signals, home_dir, is_project_trusted, body_text, check_sections_text, run_macro};
 use metrics::{compute_tree_metrics, count_siblings, git_version, dirty_status_text, update_status_text};
 
@@ -39,20 +39,22 @@ pub fn way(id: &str, session_id: &str, trigger: &str) -> Result<String> {
         return Ok(String::new());
     }
 
-    // Session marker check + token-gated re-disclosure (ADR-104)
-    let redisclose_pct: Option<u64> = extract_field(&content, "redisclose")
-        .and_then(|s| s.parse().ok());
-    let is_redisclosure;
-    if session::way_is_shown(id, session_id) {
-        match session::token_distance_exceeded(id, session_id, redisclose_pct) {
-            Some(_distance) => {
-                is_redisclosure = true;
-            }
-            None => return Ok(String::new()),
-        }
-    } else {
-        is_redisclosure = false;
+    // Session firing gate (ADR-123): consult the engine with this way's
+    // explicit curve. First-fire always allowed; re-fire when the outward
+    // gate's salience has decayed below REFIRE_FLOOR; otherwise suppress.
+    let fm = frontmatter::parse(&way_file)?;
+    let curve = fm.curve.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "way {} is missing the required `curve:` block in its frontmatter (ADR-123)",
+            id
+        )
+    })?;
+    let outcome = session::way_fire_outcome(id, session_id, &curve);
+    if !outcome.is_allowed() {
+        return Ok(String::new());
     }
+    let is_redisclosure = outcome.is_redisclosure();
+    session::record_way_fire(id, session_id, &curve);
 
     // Macro handling
     let macro_pos = extract_field(&content, "macro");

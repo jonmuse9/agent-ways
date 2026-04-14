@@ -4,6 +4,9 @@ vocabulary: gated project specific configuration
 scope: agent
 when:
   project: /tmp/test-project-sim
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 # Gated Way
 

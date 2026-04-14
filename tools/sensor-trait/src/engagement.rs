@@ -13,6 +13,8 @@
 
 use std::collections::VecDeque;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{Curve, Tick, TickDelta};
 
 /// Convert a linear-per-minute decay rate (the attend-pre-ADR-123 shape)
@@ -41,7 +43,7 @@ pub fn rate_per_min_to_half_life_secs(rate: f64) -> TickDelta {
 /// Per-subject firing dynamics state, keyed on a caller-supplied monotonic
 /// progression axis. The engine does not know what a tick is — see
 /// [`crate::Tick`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngagementState {
     curve: Curve,
     history: VecDeque<(Tick, f64)>,
@@ -122,6 +124,17 @@ impl EngagementState {
     /// Access the underlying curve (for diagnostics and tune-time access).
     pub fn curve(&self) -> &Curve {
         &self.curve
+    }
+
+    /// Whether any fire has been recorded. Useful for first-fire vs
+    /// re-fire discrimination in the caller.
+    pub fn has_fired(&self) -> bool {
+        self.last_fire.is_some()
+    }
+
+    /// Tick of the most recent fire, if any.
+    pub fn last_fire_tick(&self) -> Option<Tick> {
+        self.last_fire
     }
 
     /// Prune history entries whose multiplier contribution has decayed
@@ -235,9 +248,11 @@ mod tests {
         let curve = Curve::Flat { suppression: 500 };
         let mut s = EngagementState::new(curve);
         s.record_fire(0, 1.0);
-        assert_eq!(s.current_salience(100), 0.0);
-        assert_eq!(s.current_salience(500), 1.0);
-        assert_eq!(s.current_salience(10_000), 1.0);
+        // Loud during the suppression window, faded after.
+        assert_eq!(s.current_salience(100), 1.0);
+        assert_eq!(s.current_salience(499), 1.0);
+        assert_eq!(s.current_salience(500), 0.0);
+        assert_eq!(s.current_salience(10_000), 0.0);
     }
 
     #[test]
