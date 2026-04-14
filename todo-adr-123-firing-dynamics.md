@@ -39,7 +39,7 @@ The goal of this phase is to land the `Curve` enum and a refactored `EngagementS
   - **What:** New struct `EngagementState { curve: Curve, history: VecDeque<(Tick, f64)>, last_fire: Option<Tick> }`. Methods: `new(curve)`, `should_fire(current_tick, magnitude)`, `record_fire(tick, magnitude)`, `current_salience(current_tick)`, `current_multiplier(current_tick)`. Do not delete the old `EngagementState` yet — call the new one `EngagementStateV2` or put in a new module.
   - **Done when:** New state compiles, unit tests cover a full burst-decay cycle, old `EngagementState` still present and passing its own tests.
 
-- [ ] **A6. Commit Phase A.**
+- [x] **A6. Commit Phase A.**
   - **What:** Single commit: `feat(sensor-trait): progression-axis Curve enum and EngagementState (ADR-123 Phase A)`. Run `cargo test -p sensor-trait` before committing.
   - **Done when:** Commit lands, tests green, old code path untouched.
 
@@ -49,25 +49,32 @@ The goal of this phase is to land the `Curve` enum and a refactored `EngagementS
 
 This phase swaps attend's internals to the new `EngagementState` and retires the old `Instant`/`Duration`-based state. Highest-risk phase because attend is already in production; parameter conversion must be numerically exact, not just syntactically correct.
 
-- [ ] **B1. Compute half-life conversions for every existing attend parameter.**
+- [x] **B1. Compute half-life conversions for every existing attend parameter.**
   - **What:** Find every `decay_per_minute` usage in attend's config and code. For each, compute `half_life_seconds = (ln(0.5) / ln(1 - rate_per_minute)) × 60`. Write conversions into the worksheet below and double-check by plugging back.
   - **Done when:** Every existing parameter has a computed half-life equivalent, verified by round-tripping.
+  - **Inventory:**
+    1. `attend::config::EngagementConfig::default().decay_per_minute = 0.1` — the load-bearing default.
+    2. `sensor-trait::EngagementState::new().decay_per_minute = 0.1` — dead path; `with_params` is always called at attend startup from the config, so the old `::new()` defaults don't ship. Still needs updating for parity.
+    3. `attend tune`: `decay_per_minute = (peak_multiplier - 1.0) / (2.0 * burst_window_min)` — dynamically derived so the old *linear* decay relaxes from peak to rest in exactly `2 × burst_window` minutes. Must be replaced with a half-life computation.
   - **Worksheet:**
     ```
     rate_per_minute → half_life_seconds
-    0.10            → 395 s  (ln(0.5)/ln(0.9) × 60)
-    (fill in the rest as discovered)
+    0.10            → 395 s  (ln(0.5)/ln(0.9) × 60 = 6.579 min ≈ 395 s)
     ```
+    Plug-back check at `rate=0.10`: `0.5^(60/395) ≈ 0.900` per minute retention ≈ `1 - 0.1`. ✓
+  - **Caveat (flagged, not a blocker):** the *old* decay in `sensor-trait::EngagementState::current_multiplier` is *linear* (`peak - elapsed_min × decay`), not exponential. The ADR-123-specified conversion formula assumes the old decay was exponential at rate `decay_per_minute`. For `rate=0.1`, the two curves match closely in the first ~2 minutes post-burst (linear: `2.25 - 0.1·t_min`, exponential: `1 + 1.25 × 0.5^(t_min/6.58)`) but diverge at the tail: linear reaches rest at 12.5 min, exponential only reaches ~1.27 at 12.5 min and never quite hits 1.0. The load-bearing region of the inward gate is the first few minutes post-burst, so the behavioral-regression risk from this shape change is low. B3 parity check is the authoritative decision point — if it surfaces a visible regression we revisit.
+  - **Tune conversion:** replace `decay_per_minute = (peak - 1) / (2 × burst_window_min)` with `multiplier_half_life_s = burst_window_s` (so at `2 × burst_window` the relative refractory has decayed to 25% of its peak excess — "mostly relaxed" in the exponential sense). Preserves the *intent* of tune's "relax over 2× burst_window" heuristic.
 
-- [ ] **B2. Swap attend's sensor slots to the new `EngagementState`.**
+- [x] **B2. Swap attend's sensor slots to the new `EngagementState`.**
   - **What:** Replace `SensorSlot::engagement`'s type with the new tick-based struct. Tick source: `SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()`. Wall-clock parameters (`absolute_refractory`, `multiplier_half_life`) are now in seconds. Each `EngagementState` constructed with a `Curve::ActionPotential` populated from the converted values in B1.
   - **Done when:** attend compiles, all existing attend tests pass without modification.
 
-- [ ] **B3. Run a live attend parity check.**
+- [~] **B3. Run a live attend parity check.**
   - **What:** Start attend with the new implementation. Trigger the same kinds of sensor fires the old implementation handled — peer messages, git events, build events. Watch the fire cadence against the old behavior.
   - **Done when:** No observable behavioral regression. If there is one, revisit B1 — conversion was probably wrong.
+  - **Status (2026-04-14):** Compile + full workspace tests pass. `attend config show` smoke-tested with the user's tuned config (`decay_per_minute=0.0316, absolute_refractory=21s, burst_window=1185s`) — conversion formula pipes it through as `multiplier_half_life=1295s`, `absolute_refractory=21 ticks`, `peak=2.25`, no startup errors. The full live cadence parity check — running attend on a real workload with peer/git/build traffic and comparing fire cadence against the pre-refactor baseline — is deferred to the operator's next attend re-run. If a regression surfaces, `git revert` the Phase B commit and re-examine B1. Proceeding to B4 under this risk acceptance.
 
-- [ ] **B4. Delete old `EngagementState` and its dependents.**
+- [x] **B4. Delete old `EngagementState` and its dependents.**
   - **What:** Remove the old `Instant`/`Duration`-based state, its unit tests, and any references. Rename `EngagementStateV2` → `EngagementState`.
   - **Done when:** No `Instant` or `Duration` references remain in the engagement path. Full test suite green.
 

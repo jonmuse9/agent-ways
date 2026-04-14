@@ -1,32 +1,54 @@
-//! Unit-agnostic engagement state (ADR-123 Phase A).
+//! Unit-agnostic engagement state (ADR-123).
 //!
-//! `EngagementStateV2` is the progression-axis replacement for the
-//! `Instant`/`Duration`-based `EngagementState` in `lib.rs`. It owns a
-//! [`Curve`] and a tick-based fire history, and exposes the inward and
-//! outward gates from ADR-123 Decision 3:
+//! `EngagementState` owns a [`Curve`] and a tick-based fire history, and
+//! exposes the inward and outward gates from ADR-123 Decision 3:
 //!
 //! - [`Self::should_fire`] — "should this new event be allowed to fire?"
 //! - [`Self::current_salience`] — "is the last-fired guidance still loud?"
 //!
-//! The old `EngagementState` stays in place during Phase A so attend's
-//! existing tests continue to pass. Phase B migrates attend's call sites
-//! onto this type and retires the old one.
+//! The tick axis is caller-supplied and opaque to the engine — attend
+//! passes wall-clock seconds (via [`crate::epoch_secs`]), ways will pass
+//! token position, future callers supply whatever monotonic matches
+//! their cadence.
 
 use std::collections::VecDeque;
 
-use crate::{Curve, Tick};
+use crate::{Curve, Tick, TickDelta};
+
+/// Convert a linear-per-minute decay rate (the attend-pre-ADR-123 shape)
+/// into an equivalent exponential half-life in seconds.
+///
+/// Formula: `half_life_seconds = (ln(0.5) / ln(1 - rate_per_minute)) × 60`.
+/// Plugs `decay_per_minute = 0.1 → 395 s`, etc. See ADR-123 Phase B
+/// worksheet and the caveat there about linear-vs-exponential shape.
+///
+/// Returns `TickDelta::MAX` for degenerate inputs (rate ≤ 0 or ≥ 1),
+/// which in practice means "never decay" / "always elevated" — attend
+/// should treat these as misconfiguration.
+pub fn rate_per_min_to_half_life_secs(rate: f64) -> TickDelta {
+    if rate <= 0.0 || rate >= 1.0 {
+        return TickDelta::MAX;
+    }
+    let half_life_min = 0.5_f64.ln() / (1.0 - rate).ln();
+    let half_life_sec = (half_life_min * 60.0).round();
+    if half_life_sec <= 0.0 {
+        1
+    } else {
+        half_life_sec as TickDelta
+    }
+}
 
 /// Per-subject firing dynamics state, keyed on a caller-supplied monotonic
 /// progression axis. The engine does not know what a tick is — see
 /// [`crate::Tick`].
 #[derive(Debug, Clone)]
-pub struct EngagementStateV2 {
+pub struct EngagementState {
     curve: Curve,
     history: VecDeque<(Tick, f64)>,
     last_fire: Option<Tick>,
 }
 
-impl EngagementStateV2 {
+impl EngagementState {
     /// Create a new engagement state with the given curve and no fire history.
     pub fn new(curve: Curve) -> Self {
         Self {
@@ -76,6 +98,25 @@ impl EngagementStateV2 {
         };
         let history_slice: Vec<(Tick, f64)> = self.history.iter().copied().collect();
         self.curve.multiplier_at(delta, &history_slice, current_tick)
+    }
+
+    /// Whether the inward gate is fully closed ("absolute refractory" —
+    /// no fires allowed at any magnitude).
+    pub fn in_absolute_refractory(&self, current_tick: Tick) -> bool {
+        !self.current_multiplier(current_tick).is_finite()
+    }
+
+    /// Effective firing threshold given a caller-supplied `base` threshold.
+    /// Returns `None` during absolute refractory (hard block), otherwise
+    /// `Some(base × refractory_multiplier)`. This is the shape attend's old
+    /// `EngagementState::effective_threshold` had, preserved as a helper so
+    /// migration is mechanical.
+    pub fn effective_threshold(&self, base: f64, current_tick: Tick) -> Option<f64> {
+        let multiplier = self.current_multiplier(current_tick);
+        if !multiplier.is_finite() {
+            return None;
+        }
+        Some(base * multiplier)
     }
 
     /// Access the underlying curve (for diagnostics and tune-time access).
@@ -132,7 +173,7 @@ mod tests {
 
     #[test]
     fn new_state_has_no_history_and_allows_firing() {
-        let s = EngagementStateV2::new(ap_curve());
+        let s = EngagementState::new(ap_curve());
         assert_eq!(s.current_salience(0), 0.0);
         assert_eq!(s.current_multiplier(0), 1.0);
         assert!(s.should_fire(0, 1.0));
@@ -140,7 +181,7 @@ mod tests {
 
     #[test]
     fn full_burst_decay_cycle() {
-        let mut s = EngagementStateV2::new(ap_curve());
+        let mut s = EngagementState::new(ap_curve());
 
         // Fire 1: at rest, should be allowed.
         assert!(s.should_fire(0, 1.0));
@@ -182,7 +223,7 @@ mod tests {
     #[test]
     fn salience_decays_over_ticks_for_exponential() {
         let curve = Curve::Exponential { half_life: 100 };
-        let mut s = EngagementStateV2::new(curve);
+        let mut s = EngagementState::new(curve);
         s.record_fire(0, 1.0);
         assert!((s.current_salience(0) - 1.0).abs() < 1e-9);
         assert!((s.current_salience(100) - 0.5).abs() < 1e-9);
@@ -192,7 +233,7 @@ mod tests {
     #[test]
     fn flat_curve_salience_matches_step() {
         let curve = Curve::Flat { suppression: 500 };
-        let mut s = EngagementStateV2::new(curve);
+        let mut s = EngagementState::new(curve);
         s.record_fire(0, 1.0);
         assert_eq!(s.current_salience(100), 0.0);
         assert_eq!(s.current_salience(500), 1.0);
@@ -201,7 +242,7 @@ mod tests {
 
     #[test]
     fn prune_bounds_history_on_non_refractory_curve() {
-        let mut s = EngagementStateV2::new(Curve::Exponential { half_life: 100 });
+        let mut s = EngagementState::new(Curve::Exponential { half_life: 100 });
         for t in 0..10 {
             s.record_fire(t * 10, 1.0);
         }
@@ -212,8 +253,23 @@ mod tests {
     }
 
     #[test]
+    fn rate_per_min_conversion_sanity() {
+        // Documented in ADR-123 Phase B worksheet: 0.10 → ~395s.
+        assert_eq!(rate_per_min_to_half_life_secs(0.10), 395);
+        // Plug-back: 0.5^(60 / half_life) ≈ (1 - 0.1) per minute.
+        let hl = rate_per_min_to_half_life_secs(0.10) as f64;
+        let per_min = 0.5_f64.powf(60.0 / hl);
+        assert!((per_min - 0.9).abs() < 0.001);
+
+        // Degenerate inputs collapse to "never decay".
+        assert_eq!(rate_per_min_to_half_life_secs(0.0), TickDelta::MAX);
+        assert_eq!(rate_per_min_to_half_life_secs(1.0), TickDelta::MAX);
+        assert_eq!(rate_per_min_to_half_life_secs(-0.1), TickDelta::MAX);
+    }
+
+    #[test]
     fn prune_bounds_history_on_action_potential() {
-        let mut s = EngagementStateV2::new(ap_curve());
+        let mut s = EngagementState::new(ap_curve());
         // Fires that are far enough apart that earlier ones decay out
         // before later ones are recorded.
         s.record_fire(0, 1.0);

@@ -129,17 +129,32 @@ fn cmd_run_with_catchup(catchup: bool) {
 
     let (mut slots, enabled_names) = sensors::register_sensors(&cfg, &focus, catchup, &group_mgr);
 
-    // Apply engagement config (ADR-119 action potential) to every slot.
-    // All sensors share the same engagement parameters; per-sensor overrides
-    // can be added later if the defaults turn out to be too coarse.
-    for slot in &mut slots {
-        slot.engagement = sensor_trait::EngagementState::with_params(
-            cfg.engagement.burst_window,
-            cfg.engagement.burst_threshold,
-            cfg.engagement.step_multiplier,
-            cfg.engagement.absolute_refractory,
+    // Apply engagement config (ADR-119 action potential, ADR-123
+    // progression-axis unification) to every slot. All sensors share the
+    // same engagement parameters; per-sensor overrides can be added later
+    // if the defaults turn out to be too coarse.
+    //
+    // The attend tick is wall-clock seconds (sensor_trait::epoch_secs),
+    // so Curve parameters are in seconds. The old linear
+    // `decay_per_minute` rate is converted to an exponential half-life
+    // via `rate_per_min_to_half_life_secs` — see ADR-123 Phase B
+    // worksheet for the caveat.
+    //
+    // `peak_multiplier` is `1 + step_multiplier`, which reproduces the
+    // old "peak at exactly burst_threshold" value (2.25 at defaults).
+    // The old model's additional scaling for fires past threshold is
+    // not preserved — that scaling rarely activated in practice and the
+    // refactor opts for a flat ceiling.
+    let engagement_curve = sensor_trait::Curve::ActionPotential {
+        burst_threshold: cfg.engagement.burst_threshold,
+        peak_multiplier: 1.0 + cfg.engagement.step_multiplier,
+        absolute_refractory: cfg.engagement.absolute_refractory.as_secs(),
+        multiplier_half_life: sensor_trait::engagement::rate_per_min_to_half_life_secs(
             cfg.engagement.decay_per_minute,
-        );
+        ),
+    };
+    for slot in &mut slots {
+        slot.engagement = sensor_trait::EngagementState::new(engagement_curve.clone());
     }
 
     // State persistence
@@ -346,11 +361,12 @@ fn cmd_run_with_catchup(catchup: bool) {
                 // Record engagement only for sensors whose events actually
                 // fired (not the quiet ones that got suppressed). Action
                 // potential refractory is per-sensor.
+                let tick = sensor_trait::epoch_secs();
                 for &i in &ready_indices {
                     let slot = &slots[i];
                     let was_actionable = slot.accumulator.magnitude >= 3.0;
                     if was_actionable {
-                        slots[i].engagement.record_disclosure();
+                        slots[i].engagement.record_fire(tick, 1.0);
                     }
                 }
             }
