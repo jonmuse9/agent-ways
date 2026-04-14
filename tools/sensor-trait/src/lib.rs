@@ -7,6 +7,24 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+pub mod curve;
+pub mod engagement;
+pub use curve::Curve;
+pub use engagement::EngagementStateV2;
+
+// ── Progression axis (ADR-123) ──────────────────────────────────
+
+/// Monotonic progression-axis value supplied by the caller. The engine
+/// treats this as an opaque strictly-increasing `u64` — attend interprets
+/// it as wall-clock seconds, ways as token position, future callers as
+/// whatever monotonic matches their cadence. See ADR-123.
+pub type Tick = u64;
+
+/// Delta between two ticks on the same progression axis. Same unit as
+/// the ticks it was computed from; the engine does not know what that
+/// unit is.
+pub type TickDelta = u64;
+
 // ── Sensor trait ────────────────────────────────────────────────
 
 /// A sensor observes some aspect of the environment or Claude's state.

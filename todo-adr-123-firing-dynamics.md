@@ -19,23 +19,23 @@ Mark tasks complete with `[x]` as they land. Keep the file current — this *is*
 
 The goal of this phase is to land the `Curve` enum and a refactored `EngagementState` in `sensor-trait` with full unit tests, **without touching attend's call sites yet**. Attend keeps working off its current `Instant`/`Duration`-based state until Phase B. This phase is pure addition: the new types and the new enum land alongside the old, so existing tests stay green.
 
-- [ ] **A1. Introduce progression-axis types in `sensor-trait`.**
+- [x] **A1. Introduce progression-axis types in `sensor-trait`.**
   - **What:** Add `pub type Tick = u64;` and `pub type TickDelta = u64;` aliases to `tools/sensor-trait/src/lib.rs`. Additive only.
   - **Done when:** `cargo build -p sensor-trait` passes; the types are referenced by nothing yet.
 
-- [ ] **A2. Define the `Curve` enum.**
+- [x] **A2. Define the `Curve` enum.**
   - **What:** Add `pub enum Curve { Exponential, ActionPotential, ProgressiveStaircase, Flat }` with fields per ADR-123 Decision 2. All decay parameters use `half_life: TickDelta`. `ActionPotential` uses `burst_threshold: usize`, `peak_multiplier: f64`, `absolute_refractory: TickDelta`, `multiplier_half_life: TickDelta`. No `burst_window` as a tick span — burst window is implicit via `multiplier_half_life` decay.
   - **Done when:** Enum compiles with `#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]`, YAML round-trip works for all four variants.
 
-- [ ] **A3. Implement `Curve::salience_at(delta: TickDelta) -> f64`.**
+- [x] **A3. Implement `Curve::salience_at(delta: TickDelta) -> f64`.**
   - **What:** `Exponential` returns `0.5_f64.powf(delta as f64 / half_life as f64)`. `ActionPotential` returns `1.0` (salience governed by multiplier, not curve shape). `ProgressiveStaircase` returns the salience of the most recent step whose delta is ≤ input. `Flat` returns `1.0` if `delta >= suppression`, else `0.0`.
   - **Done when:** Unit tests exist for each variant covering endpoint cases (delta=0, delta=half_life, delta=2×half_life, delta=huge) and values match by-hand calculation.
 
-- [ ] **A4. Implement `Curve::multiplier_at(delta, history, current) -> f64`.**
+- [x] **A4. Implement `Curve::multiplier_at(delta, history, current) -> f64`.**
   - **What:** For `ActionPotential`: count history entries whose contribution hasn't decayed (entries within epsilon of non-trivial multiplier contribution), check against `burst_threshold`, compute `peak_multiplier × 0.5^(delta / multiplier_half_life)` in relative refractory, return `f64::INFINITY` in absolute refractory. For other variants: return `1.0`.
   - **Done when:** Unit tests cover: single fire (multiplier=1.0), burst triggered (>1.0), absolute refractory (effectively infinite), decay back toward 1.0, chunky-axis case (single event advancing tick by large delta — critical for ways).
 
-- [ ] **A5. Refactor `EngagementState` to own a `Curve` and tick-based history.**
+- [x] **A5. Refactor `EngagementState` to own a `Curve` and tick-based history.**
   - **What:** New struct `EngagementState { curve: Curve, history: VecDeque<(Tick, f64)>, last_fire: Option<Tick> }`. Methods: `new(curve)`, `should_fire(current_tick, magnitude)`, `record_fire(tick, magnitude)`, `current_salience(current_tick)`, `current_multiplier(current_tick)`. Do not delete the old `EngagementState` yet — call the new one `EngagementStateV2` or put in a new module.
   - **Done when:** New state compiles, unit tests cover a full burst-decay cycle, old `EngagementState` still present and passing its own tests.
 
