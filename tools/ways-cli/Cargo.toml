@@ -25,4 +25,5 @@ regex = "1"
 rust-stemmers = "1.2"
 crossterm = { version = "0.29", optional = true }
 agent-fmt = { path = "../agent-fmt" }
+sensor-trait = { path = "../sensor-trait" }
 

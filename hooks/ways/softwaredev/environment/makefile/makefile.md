@@ -4,7 +4,9 @@ vocabulary: makefile make target build lint linter test format clean install pub
 files: Makefile$|makefile$|GNUmakefile$|\.mk$
 commands: make
 threshold: 1.5
-redisclose: 10
+curve:
+  type: Exponential
+  half_life: 20000
 scope: agent, subagent
 macro: append
 requires: ["Bash(awk:*)", "Bash(make:*)", "Bash(sort:*)", "Bash(tr:*)"]

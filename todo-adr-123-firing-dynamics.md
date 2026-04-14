@@ -78,7 +78,7 @@ This phase swaps attend's internals to the new `EngagementState` and retires the
   - **What:** Remove the old `Instant`/`Duration`-based state, its unit tests, and any references. Rename `EngagementStateV2` → `EngagementState`.
   - **Done when:** No `Instant` or `Duration` references remain in the engagement path. Full test suite green.
 
-- [ ] **B5. Commit Phase B.**
+- [x] **B5. Commit Phase B.** (9340185)
   - **What:** `feat(attend): migrate to progression-axis EngagementState (ADR-123 Phase B)`.
   - **Done when:** Commit lands. Attend is on the new engine.
 
@@ -88,11 +88,12 @@ This phase swaps attend's internals to the new `EngagementState` and retires the
 
 Where the new engine starts doing actual work for ways. Phase C turns theoretical scaffolding from ADR-123 into executable code in the hot path.
 
-- [ ] **C1. Add `curve:` parsing to `frontmatter.rs`.**
+- [x] **C1. Add `curve:` parsing to `frontmatter.rs`.**
   - **What:** Extend `tools/ways-cli/src/frontmatter.rs` to recognize `curve:` blocks and produce a `Curve` value. Accept all four variants. Reject `redisclose:` at parse time — emit a clear error pointing to the migration (don't silently ignore).
   - **Done when:** Parser tests exist for all four curve variants, plus an explicit rejection test for `redisclose:`.
+  - **Sequencing note:** The rejection logic is landed as a standalone helper `detect_legacy_redisclose()` that's unit-tested directly (including clean-yaml pass and indented/top-level rejection). `parse()` does not yet call it — that would break every existing way file before C2 has a chance to migrate them. C3 wires `parse()` through the detector, at which point any leftover `redisclose:` errors loudly. This keeps each commit independently buildable: C1 adds parsing + the detector, C2 migrates ways, C3 flips rejection on and deletes the legacy field.
 
-- [ ] **C2. Migrate every existing way from `redisclose:` to explicit `curve:`.**
+- [x] **C2. Migrate every existing way from `redisclose:` to explicit `curve:`.**
   - **What:** Walk `hooks/ways/**/*.md`, convert `redisclose: N` to either `curve: { type: Exponential, half_life: <N converted to tokens> }` or `curve: { type: Flat, suppression: <N> }` depending on intended semantic (exponential as default for smooth fade; flat if step-function was genuinely wanted). `N` is currently a percentage of context window — convert using `REDISCLOSE_PCT` logic assuming 200k default, round to reasonable values.
   - **Done when:** Every way has an explicit `curve:` field. `rg 'redisclose:' hooks/ways/` returns nothing. `lint-ways` passes.
 

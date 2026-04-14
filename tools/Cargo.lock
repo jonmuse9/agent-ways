@@ -731,6 +731,7 @@ dependencies = [
  "glob",
  "regex",
  "rust-stemmers",
+ "sensor-trait",
  "serde",
  "serde_json",
  "serde_yaml",
