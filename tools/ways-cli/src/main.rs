@@ -263,6 +263,21 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Tune firing-dynamics curves from observed cadence (ADR-123 Phase E)
+    TuneCurves {
+        /// Rewrite each suggested curve block in place (default: dry run)
+        #[arg(long)]
+        apply: bool,
+        /// Minimum delta samples a way must have before it's suggested
+        #[arg(long, default_value = "3")]
+        min_fires: usize,
+        /// Filter to events whose project path contains this substring
+        #[arg(long)]
+        project: Option<String>,
+        /// Filter to ways whose id contains this substring
+        #[arg(long)]
+        way: Option<String>,
+    },
     /// Permission audit — diff requires: fields against settings.json grants (ADR-116)
     Permissions {
         #[command(subcommand)]
@@ -557,6 +572,9 @@ fn main() -> Result<()> {
         Commands::Suggest { file, min_freq } => cmd::suggest::run(file, min_freq),
         Commands::Tune { ways_dir, way, apply, audit, audit_threshold, margin, json } => {
             cmd::tune::run(ways_dir, way, apply, audit, audit_threshold, margin, json)
+        }
+        Commands::TuneCurves { apply, min_fires, project, way } => {
+            cmd::tune_curves::run(apply, min_fires, project, way)
         }
         Commands::Reset { session, all, confirm } => {
             cmd::reset::run(session.as_deref(), all, confirm)
