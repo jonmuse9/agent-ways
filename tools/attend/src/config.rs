@@ -68,9 +68,13 @@ pub struct GovernorConfig {
 /// `attend tune` to auto-derive values from real session history.
 #[derive(Debug, Clone)]
 pub struct EngagementConfig {
-    /// Window for counting recent disclosures toward a burst.
-    pub burst_window: Duration,
-    /// Disclosures within burst_window needed to trigger refractory.
+    /// DEPRECATED (ADR-123): pre-unification burst-window parameter.
+    /// The effective window is now implicit via `multiplier_half_life` on
+    /// `Curve::ActionPotential`. Retained as `Option` so legacy files still
+    /// parse and `attend config lint` can flag the key; `None` means "absent
+    /// from the user's file", which is the correct steady state.
+    pub burst_window: Option<Duration>,
+    /// Disclosures needed to trigger refractory.
     pub burst_threshold: usize,
     /// Multiplier added per disclosure past the burst threshold.
     pub step_multiplier: f64,
@@ -86,9 +90,9 @@ pub struct EngagementConfig {
 impl Default for EngagementConfig {
     fn default() -> Self {
         Self {
-            // 15-minute window — sized so typical multi-turn conversations
-            // (with Claude turns averaging 60–120s) stay within it.
-            burst_window: Duration::from_secs(900),
+            // ADR-123: no synthesized default. `None` means "absent in the
+            // user's file", which is the correct steady state post-unification.
+            burst_window: None,
             burst_threshold: 3,
             step_multiplier: 1.25,
             // One Claude turn (~60s median) of complete silence after burst.
@@ -229,10 +233,9 @@ governor:
   max_per_window: 3
   rate_window: 120
 
-# Action potential engagement model (ADR-119).
+# Action potential engagement model (ADR-119, unified in ADR-123).
 # Run `attend tune` to auto-derive these from real session history.
 engagement:
-  burst_window: 900          # seconds — burst counting window
   burst_threshold: 3         # disclosures before refractory kicks in
   step_multiplier: 1.25      # per-burst threshold elevation
   absolute_refractory: 60    # seconds of complete suppression after burst
@@ -443,7 +446,7 @@ fn apply_config(config: &mut Config, content: &str) {
                     match key {
                         "burst_window" => {
                             if let Ok(v) = value.parse::<u64>() {
-                                config.engagement.burst_window = Duration::from_secs(v);
+                                config.engagement.burst_window = Some(Duration::from_secs(v));
                             }
                         }
                         "burst_threshold" => {

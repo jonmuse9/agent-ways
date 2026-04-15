@@ -1067,14 +1067,12 @@ fn cmd_tune(apply: bool) {
     println!();
     println!("=== derived engagement config ===");
     println!("engagement:");
-    println!("  burst_window: {}          # {:.0}s p90 × {} burst threshold",
-        burst_window_s, u2u_p90, burst_threshold as usize);
     println!("  burst_threshold: {}", burst_threshold as usize);
     println!("  step_multiplier: {}", step_multiplier);
     println!("  absolute_refractory: {}     # median think time", abs_refractory_s);
-    println!("  decay_per_minute: {:.4}     # peak decays over 2× burst_window",
+    println!("  decay_per_minute: {:.4}     # peak decays over ~2× burst-window equivalent",
         decay_per_minute);
-    println!("  peer_activity_window: {}    # matches burst_window", burst_window_s);
+    println!("  peer_activity_window: {}    # sized from u2u p90 × burst_threshold", burst_window_s);
     println!();
 
     if apply {
@@ -1088,7 +1086,7 @@ fn cmd_tune(apply: bool) {
 }
 
 fn apply_engagement_tune(
-    burst_window_s: u64,
+    peer_activity_window_s: u64,
     abs_refractory_s: u64,
     decay_per_minute: f64,
 ) -> std::io::Result<std::path::PathBuf> {
@@ -1104,8 +1102,8 @@ fn apply_engagement_tune(
     let existing = std::fs::read_to_string(&path).unwrap_or_else(|_| config::Config::default_yaml());
 
     let new_section = format!(
-        "engagement:\n  burst_window: {}\n  burst_threshold: 3\n  step_multiplier: 1.25\n  absolute_refractory: {}\n  decay_per_minute: {:.4}\n  peer_activity_window: {}\n",
-        burst_window_s, abs_refractory_s, decay_per_minute, burst_window_s,
+        "engagement:\n  burst_threshold: 3\n  step_multiplier: 1.25\n  absolute_refractory: {}\n  decay_per_minute: {:.4}\n  peer_activity_window: {}\n",
+        abs_refractory_s, decay_per_minute, peer_activity_window_s,
     );
 
     let updated = replace_engagement_section(&existing, &new_section);
@@ -1327,14 +1325,18 @@ fn display_config(cfg: &config::Config) {
 
     t.add(vec!["", "", ""]);
 
-    // Engagement section (ADR-119 action potential)
+    // Engagement section (ADR-119 action potential, unified in ADR-123)
+    let engagement_header: &str = "engagement";
+    let burst_window_display;
+    let burst_threshold_first_col: &str = if let Some(bw) = cfg.engagement.burst_window {
+        burst_window_display = format!("{}s", bw.as_secs());
+        t.add(vec![engagement_header, "burst_window", &burst_window_display]);
+        ""
+    } else {
+        engagement_header
+    };
     t.add(vec![
-        "engagement",
-        "burst_window",
-        &format!("{}s", cfg.engagement.burst_window.as_secs()),
-    ]);
-    t.add(vec![
-        "",
+        burst_threshold_first_col,
         "burst_threshold",
         &cfg.engagement.burst_threshold.to_string(),
     ]);
