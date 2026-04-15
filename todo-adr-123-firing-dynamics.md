@@ -123,19 +123,19 @@ Where the new engine starts doing actual work for ways. Phase C turns theoretica
 
 Predictive firing is working on the new engine. This phase adds the reactive-firing surface — `PostToolUse` and `PostToolUseFailure` with `postcheck.sh` per way.
 
-- [ ] **D1. Add `PostToolUse` and `PostToolUseFailure` hook matchers to `settings.json`.**
+- [x] **D1. Add `PostToolUse` and `PostToolUseFailure` hook matchers to `settings.json`.**
   - **What:** Two new hook entries pointing to `hooks/ways/check-post.sh`. Matchers: `Edit|Write|Bash|Task`.
   - **Done when:** `settings.json` is valid, Claude Code reloads cleanly.
 
-- [ ] **D2. Write `hooks/ways/check-post.sh`.**
+- [x] **D2. Write `hooks/ways/check-post.sh`.**
   - **What:** Reads `tool_response` from stdin. Walks all ways with a `postcheck.sh` file. For each, runs `postcheck.sh` with `tool_response` as stdin. Exit 0 requests firing (consults engine's inward gate same as predictive). Injects matched ways via `hookSpecificOutput.additionalContext`.
   - **Done when:** Script handles happy path and error cases (missing postcheck, failing postcheck, engine refuses fire). Manual test with a hand-written `postcheck.sh` confirms the pipeline.
 
-- [ ] **D3. Write a real `postcheck.sh` for `softwaredev/code/quality`.**
+- [x] **D3. Write a real `postcheck.sh` for `softwaredev/code/quality`.**
   - **What:** Reads `tool_response.filePath`, checks file size, exits 0 if over 500 lines. This is the load-bearing demo: reactive firing catches things predictive firing cannot.
   - **Done when:** Writing a 600-line file triggers the quality way via reactive firing — verified by hand.
 
-- [ ] **D4. Commit Phase D.**
+- [x] **D4. Commit Phase D.**
   - **What:** `feat(ways): reactive firing via PostToolUse + postcheck.sh (ADR-123 Phase D)`.
   - **Done when:** Commit lands. Reactive firing works end-to-end.
 
