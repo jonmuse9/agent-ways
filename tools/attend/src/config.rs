@@ -19,7 +19,38 @@ pub struct Config {
     pub governor: GovernorConfig,
     pub engagement: EngagementConfig,
     pub cleanup: CleanupConfig,
+    pub signals: SignalsConfig,
     pub sensors: HashMap<String, SensorConfig>,
+}
+
+/// Presentation-layer aging for peer signals (ADR-121 outward gate, unified
+/// in ADR-123). sensor-peers consults a `Curve::Exponential` keyed by
+/// signal id before emitting an observation; stale backlog signals decay
+/// out of presentation without being deleted from disk, and thread-reply
+/// (`re:`) references reset a signal's salience to 1.0 so the parent
+/// resurfaces.
+#[derive(Debug, Clone)]
+pub struct SignalsConfig {
+    /// Exponential decay half-life in wall-clock seconds. Default 1800
+    /// (30 min) — picked as a conservative first value; subject to
+    /// `attend tune` once survey coverage exists. Signals with arrival
+    /// delta exceeding ~`half_life_seconds × log2(1/floor)` no longer
+    /// surface.
+    pub half_life_seconds: u64,
+    /// Presentation floor. Signals whose current salience drops below
+    /// this value are suppressed from the observation stream (still on
+    /// disk until the retention sweep). Default 0.3 matches the ADR-121
+    /// recommendation.
+    pub presentation_floor: f64,
+}
+
+impl Default for SignalsConfig {
+    fn default() -> Self {
+        Self {
+            half_life_seconds: 1800,
+            presentation_floor: 0.3,
+        }
+    }
 }
 
 /// Background signal-file cleanup. Runs inside `attend run` so the signals
@@ -181,6 +212,7 @@ impl Default for Config {
             governor: GovernorConfig::default(),
             engagement: EngagementConfig::default(),
             cleanup: CleanupConfig::default(),
+            signals: SignalsConfig::default(),
             sensors,
         }
     }
@@ -241,6 +273,16 @@ engagement:
   absolute_refractory: 60    # seconds of complete suppression after burst
   decay_per_minute: 0.1      # relative refractory decay rate
   peer_activity_window: 900  # per-peer engagement window
+
+# Presentation-layer aging for peer signals (ADR-121 outward gate, unified
+# in ADR-123). sensor-peers consults an exponential salience curve keyed
+# by signal id before emitting: old backlog signals decay out silently,
+# replies via the `re:` threading field reset the parent's salience and
+# resurface it. Disk retention (see `cleanup` below) is independent and
+# unaffected.
+signals:
+  half_life_seconds: 1800    # exponential decay half-life (30 min default)
+  presentation_floor: 0.3    # suppress below this salience
 
 # Background signal-file cleanup. Runs inside `attend run` so the signals
 # base doesn't accumulate indefinitely. `attend cleanup` is the manual
@@ -441,6 +483,22 @@ fn apply_config(config: &mut Config, content: &str) {
                         _ => {}
                     }
                 }
+            } else if current_section == "signals" {
+                if let Some((key, value)) = parse_kv(trimmed) {
+                    match key {
+                        "half_life_seconds" => {
+                            if let Ok(v) = value.parse::<u64>() {
+                                config.signals.half_life_seconds = v;
+                            }
+                        }
+                        "presentation_floor" => {
+                            if let Ok(v) = value.parse::<f64>() {
+                                config.signals.presentation_floor = v;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             } else if current_section == "engagement" {
                 if let Some((key, value)) = parse_kv(trimmed) {
                     match key {
@@ -632,6 +690,26 @@ mod tests {
     use super::*;
 
     // ── watch: list (inline + block form) ──────────────────────────────
+
+    // ── signals: block ─────────────────────────────────────────────────
+
+    #[test]
+    fn signals_block_parses_half_life_and_floor() {
+        let mut cfg = Config::default();
+        apply_config(
+            &mut cfg,
+            "signals:\n  half_life_seconds: 3600\n  presentation_floor: 0.5\n",
+        );
+        assert_eq!(cfg.signals.half_life_seconds, 3600);
+        assert!((cfg.signals.presentation_floor - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn signals_absent_retains_defaults() {
+        let cfg = Config::default();
+        assert_eq!(cfg.signals.half_life_seconds, 1800);
+        assert!((cfg.signals.presentation_floor - 0.3).abs() < 1e-9);
+    }
 
     #[test]
     fn watch_inline_array_replaces_defaults() {

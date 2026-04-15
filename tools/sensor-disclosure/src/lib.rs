@@ -45,6 +45,17 @@ impl Component {
 
     fn body(self) -> &'static str {
         match self {
+            // Messaging guidance lives in three synchronized sources; an
+            // edit to `disclosures/messaging.md` must be mirrored to the
+            // other two or agents will receive inconsistent guidance at
+            // different points in a session:
+            //   - skills/attend/SKILL.md                               (primer read at /attend invocation)
+            //   - tools/sensor-disclosure/src/disclosures/messaging.md (this file — runtime reheat)
+            //   - hooks/ways/softwaredev/environment/attend/attend.md  (just-in-time way via commands: attend)
+            // Note: the .md file is embedded via include_str! and
+            // becomes the literal reheat payload, so no HTML comments
+            // can live inside the file itself — this is the closest
+            // anchoring point that doesn't leak into the notification.
             Component::Messaging => include_str!("disclosures/messaging.md"),
         }
     }

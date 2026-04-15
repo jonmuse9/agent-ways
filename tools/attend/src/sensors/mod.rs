@@ -112,9 +112,23 @@ pub fn register_sensors(
             }));
             // Align per-peer engagement window with global engagement config.
             peer_sensor.set_peer_activity_window(cfg.engagement.peer_activity_window);
-            if !catchup {
-                peer_sensor.mark_existing_as_seen(focus);
-            }
+            // ADR-121 outward gate: apply the `signals:` block params so
+            // sensor-peers suppresses aged backlog and resets on `re:`
+            // replies. Defaults inside PeerSensor match SignalsConfig
+            // defaults, so this call is a no-op when the user's config
+            // does not override them.
+            //
+            // The salience gate replaces the legacy `mark_existing_as_seen`
+            // startup blast prevention. On a fresh session start, every
+            // pre-existing signal file flows through `read_signals` and is
+            // filtered by age against its on-disk mtime — the backlog-filter
+            // behavior ADR-121 designed. `catchup` still skips the pre-seed
+            // path; the gate takes over in both modes and is the sole
+            // mechanism deciding what surfaces.
+            peer_sensor.set_salience_params(
+                cfg.signals.half_life_seconds,
+                cfg.signals.presentation_floor,
+            );
             let sc = cfg.sensors.get("peers");
             slots.push(SensorSlot::new_with_config(
                 Box::new(peer_sensor),

@@ -1,10 +1,14 @@
-use sensor_trait::{extract_json_u64, Focus, Sensor};
+pub mod last_inbound;
+mod salience;
+
+use salience::{extract_re_id, signal_id_from_filename, SignalSalience};
+use sensor_trait::{epoch_secs, extract_json_u64, Focus, Sensor};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 /// Callback that returns the current set of extra signal directories
 /// (typically focus-group dirs). Called on every scan so mid-session
@@ -51,6 +55,11 @@ pub struct PeerSensor {
     /// Sliding window for per-peer engagement boost calculation.
     /// Set via `set_peer_activity_window` from attend's engagement config.
     peer_activity_window: Duration,
+    /// Per-signal presentation-layer aging (ADR-121 outward gate,
+    /// unified in ADR-123). Consulted before each signal-derived
+    /// observation leaves `read_signals`; stale backlog signals are
+    /// suppressed, threaded replies reset the parent's salience.
+    signal_salience: SignalSalience,
 }
 
 #[allow(dead_code)]
@@ -107,6 +116,7 @@ impl PeerSensor {
             extra_scan_dirs_fn: None,
             peer_activity: HashMap::new(),
             peer_activity_window: Duration::from_secs(900),
+            signal_salience: SignalSalience::new(),
         }
     }
 
@@ -114,6 +124,13 @@ impl PeerSensor {
     /// to align with the attend engagement config.
     pub fn set_peer_activity_window(&mut self, window: Duration) {
         self.peer_activity_window = window;
+    }
+
+    /// Set the outward-gate salience parameters from attend's
+    /// `signals:` config block. Called by the orchestrator at startup.
+    pub fn set_salience_params(&mut self, half_life_seconds: u64, presentation_floor: f64) {
+        self.signal_salience
+            .set_params(half_life_seconds, presentation_floor);
     }
 
     /// Compute the magnitude boost for a peer based on their recent activity.
@@ -175,40 +192,6 @@ impl PeerSensor {
         result
     }
 
-    /// Mark all existing signal files as already seen so attend run
-    /// only processes signals that arrive after startup.
-    pub fn mark_existing_as_seen(&mut self, focus: &Focus) {
-        let base = signals_base();
-        let own_encoded = encode_cwd(&focus.working_dir);
-        let mut scan_dirs = vec![
-            base.join(&own_encoded),
-            base.join("_broadcast"),
-        ];
-        // Focus group directories (ADR-118 — named signal namespaces)
-        scan_dirs.extend(self.current_extra_scan_dirs());
-
-        for dir in &scan_dirs {
-            let entries = match fs::read_dir(dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(f) = path.file_name().and_then(|f| f.to_str()) {
-                    if f.ends_with(".signal") {
-                        let key = format!("{}:{}", dir.display(), f);
-                        self.seen_signals.insert(key);
-                    }
-                }
-            }
-        }
-
-        let count = self.seen_signals.len();
-        if count > 0 {
-            eprintln!("[attend] peers: marked {} existing signals as seen", count);
-        }
-    }
-
     /// Read signal files from peers. Scans own project dir, broadcast dir,
     /// focus list, and joined rooms. Returns observations for new signals.
     fn read_signals(&mut self, focus: &Focus) -> Vec<(f64, String)> {
@@ -228,6 +211,12 @@ impl PeerSensor {
         let own_session_id: String = self.own_session_id
             .clone()
             .unwrap_or_else(|| "---none---".to_string());
+
+        // Shared present-tick for the whole scan — every gate check and
+        // every reply-reset uses the same wall-clock second, so a reply
+        // that arrives alongside an aged parent can resurface the parent
+        // inside the same poll.
+        let now_tick = epoch_secs();
 
         for dir in &scan_dirs {
             let entries = match fs::read_dir(dir) {
@@ -255,6 +244,39 @@ impl PeerSensor {
                     Err(_) => continue,
                 };
                 let content = content.trim();
+
+                // Re-engagement reset (ADR-120 + ADR-121): a threaded
+                // reply bumps the parent signal's salience back to 1.0
+                // at `now_tick`, regardless of whether we're going to
+                // present the reply itself. The parent may or may not
+                // still be on disk — the reset persists into the
+                // salience map either way, so future observers joining
+                // the thread see a resurfaced parent.
+                if let Some(re_id) = extract_re_id(content) {
+                    self.signal_salience.reset(re_id, now_tick);
+                }
+
+                // Outward gate: suppress aged-out backlog signals.
+                // Anchored to the file's on-disk mtime so a fresh
+                // observer joining a focus-group room sees old material
+                // as already-decayed, which is the backlog-filter
+                // behavior ADR-121 designed and ADR-123 made a
+                // cross-tool facility.
+                let signal_id = signal_id_from_filename(&filename).to_string();
+                let arrival_tick = fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(now_tick);
+                if !self.signal_salience.gate(&signal_id, arrival_tick, now_tick) {
+                    // Aged past the presentation floor — suppress the
+                    // observation, but still mark the file seen so
+                    // we don't re-check it every poll.
+                    self.seen_signals.insert(key);
+                    continue;
+                }
+
                 if let Some((from, project, source_cwd, message)) = parse_signal(content) {
                     // Skip our own signals — check the from field, not filename.
                     // from is "claude:session-id" or "external:user@terminal"
@@ -320,6 +342,29 @@ impl PeerSensor {
                     }
                     if include_reply_hint {
                         self.reply_hint_shown = true;
+                    }
+
+                    // Track most-recent inbound for `attend reply`. We
+                    // record here (after the gate passes and we've
+                    // decided to emit an observation) so `attend reply`
+                    // targets what the operator actually saw, not what
+                    // was silently suppressed. The own-session-id keys
+                    // the file so concurrent attend processes don't
+                    // collide.
+                    //
+                    // Filter: skip signals originating from the same
+                    // working directory as this observer. The own-session
+                    // skip above only catches the *current* claude session
+                    // id; a previous incarnation of the same agent (different
+                    // session uuid, same cwd) would otherwise pass through
+                    // and pollute last_inbound, causing `attend reply` to
+                    // auto-thread to the agent's own past self. Same-cwd
+                    // matching is a reliable proxy because Claude Code runs
+                    // one agent per project at a time.
+                    if let Some(ref sid) = self.own_session_id {
+                        if source_cwd != focus.working_dir {
+                            last_inbound::record(sid, &signal_id);
+                        }
                     }
                 }
 
@@ -604,20 +649,40 @@ impl Sensor for PeerSensor {
             state.push(("seen_signal".to_string(), sig.clone()));
         }
         state.push(("reply_hint_shown".to_string(), self.reply_hint_shown.to_string()));
+        // Per-signal salience state. Each row carries "<id>\t<json>" so
+        // the single-string value slot used by the checkpoint wire
+        // format stays one field.
+        for (id, json) in self.signal_salience.export_rows() {
+            state.push(("signal_salience".to_string(), format!("{id}\t{json}")));
+        }
         state
     }
 
     fn import_state(&mut self, state: &[(String, String)]) {
+        let mut salience_restored = 0usize;
         for (key, value) in state {
             match key.as_str() {
                 "seen_signal" => { self.seen_signals.insert(value.clone()); }
                 "reply_hint_shown" => { self.reply_hint_shown = value == "true"; }
+                "signal_salience" => {
+                    if let Some((id, json)) = value.split_once('\t') {
+                        if self.signal_salience.import_row(id, json) {
+                            salience_restored += 1;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
         if !self.seen_signals.is_empty() {
             eprintln!("[attend] peers: restored {} seen signals from checkpoint",
                 self.seen_signals.len());
+        }
+        if salience_restored > 0 {
+            eprintln!(
+                "[attend] peers: restored {} signal salience entries from checkpoint",
+                salience_restored
+            );
         }
     }
 }

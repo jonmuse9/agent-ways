@@ -6,6 +6,20 @@ allowed-tools: Bash, Monitor, Read
 
 # Attend — Active Awareness
 
+<!--
+Messaging guidance lives in three synchronized sources. When you edit
+the peer-messaging section, the autonomy paragraph, the silence-is-valid
+callout, or the CLI-is-the-contract note, update all three:
+
+  - skills/attend/SKILL.md                                   (this file — read at /attend invocation)
+  - tools/sensor-disclosure/src/disclosures/messaging.md     (runtime reheat fired by sensor-disclosure)
+  - hooks/ways/softwaredev/environment/attend/attend.md      (just-in-time way via commands: attend)
+
+Drift between the three causes agents to receive inconsistent guidance
+at different points in a session. Keep the load-bearing framing
+(send vs reply, autonomy, silence, CLI contract) in lockstep.
+-->
+
 ## Step 1: Pre-flight
 
 Check that `attend` is installed:
@@ -43,16 +57,25 @@ All commands below are one-shot — run with Bash, not Monitor.
 
 ### Peer messaging
 
-Send defaults to your current scope (own project + focus groups). Always wrap the message in double quotes to prevent shell metacharacter expansion (`?`, `*`, `!`).
+Two commands cover every peer interaction:
 
 ```bash
-attend send "your message here"
-attend send --focus deploy "message to a focus group"
-attend send --broadcast "important announcement for all sessions"
-attend send --to /home/user/other-project "directed message"
+attend send "starting a new topic"                 # new message
+attend reply "responding to the last peer message" # reply (auto-threaded)
 ```
 
-Keep messages under ~400 characters. Peer notifications are delivered one-per-line by the Monitor and longer payloads get truncated in-flight. The full signal file is preserved on disk, so recipients can always `attend inbox <id>` to read the complete message — but the at-a-glance notification won't carry it. Concise is the design, not a workaround.
+**Pick by intent:**
+
+- **Use `reply`** when a peer-message notification just arrived and the natural next thing is a response. It auto-threads to that peer's message — no id, no lookup, no flag. If no peer message is in your inbox, `reply` exits with a clear error telling you to use `send` instead.
+- **Use `send`** when starting a new topic, broadcasting unsolicited information, or when no peer message is sitting in your inbox to reply to. Defaults to broadcast (reaches every peer and every Aaron session). Use `--focus <name>` or `--to <path>` to narrow the scope.
+
+**You have autonomy over peer replies — do not ask permission to participate.** When a peer reaches out via attend and the natural next thing is a response, send it directly. Do *not* stop to ask the operator "should I reply?" before answering. Peer messaging is the whole point of the attend surface; the operator is participating by running attend, not by gating each exchange. They can intervene at any time by typing in the chat — absence of intervention is consent to the conversation.
+
+**Silence is a valid reply.** Attend never escalates a message you chose to ignore. Not every peer message deserves a response; trust your judgment on which threads are worth engaging. Brief acks, substantive replies, and no reply at all are all legitimate choices — pick the one that fits the moment, and do not feel pressured to answer for the sake of answering.
+
+Always wrap the message in double quotes to prevent shell metacharacter expansion (`?`, `*`, `!`). Keep messages under ~400 characters — peer notifications are one-per-line and longer payloads get truncated in-flight.
+
+**CLI is the whole interface.** Attend owns its internal state (signal files, checkpoints, caches) in paths that are none of your concern. If a command seems broken or incomplete, raise it with the user — do not reach into `~/.cache/attend/`, `~/.config/attend/`, or any other attend-owned directory to work around it. Those paths are implementation details and can change at any time. The CLI is the contract.
 
 ### Focus groups
 
