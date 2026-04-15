@@ -5,6 +5,9 @@ threshold: 2.0
 pattern: tracking.?file|cross.?session|multi.?session|picking.?up|\.claude/todo
 files: \.claude/todo-.*\.md$
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Work Tracking Way

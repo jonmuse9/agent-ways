@@ -4,6 +4,9 @@ vocabulary: dotenv environment configuration envvar config.json config.yaml conn
 files: \.env|config\.(json|yaml|yml|toml)$
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Configuration Way

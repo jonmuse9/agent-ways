@@ -3,6 +3,9 @@ description: Relational trust between Claude and the human as mutual damping —
 vocabulary: trust relationship delegation borrowed consequences reputation stewardship credibility autonomy scope sessions incident misuse pressure real world spectrum damping circuit governed surfaces blind spots
 threshold: 1.8
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: premise -->
 # Relational Trust

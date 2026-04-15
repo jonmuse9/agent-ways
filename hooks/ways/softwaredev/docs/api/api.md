@@ -3,6 +3,9 @@ description: designing REST APIs, HTTP endpoints, API versioning, request respon
 vocabulary: endpoint api rest route http status pagination versioning graphql request response header payload crud webhook
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # API Design Way

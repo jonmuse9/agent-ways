@@ -4,6 +4,9 @@ vocabulary: code quality clean refactor improve test secure perform optimize rev
 threshold: 2.5
 embed_threshold: 0.30
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: premise -->
 # Code Craft

@@ -7,6 +7,9 @@ files: docs/architecture/.*\.md$
 macro: prepend
 scope: agent, subagent
 requires: ["Bash(chmod:*)", "Bash(cp:*)", "Bash(mkdir:*)", "Bash(touch:*)"]
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # ADR Way

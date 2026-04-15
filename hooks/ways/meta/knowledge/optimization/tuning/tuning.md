@@ -3,6 +3,9 @@ description: auto-tuning locale thresholds, discrimination audit, fixing ambiguo
 vocabulary: tune tuning threshold auto-tune discrimination audit confuser ambiguous gap signal noise sensitivity locales
 threshold: 2.5
 scope: agent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Threshold Tuning and Discrimination Audit

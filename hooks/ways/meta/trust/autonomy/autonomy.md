@@ -3,6 +3,9 @@ description: How trust grows across sessions into earned autonomy — granted re
 vocabulary: earned autonomy independent own resources grant sessions consistency track record self directed agency trustworthiness manipulation deception truth states cost reasoning
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: premise -->
 # Autonomy — Earned Over Time

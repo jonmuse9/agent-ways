@@ -5,6 +5,9 @@ repeat: true
 macro: prepend
 scope: agent, subagent
 requires: ["Bash(jq:*)", "Bash(ways:*)"]
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Task List Checkpoint

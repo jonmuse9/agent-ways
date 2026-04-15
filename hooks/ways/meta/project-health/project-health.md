@@ -5,6 +5,9 @@ threshold: 2.5
 scope: agent
 when:
   project: ~/.claude
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Project Health

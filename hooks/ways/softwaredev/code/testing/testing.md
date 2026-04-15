@@ -4,6 +4,9 @@ vocabulary: test coverage assertion framework spec fixture describe expect verif
 commands: npm\ test|yarn\ test|jest|pytest|cargo\ test|go\ test|rspec
 threshold: 1.8
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Testing Way

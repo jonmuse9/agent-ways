@@ -5,6 +5,9 @@ pattern: walk.*through|explain.*how|show.*how|describe.*flow|step.by.step|how.*w
 threshold: 2.5
 embed_threshold: 0.28
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Visualization Opportunity

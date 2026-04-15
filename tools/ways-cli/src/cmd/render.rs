@@ -16,6 +16,11 @@ pub trait WayRow {
     fn check_fires(&self) -> u64;
     fn depth(&self) -> u64 { 0 }
     fn agent_id(&self) -> &str { "main" }
+    /// Per-way re-fire distance in thousands of tokens, derived from
+    /// this way's ADR-123 `Curve::refire_delta(REFIRE_FLOOR)`. Replaces
+    /// the pre-ADR-123 shared `redisclose_threshold_k` constant — each
+    /// way now renders against its own curve.
+    fn refire_threshold_k(&self) -> u64;
 }
 
 // ── Constants ─────────────────────────────────────────────────
@@ -63,11 +68,12 @@ impl Layout {
 
 // ── Table rendering ───────────────────────────────────────────
 
-/// Compute bar positions for each way's re-disclosure point.
+/// Compute bar positions for each way's re-disclosure point. Each way
+/// uses its own `refire_threshold_k`, so the resulting positions reflect
+/// per-curve schedules instead of a shared step.
 pub fn compute_bar_positions<W: WayRow>(
     ways: &[W],
     context_window_k: u64,
-    redisclose_threshold_k: u64,
 ) -> Vec<Option<usize>> {
     let bw = Layout::detect().bar_width;
     ways.iter()
@@ -76,7 +82,7 @@ pub fn compute_bar_positions<W: WayRow>(
                 return None;
             }
             let fire_pos_k = w.token_pos() / 1000;
-            let redisclose_at_k = fire_pos_k + redisclose_threshold_k;
+            let redisclose_at_k = fire_pos_k + w.refire_threshold_k();
             let bar_pos = ((redisclose_at_k * bw as u64) / context_window_k) as usize;
             Some(bar_pos.min(bw - 1))
         })
@@ -133,7 +139,6 @@ pub fn write_way_row<W: WayRow>(
     w: &W,
     current_epoch: u64,
     current_tokens_k: u64,
-    redisclose_threshold_k: u64,
     bar_positions: &[Option<usize>],
     unique_pos: &[usize],
     index: usize,
@@ -141,7 +146,7 @@ pub fn write_way_row<W: WayRow>(
     row_suffix: &str,
 ) {
     let layout = Layout::detect();
-    write_way_row_with(out, w, current_epoch, current_tokens_k, redisclose_threshold_k,
+    write_way_row_with(out, w, current_epoch, current_tokens_k,
         bar_positions, unique_pos, index, row_prefix, row_suffix, &layout);
 }
 
@@ -152,7 +157,6 @@ pub fn write_way_row_with<W: WayRow>(
     w: &W,
     current_epoch: u64,
     current_tokens_k: u64,
-    redisclose_threshold_k: u64,
     bar_positions: &[Option<usize>],
     unique_pos: &[usize],
     index: usize,
@@ -161,7 +165,7 @@ pub fn write_way_row_with<W: WayRow>(
     layout: &Layout,
 ) {
     let distance = current_epoch.saturating_sub(w.epoch_fired());
-    let next = predict_next(w, current_epoch, current_tokens_k, redisclose_threshold_k);
+    let next = predict_next(w, current_epoch, current_tokens_k);
 
     let prefix = if w.depth() > 0 {
         format!("{}{}", "  ".repeat(w.depth() as usize), "└ ")
@@ -229,7 +233,6 @@ pub fn write_token_timeline<W: WayRow>(
     unique_pos: &[usize],
     current_tokens_k: u64,
     context_window_k: u64,
-    redisclose_threshold_k: u64,
 ) {
     let layout = Layout::detect();
     let bar_width = layout.bar_width;
@@ -252,8 +255,9 @@ pub fn write_token_timeline<W: WayRow>(
     let mut zone_later = 0u32;
 
     for w in ways {
+        let threshold_k = w.refire_threshold_k();
         let fire_pos_k = w.token_pos() / 1000;
-        let redisclose_at_k = fire_pos_k + redisclose_threshold_k;
+        let redisclose_at_k = fire_pos_k + threshold_k;
         let past = current_tokens_k >= redisclose_at_k;
 
         let full_bar_pos = if context_window_k > 0 {
@@ -275,7 +279,7 @@ pub fn write_token_timeline<W: WayRow>(
             zone_past += 1;
         } else {
             let dist = redisclose_at_k.saturating_sub(current_tokens_k);
-            if dist <= redisclose_threshold_k / 4 {
+            if threshold_k > 0 && dist <= threshold_k / 4 {
                 zone_soon += 1;
             } else {
                 zone_later += 1;
@@ -401,9 +405,25 @@ pub fn write_token_timeline<W: WayRow>(
     }
 
     if !zones.is_empty() {
+        // Summarize per-way re-fire intervals. Identical thresholds
+        // render as a single "NK interval"; heterogeneous ones render
+        // as a "min–max K intervals" range so the per-way curve story
+        // stays visible at a glance.
+        let thresholds: Vec<u64> = ways.iter().map(|w| w.refire_threshold_k()).collect();
+        let interval_label = if thresholds.is_empty() {
+            String::from("—")
+        } else {
+            let min = *thresholds.iter().min().unwrap();
+            let max = *thresholds.iter().max().unwrap();
+            if min == max {
+                format!("{min}K interval")
+            } else {
+                format!("{min}–{max}K intervals")
+            }
+        };
         let _ = writeln!(
             out,
-            "  {}  \x1b[2m│ {redisclose_threshold_k}K interval\x1b[0m",
+            "  {}  \x1b[2m│ {interval_label}\x1b[0m",
             zones.join("  ")
         );
         let _ = writeln!(
@@ -415,17 +435,17 @@ pub fn write_token_timeline<W: WayRow>(
 
 // ── Shared helpers ────────────────────────────────────────────
 
-/// Predict when a way will next re-disclose.
+/// Predict when a way will next re-disclose against its own curve.
 pub fn predict_next<W: WayRow>(
     w: &W,
     current_epoch: u64,
     current_tokens_k: u64,
-    redisclose_threshold_k: u64,
 ) -> String {
+    let threshold_k = w.refire_threshold_k();
     let token_pos_k = w.token_pos() / 1000;
     let token_distance_k = current_tokens_k.saturating_sub(token_pos_k);
-    let token_pct = if redisclose_threshold_k > 0 {
-        token_distance_k * 100 / redisclose_threshold_k
+    let token_pct = if threshold_k > 0 {
+        token_distance_k * 100 / threshold_k
     } else {
         0
     };

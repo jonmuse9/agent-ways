@@ -5,6 +5,9 @@ threshold: 2.0
 macro: append
 scope: agent
 requires: ["Bash(grep:*)"]
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Research Way

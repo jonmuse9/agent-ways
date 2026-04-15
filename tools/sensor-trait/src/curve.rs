@@ -104,6 +104,54 @@ impl Curve {
         }
     }
 
+    /// Predict the tick delta at which salience first falls below
+    /// `floor` — the natural "re-fire" distance for the outward gate.
+    ///
+    /// For [`Curve::Exponential`], inverts `0.5^(d/H) = floor` to
+    /// `d = H · log2(1/floor)`. For [`Curve::Flat`], this is exactly
+    /// `suppression`. For [`Curve::ProgressiveStaircase`], this is the
+    /// first step whose salience is strictly less than `floor`. For
+    /// [`Curve::ActionPotential`], salience is a flat 1.0 so the
+    /// outward gate never opens on salience alone — this method returns
+    /// `absolute_refractory + multiplier_half_life` as a useful
+    /// visualization proxy (the point at which the inward multiplier
+    /// has decayed roughly half-way back to rest).
+    ///
+    /// Returns `None` when no delta ever falls below the floor (e.g.,
+    /// a staircase whose final step still exceeds the floor).
+    pub fn refire_delta(&self, floor: f64) -> Option<TickDelta> {
+        if floor <= 0.0 {
+            return None;
+        }
+        match self {
+            Curve::Exponential { half_life } => {
+                if *half_life == 0 {
+                    return Some(0);
+                }
+                let ratio = (1.0 / floor).log2();
+                if ratio <= 0.0 {
+                    Some(0)
+                } else {
+                    Some((*half_life as f64 * ratio).ceil() as TickDelta)
+                }
+            }
+            Curve::Flat { suppression } => Some(*suppression),
+            Curve::ProgressiveStaircase { steps } => {
+                for (step_delta, step_salience) in steps {
+                    if *step_salience < floor {
+                        return Some(*step_delta);
+                    }
+                }
+                None
+            }
+            Curve::ActionPotential {
+                absolute_refractory,
+                multiplier_half_life,
+                ..
+            } => Some(*absolute_refractory + *multiplier_half_life),
+        }
+    }
+
     /// Inward-gate refractory multiplier at the current tick given the
     /// fire history. "How much harder is it to fire right now than at
     /// rest?" 1.0 = normal, >1.0 = elevated, `f64::INFINITY` = absolute
@@ -219,6 +267,38 @@ mod tests {
         assert_eq!(c.salience_at(39_999), 0.5);
         assert_eq!(c.salience_at(40_000), 0.2);
         assert_eq!(c.salience_at(1_000_000), 0.2);
+    }
+
+    #[test]
+    fn refire_delta_matches_curve_shapes() {
+        // Exponential: floor 0.5 → exactly half_life.
+        let c = Curve::Exponential { half_life: 100 };
+        assert_eq!(c.refire_delta(0.5), Some(100));
+        // Floor 0.25 → 2 × half_life.
+        assert_eq!(c.refire_delta(0.25), Some(200));
+
+        // Flat: always suppression, regardless of floor.
+        let c = Curve::Flat { suppression: 500 };
+        assert_eq!(c.refire_delta(0.5), Some(500));
+        assert_eq!(c.refire_delta(0.1), Some(500));
+
+        // Staircase: smallest step whose salience drops below floor.
+        let c = Curve::ProgressiveStaircase {
+            steps: vec![(0, 1.0), (15_000, 0.5), (40_000, 0.2)],
+        };
+        assert_eq!(c.refire_delta(0.5), Some(40_000));
+        assert_eq!(c.refire_delta(0.9), Some(15_000));
+        // Floor below the lowest step → None.
+        assert_eq!(c.refire_delta(0.1), None);
+
+        // ActionPotential: visualization proxy = abs_refractory + multiplier_half_life.
+        let c = Curve::ActionPotential {
+            burst_threshold: 3,
+            peak_multiplier: 2.0,
+            absolute_refractory: 60,
+            multiplier_half_life: 600,
+        };
+        assert_eq!(c.refire_delta(0.5), Some(660));
     }
 
     #[test]

@@ -4,6 +4,9 @@ vocabulary: migrate adopt convert bootstrap setup greenfield legacy rename renum
 threshold: 3.0
 macro: prepend
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # ADR Migration

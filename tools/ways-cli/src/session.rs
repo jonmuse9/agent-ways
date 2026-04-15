@@ -13,7 +13,7 @@ use sensor_trait::{Curve, EngagementState, Tick};
 /// re-fires at exactly `H` ticks post-fire (salience there is 0.5), and
 /// `Curve::Flat { suppression: N }` re-fires at exactly `N` ticks (the
 /// step from 1.0 to 0.0 lands below the floor).
-const REFIRE_FLOOR: f64 = 0.5;
+pub const REFIRE_FLOOR: f64 = 0.5;
 
 // ── Session directory ──────────────────────────────────────────
 
@@ -297,6 +297,22 @@ pub fn record_way_fire(way_id: &str, session_id: &str, curve: &Curve) {
     let mut state = load_engagement(way_id, session_id, curve);
     state.record_fire(current_tick, 1.0);
     save_engagement(way_id, session_id, &state);
+}
+
+/// Resolve a way's re-fire threshold in thousands of tokens by reading
+/// its frontmatter curve and asking `Curve::refire_delta(REFIRE_FLOOR)`.
+/// Used by `ways list` / `ways rethink` to render per-way bar positions.
+///
+/// Returns `None` when the way file cannot be resolved, its frontmatter
+/// cannot be parsed, or its `curve:` field is missing or its curve never
+/// falls below the floor. Callers pick a sensible fallback — typically
+/// 25% of the context window to preserve the old visual baseline.
+pub fn way_refire_threshold_k(way_id: &str, project_dir: &str) -> Option<u64> {
+    let (way_file, _) = resolve_way_file(way_id, project_dir)?;
+    let fm = crate::frontmatter::parse(&way_file).ok()?;
+    let curve = fm.curve?;
+    let delta = curve.refire_delta(REFIRE_FLOOR)?;
+    Some(delta / 1000)
 }
 
 /// Detect context window for a specific session by project path and session ID.

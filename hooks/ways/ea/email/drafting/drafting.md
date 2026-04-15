@@ -3,6 +3,9 @@ description: drafting email replies, writing style calibration, creating email d
 vocabulary: draft reply respond compose email write message tone voice style thread attachment
 threshold: 2.5
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Email Drafting

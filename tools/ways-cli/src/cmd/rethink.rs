@@ -42,6 +42,7 @@ struct ActiveWay {
     check_fires: u64,
     is_new: bool,
     is_redisclosed: bool,
+    refire_threshold_k: u64,
 }
 
 impl WayRow for ActiveWay {
@@ -50,6 +51,7 @@ impl WayRow for ActiveWay {
     fn token_pos(&self) -> u64 { self.token_pos }
     fn trigger(&self) -> &str { &self.trigger }
     fn check_fires(&self) -> u64 { self.check_fires }
+    fn refire_threshold_k(&self) -> u64 { self.refire_threshold_k }
 }
 
 /// A single frame in the replay.
@@ -155,7 +157,21 @@ pub fn run(session: Option<&str>, project: Option<&str>, speed: Option<u64>, lis
 
     let context_window_k = session::detect_context_window_for(&project_name, &session_id) / 1000;
     let token_timeline = build_token_timeline(&project_name, &session_id);
-    let frames = build_frames(&events, &token_timeline);
+    // Pre-resolve per-way refire thresholds once per session. Rethink is
+    // a replay, so if a way's curve has been edited since the recorded
+    // session we'll see the current value — that's the best we can do
+    // without also snapshotting frontmatter in events.jsonl.
+    let fallback_refire_k = context_window_k * 25 / 100;
+    let mut refire_cache: HashMap<String, u64> = HashMap::new();
+    for ev in &events {
+        if ev.way.is_empty() || refire_cache.contains_key(&ev.way) {
+            continue;
+        }
+        let threshold_k = session::way_refire_threshold_k(&ev.way, &project_name)
+            .unwrap_or(fallback_refire_k);
+        refire_cache.insert(ev.way.clone(), threshold_k);
+    }
+    let frames = build_frames(&events, &token_timeline, &refire_cache, fallback_refire_k);
 
     if frames.is_empty() {
         println!("No frames to replay.");
@@ -303,7 +319,6 @@ fn render_frame(player: &Player) -> String {
     let current_epoch = frame.epoch;
     let context_window_k = player.context_window_k;
     let current_tokens_k = frame.token_position_k;
-    let redisclose_threshold_k = context_window_k * 25 / 100;
 
     let mut out = String::new();
 
@@ -330,7 +345,7 @@ fn render_frame(player: &Player) -> String {
         return out;
     }
 
-    let bar_positions = render::compute_bar_positions(&frame.ways, context_window_k, redisclose_threshold_k);
+    let bar_positions = render::compute_bar_positions(&frame.ways, context_window_k);
     let unique_pos = render::unique_positions(&bar_positions);
 
     render::write_table_header(&mut out);
@@ -346,7 +361,7 @@ fn render_frame(player: &Player) -> String {
 
         render::write_way_row(
             &mut out, w, current_epoch, current_tokens_k,
-            redisclose_threshold_k, &bar_positions, &unique_pos, i, prefix, suffix,
+            &bar_positions, &unique_pos, i, prefix, suffix,
         );
     }
 
@@ -354,7 +369,7 @@ fn render_frame(player: &Player) -> String {
         let _ = writeln!(out);
         render::write_token_timeline(
             &mut out, &frame.ways, &unique_pos,
-            current_tokens_k, context_window_k, redisclose_threshold_k,
+            current_tokens_k, context_window_k,
         );
     }
 
@@ -392,7 +407,15 @@ fn render_status_bar(out: &mut String, player: &Player) {
 
 // ── Frame construction ────────────────────────────────────────
 
-fn build_frames(events: &[WayEvent], token_timeline: &[(String, u64)]) -> Vec<Frame> {
+fn build_frames(
+    events: &[WayEvent],
+    token_timeline: &[(String, u64)],
+    refire_cache: &HashMap<String, u64>,
+    fallback_refire_k: u64,
+) -> Vec<Frame> {
+    let refire_for = |way_id: &str| -> u64 {
+        refire_cache.get(way_id).copied().unwrap_or(fallback_refire_k)
+    };
     let mut frames: Vec<Frame> = Vec::new();
     let mut active_ways: HashMap<String, ActiveWay> = HashMap::new();
     let mut check_fires: HashMap<String, u64> = HashMap::new();
@@ -454,6 +477,7 @@ fn build_frames(events: &[WayEvent], token_timeline: &[(String, u64)]) -> Vec<Fr
                             check_fires: check_fires.get(&ev.way).copied().unwrap_or(0),
                             is_new: existing.is_none(),
                             is_redisclosed: false,
+                            refire_threshold_k: refire_for(&ev.way),
                         });
                     }
                 }

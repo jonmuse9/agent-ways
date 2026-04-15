@@ -3,6 +3,9 @@ description: mocking dependencies, test doubles, fakes, stubs, spies, dependency
 vocabulary: mock fake stub spy double dependency inject external isolate test double
 threshold: 2.5
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Mocking Way

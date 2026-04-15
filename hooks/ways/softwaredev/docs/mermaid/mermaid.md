@@ -3,6 +3,9 @@ description: Mermaid diagrams, flowcharts, sequence diagrams, state diagrams, di
 vocabulary: mermaid diagram flowchart sequence state class gantt chart gitgraph timeline svg
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Mermaid Way

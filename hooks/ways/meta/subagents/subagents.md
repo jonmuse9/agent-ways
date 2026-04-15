@@ -4,6 +4,9 @@ vocabulary: subagent delegate spawn background task parallel worker teammate
 threshold: 2.0
 pattern: subagent|delegat|spawn.*agent|review.*pr|plan.*task|organiz.*docs
 scope: agent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Sub-Agents Way

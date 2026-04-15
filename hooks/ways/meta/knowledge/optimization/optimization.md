@@ -5,6 +5,9 @@ threshold: 2.0
 macro: prepend
 scope: agent
 requires: ["Read", "Bash(awk:*)", "Bash(find:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(sort:*)", "Bash(ways:*)"]
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Way Optimization

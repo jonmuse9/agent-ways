@@ -4,6 +4,9 @@ vocabulary: tool agnostic vendor neutral portable abstract intention pattern mcp
 threshold: 2.5
 files: \.claude/(hooks/)?ways/.*way\.md$
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: premise -->
 # Tool-Agnostic Ways

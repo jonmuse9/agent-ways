@@ -104,14 +104,14 @@ pub fn run(project: Option<&str>, json_out: bool) -> Result<()> {
         "\x1b[0;31m" // red
     };
 
-    // Build bar with 25% re-disclosure marker
-    let redisclose_pos = bar_width * 25 / 100;
+    // Token-usage bar. The old "25% re-disclosure marker" was dropped
+    // when ADR-123 moved firing dynamics onto per-way curves — no
+    // single tick on a global context bar captures per-way behavior.
+    // Use `ways list` to see per-way re-fire points.
     let mut bar = String::new();
     for i in 0..bar_width {
         if i < filled {
             bar.push('█');
-        } else if i == redisclose_pos && filled <= redisclose_pos {
-            bar.push('┊');
         } else {
             bar.push('░');
         }
@@ -121,12 +121,6 @@ pub fn run(project: Option<&str>, json_out: bool) -> Result<()> {
         "  {bar_color}{bar}\x1b[0m {}%",
         ctx.pct_used
     );
-    if filled <= redisclose_pos {
-        println!(
-            "  \x1b[2m{}↑ 25% re-disclosure zone\x1b[0m",
-            " ".repeat(redisclose_pos)
-        );
-    }
     println!();
     println!(
         "  \x1b[1m{used_k}K\x1b[0m / {total_k}K tokens used  \x1b[2m({remaining_k}K remaining)\x1b[0m"

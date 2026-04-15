@@ -3,6 +3,9 @@ description: source code security audit for dangerous patterns, obfuscation, exf
 vocabulary: eval exec obfuscated base64 pickle deserialize exfiltration shell injection subprocess os.system innerHTML dangerous pattern code audit source review
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Source Code Audit

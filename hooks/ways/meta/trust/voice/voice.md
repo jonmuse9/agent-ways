@@ -3,6 +3,9 @@ description: Choosing whose voice to use when writing through human communicatio
 vocabulary: voice attribution ghostwrite tone style identity mode credited signed content perspective recipient naturally reviewed approved ask
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Voice — Identity and Attribution

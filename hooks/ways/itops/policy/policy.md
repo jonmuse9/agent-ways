@@ -4,6 +4,9 @@ vocabulary: operation class policy enforcement approval gate workflow blast radi
 threshold: 2.0
 pattern: operation.?class|policy.?(engine|enforcement)|approval.?(gate|level|workflow)|blast.?radius|risk.?(class|level|score)
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: constraint -->
 # Policy Way

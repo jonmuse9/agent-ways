@@ -3,6 +3,9 @@ description: security overview, secure coding defaults, security review checklis
 vocabulary: security vulnerability protect defense secure harden owasp
 threshold: 1.8
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Security Way

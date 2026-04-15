@@ -3,6 +3,9 @@ description: Using human's accounts, tools, and infrastructure responsibly — e
 vocabulary: account inbox send publish create delete access permission borrow resource verify contact safe unsent attributed consequences behalf someone wrong
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: constraint -->
 # Delegation — Borrowed Resources

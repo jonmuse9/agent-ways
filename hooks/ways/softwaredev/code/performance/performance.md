@@ -4,6 +4,9 @@ vocabulary: optimize profile benchmark latency throughput memory cache bottlenec
 threshold: 2.0
 pattern: slow|optimi|latency|profile|performance|speed.?up|benchmark|bottleneck|throughput|memory.?leak
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Performance Way

@@ -3,6 +3,9 @@ description: README authoring, project overview, getting started guide, README s
 vocabulary: readme project overview getting started quick start onboarding introduction about what is this
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # README Way

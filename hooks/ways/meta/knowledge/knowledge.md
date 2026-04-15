@@ -4,6 +4,9 @@ vocabulary: ways way knowledge guidance context inject hook trigger matching sem
 threshold: 2.0
 pattern: (^| )ways?( |$)|knowledge|guidance|context.?inject
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Knowledge Way

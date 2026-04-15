@@ -1,6 +1,9 @@
 ---
 files: \.claude/ways/.*\.md$
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Authoring Ways
