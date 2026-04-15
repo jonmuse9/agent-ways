@@ -1,4 +1,5 @@
 mod config;
+mod config_lint;
 mod groups;
 mod scenes;
 mod state;
@@ -129,17 +130,43 @@ fn cmd_run_with_catchup(catchup: bool) {
 
     let (mut slots, enabled_names) = sensors::register_sensors(&cfg, &focus, catchup, &group_mgr);
 
-    // Apply engagement config (ADR-119 action potential) to every slot.
-    // All sensors share the same engagement parameters; per-sensor overrides
-    // can be added later if the defaults turn out to be too coarse.
-    for slot in &mut slots {
-        slot.engagement = sensor_trait::EngagementState::with_params(
-            cfg.engagement.burst_window,
-            cfg.engagement.burst_threshold,
-            cfg.engagement.step_multiplier,
-            cfg.engagement.absolute_refractory,
-            cfg.engagement.decay_per_minute,
+    // Apply engagement config (ADR-119 action potential, ADR-123
+    // progression-axis unification) to every slot. All sensors share the
+    // same engagement parameters; per-sensor overrides can be added later
+    // if the defaults turn out to be too coarse.
+    //
+    // The attend tick is wall-clock seconds (sensor_trait::epoch_secs),
+    // so Curve parameters are in seconds. The old linear
+    // `decay_per_minute` rate is converted to an exponential half-life
+    // via `rate_per_min_to_half_life_secs` — see ADR-123 Phase B
+    // worksheet for the caveat.
+    //
+    // `peak_multiplier` is `1 + step_multiplier`, which reproduces the
+    // old "peak at exactly burst_threshold" value (2.25 at defaults).
+    // The old model's additional scaling for fires past threshold is
+    // not preserved — that scaling rarely activated in practice and the
+    // refactor opts for a flat ceiling.
+    let multiplier_half_life = sensor_trait::engagement::rate_per_min_to_half_life_secs(
+        cfg.engagement.decay_per_minute,
+    );
+    // Surprise guard: very high decay_per_minute values produce sub-minute
+    // half-lives that rarely match operator intent. Warn rather than clamp
+    // so the operator keeps authority over their config, but make the
+    // effective value visible instead of letting it surprise them later.
+    if cfg.engagement.decay_per_minute > 0.5 && multiplier_half_life < 60 {
+        eprintln!(
+            "[attend] note: engagement.decay_per_minute={:.3} → multiplier_half_life≈{}s (aggressive decay; adjust in attend config if unintended)",
+            cfg.engagement.decay_per_minute, multiplier_half_life,
         );
+    }
+    let engagement_curve = sensor_trait::Curve::ActionPotential {
+        burst_threshold: cfg.engagement.burst_threshold,
+        peak_multiplier: 1.0 + cfg.engagement.step_multiplier,
+        absolute_refractory: cfg.engagement.absolute_refractory.as_secs(),
+        multiplier_half_life,
+    };
+    for slot in &mut slots {
+        slot.engagement = sensor_trait::EngagementState::new(engagement_curve.clone());
     }
 
     // State persistence
@@ -346,11 +373,12 @@ fn cmd_run_with_catchup(catchup: bool) {
                 // Record engagement only for sensors whose events actually
                 // fired (not the quiet ones that got suppressed). Action
                 // potential refractory is per-sensor.
+                let tick = sensor_trait::epoch_secs();
                 for &i in &ready_indices {
                     let slot = &slots[i];
                     let was_actionable = slot.accumulator.magnitude >= 3.0;
                     if was_actionable {
-                        slots[i].engagement.record_disclosure();
+                        slots[i].engagement.record_fire(tick, 1.0);
                     }
                 }
             }
@@ -1050,14 +1078,12 @@ fn cmd_tune(apply: bool) {
     println!();
     println!("=== derived engagement config ===");
     println!("engagement:");
-    println!("  burst_window: {}          # {:.0}s p90 × {} burst threshold",
-        burst_window_s, u2u_p90, burst_threshold as usize);
     println!("  burst_threshold: {}", burst_threshold as usize);
     println!("  step_multiplier: {}", step_multiplier);
     println!("  absolute_refractory: {}     # median think time", abs_refractory_s);
-    println!("  decay_per_minute: {:.4}     # peak decays over 2× burst_window",
+    println!("  decay_per_minute: {:.4}     # peak decays over ~2× burst-window equivalent",
         decay_per_minute);
-    println!("  peer_activity_window: {}    # matches burst_window", burst_window_s);
+    println!("  peer_activity_window: {}    # sized from u2u p90 × burst_threshold", burst_window_s);
     println!();
 
     if apply {
@@ -1071,7 +1097,7 @@ fn cmd_tune(apply: bool) {
 }
 
 fn apply_engagement_tune(
-    burst_window_s: u64,
+    peer_activity_window_s: u64,
     abs_refractory_s: u64,
     decay_per_minute: f64,
 ) -> std::io::Result<std::path::PathBuf> {
@@ -1087,8 +1113,8 @@ fn apply_engagement_tune(
     let existing = std::fs::read_to_string(&path).unwrap_or_else(|_| config::Config::default_yaml());
 
     let new_section = format!(
-        "engagement:\n  burst_window: {}\n  burst_threshold: 3\n  step_multiplier: 1.25\n  absolute_refractory: {}\n  decay_per_minute: {:.4}\n  peer_activity_window: {}\n",
-        burst_window_s, abs_refractory_s, decay_per_minute, burst_window_s,
+        "engagement:\n  burst_threshold: 3\n  step_multiplier: 1.25\n  absolute_refractory: {}\n  decay_per_minute: {:.4}\n  peer_activity_window: {}\n",
+        abs_refractory_s, decay_per_minute, peer_activity_window_s,
     );
 
     let updated = replace_engagement_section(&existing, &new_section);
@@ -1310,14 +1336,18 @@ fn display_config(cfg: &config::Config) {
 
     t.add(vec!["", "", ""]);
 
-    // Engagement section (ADR-119 action potential)
+    // Engagement section (ADR-119 action potential, unified in ADR-123)
+    let engagement_header: &str = "engagement";
+    let burst_window_display;
+    let burst_threshold_first_col: &str = if let Some(bw) = cfg.engagement.burst_window {
+        burst_window_display = format!("{}s", bw.as_secs());
+        t.add(vec![engagement_header, "burst_window", &burst_window_display]);
+        ""
+    } else {
+        engagement_header
+    };
     t.add(vec![
-        "engagement",
-        "burst_window",
-        &format!("{}s", cfg.engagement.burst_window.as_secs()),
-    ]);
-    t.add(vec![
-        "",
+        burst_threshold_first_col,
         "burst_threshold",
         &cfg.engagement.burst_threshold.to_string(),
     ]);
@@ -1953,8 +1983,16 @@ fn main() {
                         .unwrap_or_default();
                     println!("project: {}/.claude/attend.yaml", cwd);
                 }
+                Some("lint") => {
+                    let fix = args.iter().any(|a| a == "--fix");
+                    let check = args.iter().any(|a| a == "--check");
+                    let code = config_lint::run(fix, check);
+                    if code != 0 {
+                        std::process::exit(code);
+                    }
+                }
                 Some(sub) => {
-                    eprintln!("attend config: unknown subcommand '{}' — try init, show, path", sub);
+                    eprintln!("attend config: unknown subcommand '{}' — try init, show, path, lint", sub);
                     std::process::exit(1);
                 }
             }
@@ -1978,7 +2016,7 @@ fn main() {
                 ("focus",       "Manage attention groups (on, off, list, all, clear, pin, dissolve)"),
                 ("scene",       "Activate a named scene (reconfigure focus)"),
                 ("scenes",      "List available scenes"),
-                ("config",      "Manage configuration (init/show/path)"),
+                ("config",      "Manage configuration (init/show/path/lint)"),
                 ("tune",        "Survey session history and derive engagement config (--apply to write)"),
                 ("permissions", "Audit sensor permissions against settings.json"),
                 ("cleanup",     "Remove stale signal files from the signals base (default: 5m)"),

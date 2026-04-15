@@ -4,6 +4,9 @@ vocabulary: supply chain trust assessment forked repo untrusted repo audit repo 
 threshold: 1.8
 commands: git\ clone
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: premise -->
 # Supply Chain Trust Assessment

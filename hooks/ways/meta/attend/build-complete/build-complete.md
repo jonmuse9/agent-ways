@@ -5,6 +5,9 @@ trigger:
   signals:
     - build-complete
 scope: agent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 
 A background build has finished. Consider:

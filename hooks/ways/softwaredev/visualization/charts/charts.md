@@ -5,6 +5,9 @@ pattern: chart|visuali[sz]|graph|sparkline|histogram|plot|bar.?chart|trend|metri
 threshold: 2.0
 embed_threshold: 0.32
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Charts Way

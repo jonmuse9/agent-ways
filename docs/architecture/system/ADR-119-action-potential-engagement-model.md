@@ -1,15 +1,32 @@
 ---
-status: Accepted
+status: Superseded
 date: 2026-04-12
+revised: 2026-04-14
 deciders:
   - aaronsb
   - claude
 related:
   - ADR-113
   - ADR-118
+  - ADR-123
+superseded_by: ADR-123
 ---
 
 # ADR-119: Action Potential Engagement Model
+
+## Status: Superseded by ADR-123
+
+**Superseded 2026-04-14.** The underlying decision — model agent engagement on the neuronal action potential so refractory periods produce natural disengagement from diminishing-value stimuli — is still load-bearing and shipping in production attend. The specific implementation shape described below (linear per-minute decay, time-windowed burst detection, `EngagementState` owning `Instant` timestamps, `step_multiplier` that scales the peak multiplier per fire past threshold) has been replaced by the shared curve engine introduced in [ADR-123](ADR-123-firing-dynamics-progression-axis-unification.md).
+
+Concretely, what changed:
+
+- **Linear decay → exponential half-life.** The old `current_multiplier` decayed `peak - elapsed_min × decay_per_minute` and clamped at 1.0. The new `Curve::ActionPotential` decays `1.0 + (peak - 1.0) × 0.5^(delta / multiplier_half_life)`. Attend's yaml field `decay_per_minute` is preserved for back-compat and converted to `multiplier_half_life` at load time via `ln(0.5) / ln(1 - rate) × 60`. In the load-bearing first few minutes post-burst the two shapes match closely; at the tail they diverge (the new curve never quite reaches 1.0, while the old linear one reached rest and clamped).
+- **Time-windowed burst detection → event-count burst detection.** The old model counted fires within the last `burst_window` seconds. The new model counts fires whose exponential contribution to the multiplier hasn't decayed past an epsilon. For attend on wall-clock seconds the practical difference is negligible; for ways on chunky token-position ticks the new model is the only one that works at all. See ADR-123 Decision 2 for the full argument.
+- **Per-fire scaling peak → fixed ceiling.** The old model computed `peak = 1 + steps × step_multiplier` where `steps = burst_count - burst_threshold + 1`, so additional fires past threshold kept raising the peak. The new model uses `peak_multiplier = 1 + step_multiplier` (= 2.25 at defaults) as a fixed ceiling. The scaling rarely activated in practice and the flat ceiling is simpler to reason about.
+- **`Instant`/`Duration` → `Tick`/`TickDelta`.** The engine is now unit-agnostic. Attend interprets ticks as wall-clock seconds via `sensor_trait::epoch_secs()`; ways interprets them as token position. The engine does not know which.
+- **Shared crate.** The engine lives in `sensor-trait::engagement` (and `sensor-trait::curve`) and is consumed by both attend's `SensorSlot` and ways' `session::way_fire_outcome`. Pre-ADR-123, attend had its own `EngagementState` in `sensor-trait` and ways had nothing of the kind — firing was a flat `token_distance_exceeded` step. Now it's the same engine in both tools.
+
+The biology framing, the "party problem" motivation, the urgency-escape pattern, and the per-peer auto-grouping extension are all still load-bearing and carry over intact. The implementation details below are historical — they describe what was accepted on 2026-04-12, not what runs today. For the current implementation see `docs/attend-and-monitor/engagement.md` and [ADR-123](ADR-123-firing-dynamics-progression-axis-unification.md).
 
 ## Context
 
@@ -22,7 +39,7 @@ The current model:
 
 This creates the "party problem" — agents can burn context on extended peer conversations with no natural disengagement signal. The human has to intervene or the context window runs out.
 
-## Decision
+## Decision (as of 2026-04-12)
 
 Model agent engagement after the neuronal action potential. The biological signal has properties that map directly to productive agent behavior:
 
@@ -48,149 +65,101 @@ Model agent engagement after the neuronal action potential. The biological signa
 ### Phases
 
 1. **Resting state** — agent at baseline awareness. Sensors poll, observations accumulate. No urgency.
+2. **Stimulus & threshold** — an observation accumulates magnitude. Sub-threshold stimuli decay without triggering engagement. Only stimuli crossing threshold fire a response.
+3. **Depolarization** — rapid engagement. Active responding. Should not be suppressed.
+4. **Peak** — maximum engagement value. Highest information density.
+5. **Repolarization** — diminishing returns. Continued engagement on the same topic yields less new information per context token spent.
+6. **Refractory period** — after a burst of engagement, the threshold temporarily rises. The agent resists re-engaging with the same stimulus category. Urgent new stimuli (high magnitude) can still break through.
 
-2. **Stimulus & threshold** — an observation (peer message, git change, build event) accumulates magnitude. Sub-threshold stimuli decay without triggering engagement. Only stimuli crossing threshold fire a response. This is the existing emission threshold, unchanged.
+### Absolute vs relative refractory
 
-3. **Depolarization** — rapid engagement. The agent is actively responding — reading messages, replying, acting on observations. Context flows in quickly. This phase is productive and should not be suppressed.
-
-4. **Peak** — maximum engagement value. The first response to a peer message, the first reaction to a build failure. Highest information density.
-
-5. **Repolarization** — diminishing returns. Continued engagement on the same topic yields less new information per context token spent. The agent should notice this decline.
-
-6. **Refractory period** — after a burst of engagement, the threshold temporarily rises. The agent resists re-engaging with the same stimulus category. Casual follow-ups fall below the elevated threshold. Urgent new stimuli (different category, high magnitude) can still break through.
-
-### Implementation
-
-#### Engagement tracker (per sensor)
-
-```rust
-struct EngagementState {
-    /// Recent engagement events (timestamp, magnitude)
-    history: VecDeque<(Instant, f64)>,
-    /// Current refractory multiplier (1.0 = normal, >1.0 = elevated threshold)
-    refractory: f64,
-    /// Time of last engagement burst
-    last_burst: Option<Instant>,
-}
-```
-
-#### Threshold elevation
-
-After a burst of N engagements within a time window:
-- Threshold multiplies by `refractory` factor (e.g., 1.5x after 3 engagements, 2.0x after 5)
-- Multiplier decays over time back toward 1.0 (the relative refractory period)
-- Decay rate is configurable per sensor — peer messages might have a 5-minute refractory, git observations might have 30 seconds
-
-#### All-or-nothing firing
-
-Below threshold: observation accumulates silently in the delta accumulator. No notification.
-Above threshold: full disclosure — the observation is emitted, the refractory clock starts.
-
-This is already how the emission threshold works. The new behavior is that the threshold *moves* based on recent engagement history.
-
-#### Absolute vs relative refractory
-
-- **Absolute** (first 30s after burst): no disclosure from this sensor regardless of magnitude. The agent is processing what it just received.
-- **Relative** (30s–5min): disclosure possible but requires elevated magnitude. A casual "thanks" from a peer won't fire. A "HELP: production is down" will.
-
-### Configuration
-
-```yaml
-# in attend config
-engagement:
-  burst_window: 120        # seconds — engagements within this window count as a burst
-  burst_threshold: 3       # engagements before refractory kicks in
-  refractory_multiplier: 1.5  # threshold multiplier per burst level
-  absolute_refractory: 30  # seconds of complete suppression after burst
-  decay_rate: 0.1          # refractory multiplier decay per minute
-```
-
-### Interaction with focus groups
-
-Focus groups scope which stimuli reach an agent. The action potential model governs how the agent responds once stimuli arrive. They compose naturally:
-
-- `attend focus on deploy` — agent receives deploy group signals
-- Signals accumulate normally against the (possibly elevated) threshold
-- If the agent just finished a burst of deploy conversation, the threshold is elevated
-- Only high-magnitude deploy signals (urgent) break through the refractory period
-- The agent naturally disengages from low-value follow-ups
-
-### Motivation signal
-
-The resting state isn't truly idle — the action potential model includes a baseline "resting potential" that represents ambient awareness. A time-based sensor can emit sub-threshold stimuli that accumulate slowly:
-
-- After 5 minutes idle: small stimulus ("time passing, anything to attend to?")
-- After 15 minutes: larger stimulus (crosses threshold → agent evaluates its situation)
-- After 30 minutes: significant stimulus → agent checks inbox, peers, pending work
-
-This provides intrinsic motivation without task assignment. The agent periodically evaluates whether there's something worth its attention, with frequency determined by the same threshold mechanics as everything else.
-
-## Consequences
-
-### Positive
-
-- **Natural disengagement** — agents stop engaging when returns diminish, without rules
-- **Burst tolerance** — rapid-fire engagement during productive phases is not suppressed
-- **Urgency discrimination** — truly urgent signals break through refractory period
-- **Self-regulating** — no human intervention needed for the "party problem"
-- **Biologically grounded** — the model is well-studied, predictable, and intuitive
-- **Intrinsic motivation** — idle agents self-prompt without external task assignment
-
-### Negative
-
-- **Complexity** — more state per sensor (engagement history, refractory multiplier)
-- **Tuning** — refractory parameters need empirical calibration
-- **Opaque** — harder for users to understand why an agent isn't responding to a message (elevated threshold)
-
-### Neutral
-
-- **Replaces nothing** — layers on top of existing disclosure governor, doesn't remove it
-- **Configurable** — all parameters in attend config, per-sensor overrides possible
-- **Observable** — `attend status` can show current refractory state per sensor
-
-## Implementation Plan
-
-1. Add `EngagementState` to sensor-trait alongside `DeltaAccumulator`
-2. Track engagement history in `SensorSlot` — record each disclosure timestamp + magnitude
-3. Implement threshold elevation: `effective_threshold = base_threshold * refractory_multiplier`
-4. Implement absolute refractory: suppress all disclosures for N seconds after burst
-5. Implement relative refractory: decay multiplier over time
-6. Add engagement config to attend config
-7. Add refractory state to `attend status` output
-8. Add idle/motivation sensor as a new sensor crate (sensor-motivation or sensor-idle)
-9. Wire motivation sensor to reflection-overdue way
-10. Tune parameters empirically through multi-agent conversation sessions
-
-## Implementation Status
-
-Steps 1–6 landed in the initial Accepted revision:
-
-- `EngagementState` in `sensor-trait` with `with_params` constructor
-- `SensorSlot` owns `engagement: EngagementState` and consults it in both `poll()` (per-event gating) and `ready_to_disclose()` (aggregate check)
-- Absolute refractory: `in_absolute_refractory()` hard-blocks while within `absolute_refractory` of the last burst disclosure
-- Relative refractory: `current_multiplier()` linearly decays from peak toward 1.0 at `decay_per_minute`
-- Per-event gating (beyond the ADR): during relative refractory each observation must individually clear `base × multiplier` to be accumulated. Sub-threshold events are silently dropped rather than deferred — true disengagement, not delayed firing
-- `EngagementConfig` section in `attend/config.yaml` exposes all six knobs (`burst_window`, `burst_threshold`, `step_multiplier`, `absolute_refractory`, `decay_per_minute`, `peer_activity_window`); defaults are sized to Claude's actual turn cadence, not biological neuron kinetics
-- `attend tune` surveys the 10 most-recent projects × 5 most-recent sessions each, parses JSONL transcripts, computes assistant→user and user→user gap percentiles, and derives the engagement config from those stats. `--apply` rewrites the engagement section in place
-
-### Composition with peer engagement (auto-grouping)
-
-The action potential model only regulates *when* a sensor may fire. To achieve the "auto-grouping" effect — where active conversation partners break through refractory while uninvolved peers get suppressed — `sensor-peers` pairs the refractory model with a per-peer magnitude boost: messages from peers who've sent multiple messages within `peer_activity_window` get 1.75× (2nd message) or 2.5× (3rd+ message) their base magnitude. The boost lifts their events above the elevated refractory threshold while unboosted broadcasts stay below it and are dropped by the per-event gate. Conversation topology emerges from observed traffic rather than explicit group configuration.
+- **Absolute** (first N seconds after burst): no disclosure from this sensor regardless of magnitude.
+- **Relative** (decay window): disclosure possible but requires elevated magnitude. Casual follow-ups don't fire; urgent signals do.
 
 ### Urgency escape
 
-Directed messages (sent with `--to <project>` so they land in the recipient's project signal dir rather than `_broadcast`) start at base magnitude 7.0 — above the elevated threshold even during burst refractory. This preserves the ADR's "HELP: production is down" urgency discrimination without any special-case logic.
+Directed messages (sent with `--to <project>`) start at base magnitude 7.0 — above the elevated threshold even during burst refractory. This preserves urgency discrimination without special-case logic.
 
-### Not yet implemented
+### Per-peer auto-grouping
 
-- Step 7: refractory state in `attend status` output (current sensor tick log shows it; status table does not)
-- Step 8: idle/motivation sensor for intrinsic self-prompting
-- Step 9: motivation sensor wiring to a reflection-overdue way
-- Step 10: long-horizon empirical tuning (initial defaults are from a single session survey)
+sensor-peers pairs the refractory model with a per-peer magnitude boost: messages from peers who've sent multiple messages within `peer_activity_window` get 1.75× (2nd) or 2.5× (3rd+) their base magnitude. The boost lifts active conversation partners above the elevated threshold while uninvolved peers stay below it. Conversation topology emerges from observed traffic rather than explicit group configuration.
+
+## What ADR-123 changed (2026-04-14)
+
+The decision above stands. What changed is the shape of the state machine that implements it:
+
+- `EngagementState` is now generic over a `Curve` variant. Attend uses `Curve::ActionPotential { burst_threshold, peak_multiplier, absolute_refractory, multiplier_half_life }`.
+- The tick axis is supplied by the caller. Attend passes `sensor_trait::epoch_secs()` (wall-clock seconds); everything else the engine does is unit-agnostic.
+- Burst detection is event-count based, not tick-windowed. This costs nothing for attend and unlocks the entire ways integration.
+- The engine exposes `should_fire(tick, magnitude)`, `record_fire(tick, magnitude)`, `current_salience(tick)`, `current_multiplier(tick)`. Attend's `SensorSlot` calls these through `in_absolute_refractory(tick)` and `effective_threshold(base, tick)` helpers that preserve the pre-ADR-123 call-site shape.
+- A sibling outward-gate consumer (ways) runs the same engine with a different curve (`Curve::Exponential`) on a different axis (token position). The unification argument is in [ADR-123 Decision 4](ADR-123-firing-dynamics-progression-axis-unification.md#4-ways-tick-unit-host-addressing-not-a-decay-theory).
+
+### Attend yaml ↔ runtime mapping
+
+The yaml keys in attend's engagement config are stable. At load time they map onto the curve variant:
+
+| yaml key              | runtime parameter                                  |
+|-----------------------|----------------------------------------------------|
+| `burst_threshold`     | `burst_threshold`                                  |
+| `step_multiplier`     | `peak_multiplier = 1.0 + step_multiplier`          |
+| `absolute_refractory` | `absolute_refractory` (seconds)                    |
+| `decay_per_minute`    | `multiplier_half_life = ln(0.5)/ln(1-rate) × 60`   |
+| `burst_window`        | *no runtime effect* (DEPRECATED — flagged by `attend config lint`) |
+| `peer_activity_window`| consumed directly by sensor-peers                  |
+
+### What did NOT change
+
+- The action potential framing (biology analogy, refractory semantics, urgency escape, auto-grouping).
+- `attend tune`'s session survey → config derivation. It still emits `burst_window`/`decay_per_minute` in the pre-ADR-123 field names; the runtime converts at load time.
+- `EngagementConfig` in `attend::config`, with all six yaml knobs preserved for back-compat.
+- The disclosure governor (ADR-113) and focus groups (ADR-118) compose with the engagement gate the same way.
+
+## Consequences
+
+### Positive (preserved)
+
+- Natural disengagement — agents stop engaging when returns diminish, without rules
+- Burst tolerance — rapid-fire engagement during productive phases is not suppressed
+- Urgency discrimination — truly urgent signals break through refractory
+- Self-regulating — no human intervention needed for the party problem
+- Biologically grounded — the model is well-studied, predictable, intuitive
+
+### Positive (added by ADR-123)
+
+- Single source of truth for firing dynamics. The math lives in one crate. Drift between attend and ways is structurally impossible.
+- Exponential decay shape matches attention fade more closely than the old linear approximation
+- Event-count burst detection is robust to axis granularity — same engine works for attend's smooth seconds and ways' chunky tokens
+- Curve-as-parameter enables progressive disclosure and flat step curves for ways that want them
+
+### Negative (from 2026-04-12)
+
+- **Complexity** — more state per sensor. ADR-123 didn't reduce this; it shared it across tools.
+- **Tuning** — refractory parameters still need empirical calibration. `attend tune` is a first pass; `ways tune` (deferred) would apply the same discipline to the ways side.
+- **Opaque** — harder for users to understand why an agent isn't responding to a message (elevated threshold). Partially mitigated by `ways list` showing per-way re-fire distances; no equivalent yet for attend's refractory state in `attend status`.
+
+## Implementation Status
+
+The ADR-119 acceptance landed in attend via the original `EngagementState` in `sensor-trait` (linear decay, time-windowed burst detection, `Instant`-keyed). That implementation was retired in the 2026-04-14 ADR-123 work and replaced by `EngagementState` backed by `Curve::ActionPotential`. The present-day implementation ships:
+
+- `sensor_trait::engagement::EngagementState` with serde derives for per-session persistence
+- `sensor_trait::curve::Curve::ActionPotential` with event-count burst detection
+- `sensor_trait::epoch_secs()` as the canonical attend tick source
+- `attend::config::EngagementConfig` with yaml-stable field names converted at load time
+- `attend tune` for empirical parameter derivation from real session history
+- `attend config lint` / `--fix` to surface and remove the deprecated `burst_window` yaml key
+
+### Not yet implemented (unchanged from 2026-04-12)
+
+- Refractory state visible in `attend status` output (current sensor tick log shows it; the status table does not)
+- Idle/motivation sensor for intrinsic self-prompting
+- Motivation sensor wiring to a reflection-overdue way
+- Long-horizon empirical tuning (initial defaults are from a single session survey)
 
 ## References
 
-- Game AI Pro Chapter 2: "Informing Game AI Through the Study of Neurology" — action potential diagram and neurological grounding
-- ADR-113: attend active awareness module — disclosure governor, emission thresholds
-- ADR-118: focus groups — scoping which stimuli reach an agent
-- Cognitive Frameworks paper — cognitive economics, cheapest path = correct path
+- **[ADR-123](ADR-123-firing-dynamics-progression-axis-unification.md)** — progression-axis unification, curve enum, shared engine.
+- **ADR-113** — attend active awareness module; disclosure governor, emission thresholds.
+- **ADR-118** — focus groups; scoping which stimuli reach an agent.
+- **Game AI Pro Chapter 2**: "Informing Game AI Through the Study of Neurology" — action potential diagram and neurological grounding.
+- **Cognitive Frameworks paper** — cognitive economics, cheapest path = correct path.
+- `docs/attend-and-monitor/engagement.md` — the current implementer-and-author-friendly explainer.

@@ -1,19 +1,30 @@
 ---
-status: Accepted
+status: Superseded
 date: 2026-03-13
+revised: 2026-04-14
 deciders:
   - aaronsb
   - claude
 related:
   - ADR-103
   - ADR-004
+  - ADR-123
+superseded_by: ADR-123
 ---
 
 # ADR-104: Token-Gated Way Re-Disclosure for Long Context Windows
 
+## Status: Superseded by ADR-123
+
+**Superseded 2026-04-14.** The core insight of this ADR — that ways must re-fire on a token-distance axis rather than once-per-session, because retrieval degrades as context accumulates past a way's injection point — is still correct and load-bearing. The specific implementation described below (a global `REDISCLOSE_PCT: u64 = 25` constant, a per-model context-window lookup, a flat step-function that admits re-firing once distance crosses 25% of the window) has been replaced by the per-way curve engine introduced in [ADR-123](ADR-123-firing-dynamics-progression-axis-unification.md).
+
+The current implementation: each way declares an explicit `curve:` block in its frontmatter, and the engine queries `current_salience(current_tick) < REFIRE_FLOOR` to decide when to re-fire. `REFIRE_FLOOR` defaults to `0.5`, so `Curve::Exponential { half_life: H }` re-fires at delta `H`, `Curve::Flat { suppression: N }` re-fires at delta `N`, and `Curve::ProgressiveStaircase` re-fires on each declared step. The 25% global default is gone; ways pick their own re-fire cadence.
+
+The rest of this ADR is preserved as historical context — the empirical motivation (retrieval degradation benchmarks), the argument against epoch-based gating, and the alternatives-considered table are all still the reasoning that led to ADR-123's decision. The Decision section below describes *what was decided in 2026-03-13*; the ADR-123 successor describes *what actually runs now*.
+
 ## Context
 
-Ways currently fire once per session, gated by a marker file (`/tmp/.claude-way-{name}-{session}`). This rule was designed for 200K context windows where the entire conversation fit within a single effective attention span.
+Ways initially fired once per session, gated by a marker file (`/tmp/.claude-way-{name}-{session}`). This rule was designed for 200K context windows where the entire conversation fit within a single effective attention span.
 
 With Opus 4.6's 1M context window, this assumption breaks. Empirical benchmarks show measurable degradation over long contexts:
 
@@ -25,22 +36,15 @@ With Opus 4.6's 1M context window, this assumption breaks. Empirical benchmarks 
 
 A way disclosed at token 50K is not gone at token 500K — but it's faded. The model can still retrieve the general concept but loses specificity. For guidance that depends on precise rules (security checks, commit conventions, architectural patterns), this degradation produces subtle failures: the model follows the spirit but misses the letter.
 
-The current epoch counter (ADR-103) tracks **event distance** — how many tool actions have occurred since a way fired. This is the right metric for check decay (is the model still thinking about this domain?). But it's the wrong metric for re-disclosure (has the way faded from retrievable memory?). A session can have 200 epoch events in 50K tokens, or 10 epoch events in 500K tokens. Token distance is the signal that correlates with measured retrieval degradation.
+The epoch counter (ADR-103) tracks **event distance** — how many tool actions have occurred since a way fired. This is the right metric for check decay (is the model still thinking about this domain?). But it's the wrong metric for re-disclosure (has the way faded from retrievable memory?). A session can have 200 epoch events in 50K tokens, or 10 epoch events in 500K tokens. Token distance is the signal that correlates with measured retrieval degradation.
 
-## Decision
+## Decision (as of 2026-03-13)
 
 Replace the hard "once per session" marker with a **token-distance-gated re-eligibility window**. A way becomes eligible for re-disclosure when the token distance since its last disclosure exceeds a model-specific threshold.
 
 ### Token distance tracking
 
-When a way fires, stamp the current token position alongside the existing epoch stamp:
-
-```bash
-# New: token position at disclosure time
-# /tmp/.claude-way-tokens-{wayname}-{session} — token count when way last fired
-```
-
-Token position is read from the transcript using the same method as `context-usage.sh` — sum of `cache_read_input_tokens + cache_creation_input_tokens + input_tokens` from the most recent API usage record.
+When a way fires, stamp the current token position alongside the existing epoch stamp. Token position is read from the transcript using the same method as `context-usage.sh` — sum of `cache_read_input_tokens + cache_creation_input_tokens + input_tokens` from the most recent API usage record.
 
 ### Re-disclosure thresholds
 
@@ -52,46 +56,9 @@ Token position is read from the transcript using the same method as `context-usa
 | Sonnet 4.6 | 200K | 50K tokens | ~3 per session |
 | Haiku 4.5 | 200K | 50K tokens | ~3 per session |
 
-The 25% figure corresponds to the empirical degradation curves: retrieval accuracy drops ~10-15% per quarter-window, which is enough to meaningfully affect rule compliance but not so aggressive that it wastes context budget.
+The 25% figure corresponds to the empirical degradation curves: retrieval accuracy drops ~10-15% per quarter-window.
 
-Using percentages means the system automatically adapts when Anthropic ships new context tiers — no hardcoded constants to update.
-
-### Marker file evolution
-
-The current marker file (`/tmp/.claude-way-{name}-{session}`) becomes a **timestamp** file rather than a boolean:
-
-```bash
-# Before: touch creates empty file (boolean: exists = fired)
-touch "$MARKER"
-
-# After: write token position (numeric: enables distance check)
-echo "$CURRENT_TOKENS" > "$MARKER"
-```
-
-The show-way.sh gate changes from:
-
-```bash
-# Before: fire if marker doesn't exist
-if [[ ! -f "$MARKER" ]]; then
-
-# After: fire if marker doesn't exist OR token distance exceeds threshold
-if [[ ! -f "$MARKER" ]] || token_distance_exceeded "$MARKER" "$SESSION_ID"; then
-```
-
-### Model detection
-
-The context window size depends on the model. Detection uses the same approach as `context-usage.sh` — read the model field from the transcript, map to window size, then calculate 25%:
-
-```bash
-MODEL=$(jq -r 'select(.type=="assistant" and .message.model) | .message.model' "$TRANSCRIPT" 2>/dev/null | tail -1)
-case "$MODEL" in
-  *opus-4-6*|*opus-4*)  CONTEXT_WINDOW=1000000 ;;
-  *sonnet*)             CONTEXT_WINDOW=200000 ;;
-  *haiku*)              CONTEXT_WINDOW=200000 ;;
-  *)                    CONTEXT_WINDOW=200000 ;;
-esac
-REDISCLOSE_TOKENS=$(( CONTEXT_WINDOW * 25 / 100 ))
-```
+Using percentages meant the system automatically adapted when Anthropic shipped new context tiers — no hardcoded token counts to update.
 
 ### Re-disclosure behavior
 
@@ -101,70 +68,58 @@ When a way re-discloses:
 2. The token stamp is updated to the current position
 3. The epoch stamp is updated (checks reset their distance)
 4. A `way_redisclosed` event is logged with the token distance that triggered it
-5. The fire count is incremented (for stats, not for gating — re-disclosure doesn't decay)
+5. The fire count is incremented (for stats, not for gating)
 
 ### What re-disclosure is NOT
 
 - **Not a timer.** It doesn't fire every N tokens regardless. The way must still be triggered by a matching prompt or tool action. Token distance only makes it *eligible* — it still needs a trigger to fire.
-- **Not a check.** Checks (ADR-103) are pre-action verification sensors with decay curves. Re-disclosure is a periodic refresh of the full way guidance. Different purposes, different mechanics.
-- **Not visible to the user.** This is internal bookkeeping. The user sees the same way content; they don't know it's a re-disclosure vs first disclosure.
+- **Not a check.** Checks (ADR-103) are pre-action verification sensors with decay curves. Re-disclosure is a periodic refresh of the full way guidance.
+- **Not visible to the user.** The user sees the same way content; they don't know it's a re-disclosure vs first disclosure.
 
-### Interaction with checks (ADR-103)
+## What ADR-123 changed (2026-04-14)
 
-When a way re-discloses, the epoch stamp resets. This means:
+- **`REDISCLOSE_PCT` constant is gone.** `tools/ways-cli/src/session.rs` no longer hard-codes a 25% threshold. Each way declares its own curve and the engine computes per-way re-fire distances from `Curve::refire_delta(REFIRE_FLOOR)`.
+- **`token_distance_exceeded()` is gone.** Replaced by `session::way_fire_outcome(way_id, session_id, curve) -> FireOutcome` which returns `FirstFire | ReFire | Suppressed`. Same semantic role (gatekeeper for firing), different mechanics.
+- **Model-specific window lookup is gone from the firing path.** The engine doesn't care what the context window is; it only knows ticks (token positions) supplied by the caller. Context-window detection still exists in `session.rs` for the visualization path (`ways list`, `ways rethink`), as a fallback when a way's frontmatter is missing or unparsable.
+- **Marker file shape changed.** The old `.value` stamp files in `way-tokens/` are still written for legacy callers (tree-metrics, scan-time "has this way been seen") but the canonical firing state now lives at `{session_dir}/way-engagement/{way_id}.json` as a serialized `EngagementState`.
+- **25% was the wrong unit of analysis.** It treated all ways the same — a one-size-fits-all cadence. ADR-123 lets each way express its own tempo: a quality way fires on a short half-life because file size grows quickly between fires; an architecture way fires on a long half-life because design decisions persist. Per-way curves capture this directly.
 
-- Check distance drops to 0 (way is warm again)
-- Check effective scores decrease (distance factor shrinks)
-- Checks become less likely to fire immediately after re-disclosure
-
-This is correct behavior — re-disclosure makes the check's re-anchor unnecessary because the full way content was just injected.
-
-### Hidden implementation detail
-
-Token-gated re-disclosure is invisible to the model. The model receives way content through the hook system's `additionalContext` field. Whether it's a first disclosure or a re-disclosure is indistinguishable from the model's perspective. This is intentional — the model should treat the guidance as fresh regardless.
+The empirical motivation (retrieval degradation, the MRCR v2 benchmarks, the argument against epoch gating) is **unchanged and still correct**. ADR-104's contribution is the insight that token distance is the right axis; ADR-123's contribution is making the curve shape on that axis a per-way decision instead of a global constant.
 
 ## Consequences
 
-### Positive
+### Positive (preserved)
 
 - Compensates for empirically measured retrieval degradation over long contexts
-- Model-aware — adapts to each model's degradation curve
 - Maintains the trigger requirement — ways only re-disclose when the domain is relevant
 - Resets check distance — prevents stale checks from nagging when the way is freshly re-anchored
-- Low token cost — ~200-500 tokens per re-disclosure, 3-4 times per session = <1% of 1M budget
+- Low token cost per re-disclosure
 - Invisible to the model — no behavioral change needed from the model's perspective
 
-### Negative
+### Positive (added by ADR-123)
 
-- Adds token position reading to the hot path (one jq call per way evaluation)
-- Model detection adds complexity to show-way.sh
-- Thresholds are empirically derived but not session-specific — a session with dense tool use may need different intervals than a conversational session
-- Requires transcript access (same as context-usage.sh — already validated)
+- Each way declares its own re-fire cadence — no single-heuristic calibration
+- The same engine drives attend's inward-gate refractory, eliminating two divergent implementations
+- The curve shape is a first-class parameter, enabling progressive-disclosure staircases and other non-exponential shapes
 
-### Neutral
+### Negative (resolved by ADR-123)
 
-- The epoch counter (ADR-103) remains unchanged — it tracks events, not tokens
-- Check scoring (ADR-103) continues to use epoch distance — the two systems are complementary
-- Stats logging gains a new event type (`way_redisclosed`) but uses the same infrastructure
-- Opens the question of whether re-disclosure intervals should be tunable per way (we defer this — global model-based thresholds first)
+- ~~Adds token position reading to the hot path (one jq call per way evaluation)~~ — still present, but the cost has been minimal in practice
+- ~~Model detection adds complexity to show-way.sh~~ — the shell dispatchers are gone; all firing logic is in the Rust `ways` binary
+- ~~Thresholds are empirically derived but not session-specific~~ — resolved by per-way curves
 
-## Alternatives Considered
+## Alternatives Considered (2026-03-13)
 
-- **Fixed epoch-based re-disclosure (every N events)** — Rejected because epoch count doesn't correlate with retrieval degradation. 100 quick edits in the same file (100 epochs) consume fewer tokens than 10 complex prompts with tool chains (10 epochs). Token distance is the right signal.
+- **Fixed epoch-based re-disclosure (every N events)** — Rejected because epoch count doesn't correlate with retrieval degradation. 100 quick edits in the same file consume fewer tokens than 10 complex prompts with tool chains. Token distance is the right signal.
+- **Percentage-of-window triggers (at 25%, 50%, 75% absolute positions)** — Simpler but less nuanced. Doesn't account for when the way was first disclosed.
+- **Always re-disclose (remove the once-per-session gate entirely)** — Wasteful; re-disclosing the same way 50 times in 10 minutes adds noise.
+- **Decay the existing check system to handle re-anchoring** — Checks inject a short re-anchor (1-2 lines); re-disclosure injects full way content (~200-500 tokens). Using checks for re-disclosure would require making them much longer, defeating their "light sensor" design.
+- **Let the user decide (manual re-disclosure command)** — Users shouldn't have to manage context decay. If the user has to remember "my security way has probably faded," the system has failed.
 
-- **Percentage-of-window triggers (at 25%, 50%, 75%)** — Simpler but less nuanced. Doesn't account for when the way was first disclosed. A way first disclosed at 40% of the window should re-disclose at a different point than one disclosed at 5%.
+## References
 
-- **Always re-disclose (remove the once-per-session gate entirely)** — Wasteful. Most hook events happen in quick succession during active work. Re-disclosing the same way 50 times in 10 minutes adds noise. The token distance gate ensures re-disclosure only happens when meaningful drift has occurred.
-
-- **Decay the existing check system to handle re-anchoring** — Checks inject a short re-anchor (1-2 lines). Re-disclosure injects the full way content (~200-500 tokens). These serve different purposes: checks verify assumptions, re-disclosure refreshes the complete guidance. Using checks for re-disclosure would require making them much longer, defeating their "light sensor" design.
-
-- **Let the user decide (manual re-disclosure command)** — Users shouldn't have to manage context decay. The whole point of the ways system is to provide guidance automatically. If the user has to remember "my security way has probably faded, I should re-trigger it," the system has failed.
-
-## Implementation Plan
-
-1. **Token position reader** — Extract from transcript (reuse context-usage.sh pattern)
-2. **Model-to-threshold mapping** — In show-way.sh or a shared config
-3. **Marker file evolution** — Write token position instead of empty touch
-4. **Re-eligibility gate** — Replace boolean check with token distance check in show-way.sh
-5. **Stats** — Add `way_redisclosed` event type to log-event.sh
-6. **Observe** — Run for several sessions across Opus and Sonnet, compare way adherence before/after
+- **[ADR-123](ADR-123-firing-dynamics-progression-axis-unification.md)** — the progression-axis unification that made the per-way curve shape first-class.
+- **ADR-103** — check scoring via epoch distance; unchanged.
+- **ADR-004** — the original once-per-session marker design that ADR-104 replaced.
+- `docs/reference/model-context-decay/` — empirical retention benchmarks.
+- `docs/hooks-and-ways/context-decay.md` — the presentation-economics model that explains why token-distance gating works.

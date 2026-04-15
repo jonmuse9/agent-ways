@@ -115,14 +115,16 @@ This is why ways are designed to be small (20-60 lines each), fire once per sess
 
 ## Steady-State Adherence
 
-The combination of these mechanisms — timed injection, once-per-session gating, selective triggering — produces a system that maintains consistent instruction adherence regardless of conversation length:
+The combination of these mechanisms — timed injection, curve-driven re-fire, selective triggering — produces a system that maintains consistent instruction adherence regardless of conversation length:
 
 | Mechanism | What It Controls |
 |---|---|
 | Timed injection | Resets positional decay ($t_\mathrm{since}$) |
 | Selective triggering | Maintains signal-to-noise ratio |
-| Once-per-session gating | Prevents attention budget saturation |
+| Per-way curve | Each way declares its own re-fire schedule (exponential half-life, flat step, or staircase); the engine suppresses re-injection until salience drops below the floor |
 | Small injection size | Maximizes per-injection salience |
+
+The "per-way curve" row is how ADR-123's firing engine replaces the pre-unification "once-per-session gating" heuristic. Each way now declares an explicit `curve:` block in its frontmatter, and the engine consults `current_salience(current_tick) < REFIRE_FLOOR` to decide whether to re-inject. A way with `Curve::Exponential { half_life: 30000 }` re-fires after ~30k tokens of accumulated context; a `Curve::Flat { suppression: N }` re-fires exactly at delta N; a `Curve::ProgressiveStaircase` re-fires on each declared step. The old "fire once per session then stay silent" behavior is recoverable as a degenerate `Flat` with a very large suppression, but no ways in the current codebase actually want that — smooth fade is the usual story.
 
 The system prompt provides the baseline. Ways provide the reinforcement signal that prevents that baseline from decaying. Together, they produce what a monolithic prompt cannot: stable adherence across arbitrarily long conversations.
 

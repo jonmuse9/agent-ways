@@ -5,6 +5,9 @@ threshold: 1.8
 pattern: readme|documentation|docs|document.*project|explain.*repo
 files: README\.md$|docs/.*\.md$
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Documentation Way

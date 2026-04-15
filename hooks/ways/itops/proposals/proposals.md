@@ -4,6 +4,9 @@ vocabulary: proposal approval human loop review confirm dangerous operation life
 threshold: 2.0
 pattern: proposal.?(primitive|lifecycle|structure)|human.?in.?(the.?)?loop|approval.?workflow|operation.?proposal
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: constraint -->
 # Proposals Way

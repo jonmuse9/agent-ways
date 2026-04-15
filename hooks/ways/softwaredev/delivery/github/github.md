@@ -4,7 +4,9 @@ vocabulary: pr pullrequest issue review checks ci label milestone fork repositor
 threshold: 2.0
 pattern: github|\ issue|pull.?request|\ pr\ |\ pr$|review.?(pr|comment)|merge.?request|ship.?(it|this|the)|land.?(it|this)|merge.?(it|this)
 commands: ^gh\ |^gh$
-redisclose: 10
+curve:
+  type: Exponential
+  half_life: 20000
 macro: prepend
 scope: agent, subagent
 requires: ["Read", "Bash(cat:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(grep:*)", "Bash(head:*)", "Bash(jq:*)", "Bash(rm:*)", "Bash(sed:*)", "Bash(sort:*)", "Bash(tr:*)", "Bash(wc:*)"]

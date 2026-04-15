@@ -4,6 +4,9 @@ vocabulary: migration schema alter table column index rollback seed ddl prisma a
 threshold: 2.0
 pattern: migrat|schema|database.?change|alter.?table|alembic|prisma.?migrate|knex.?migrate|flyway|liquibase
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Migrations Way

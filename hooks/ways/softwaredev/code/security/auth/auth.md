@@ -3,6 +3,9 @@ description: authentication, authorization, access control, middleware guards, R
 vocabulary: authentication authorization middleware guard permission role rbac access control login session jwt csrf cors
 threshold: 2.5
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: constraint -->
 # Auth Way

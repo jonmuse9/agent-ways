@@ -3,6 +3,9 @@ description: team chat and messaging platforms, reading chat messages, sending m
 vocabulary: teams chat message slack channel unread conversation direct message group chat send reply mention notification
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Communications — Chat & Messaging

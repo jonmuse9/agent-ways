@@ -3,6 +3,9 @@ description: catch me up morning briefing, what happened overnight while I was a
 vocabulary: catch up morning briefing what's my day start of day need to know overnight summary today agenda priorities
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Catch-Me-Up Briefing

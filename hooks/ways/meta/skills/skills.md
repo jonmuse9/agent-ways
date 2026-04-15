@@ -4,6 +4,9 @@ vocabulary: skill slash command SKILL.md create author invoke user-invocable plu
 threshold: 2.0
 pattern: skill|SKILL\.md|skill.?(creation|author|write)|claude.?code.?skill|~\/\.claude\/skills
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Skills Way

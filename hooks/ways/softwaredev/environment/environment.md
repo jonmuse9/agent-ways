@@ -4,6 +4,9 @@ vocabulary: environment setup config configure dependency install package build 
 threshold: 2.5
 embed_threshold: 0.30
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: premise -->
 # Environment

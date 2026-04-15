@@ -5,6 +5,9 @@ threshold: 2.0
 pattern: ssh|remote.?server|remote.?host|sshpass
 commands: ^ssh\ |^scp\ |^rsync.*:|\bsshpass\b
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: constraint -->
 # SSH Way

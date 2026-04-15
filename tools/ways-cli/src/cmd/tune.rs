@@ -573,6 +573,18 @@ fn is_hierarchical(a: &str, b: &str) -> bool {
     longer.starts_with(shorter) && longer.as_bytes().get(shorter.len()) == Some(&b'/')
 }
 
+fn find_way_embed() -> Option<PathBuf> {
+    let xdg = xdg_cache_dir().join("claude-ways/user/way-embed");
+    if xdg.is_file() {
+        return Some(xdg);
+    }
+    let bin = home_dir().join(".claude/bin/way-embed");
+    if bin.is_file() {
+        return Some(bin);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_hierarchical;
@@ -606,16 +618,4 @@ mod tests {
     fn rejects_unrelated() {
         assert!(!is_hierarchical("meta/trust", "softwaredev/delivery"));
     }
-}
-
-fn find_way_embed() -> Option<PathBuf> {
-    let xdg = xdg_cache_dir().join("claude-ways/user/way-embed");
-    if xdg.is_file() {
-        return Some(xdg);
-    }
-    let bin = home_dir().join(".claude/bin/way-embed");
-    if bin.is_file() {
-        return Some(bin);
-    }
-    None
 }

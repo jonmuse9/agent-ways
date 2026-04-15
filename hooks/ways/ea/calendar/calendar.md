@@ -3,6 +3,9 @@ description: schedule a meeting, check my availability, block time on my calenda
 vocabulary: schedule calendar availability block time event meeting invite reminder reschedule free busy slot book appointment timezone
 threshold: 2.0
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Calendar Management

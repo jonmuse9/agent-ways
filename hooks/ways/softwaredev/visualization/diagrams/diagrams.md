@@ -5,6 +5,9 @@ pattern: mermaid|diagram|flowchart|sequence.*diagram|state.*diagram|er.*diagram|
 threshold: 2.0
 embed_threshold: 0.35
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Terminal Diagrams with mmaid

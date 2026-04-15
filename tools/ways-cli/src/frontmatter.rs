@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use sensor_trait::Curve;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -16,9 +17,11 @@ pub struct Frontmatter {
     pub scope: Option<String>,
     #[serde(default)]
     pub embed_threshold: Option<f64>,
+    /// ADR-123 firing-dynamics curve. Required for ways that fire
+    /// predictively or reactively; optional during parse for static
+    /// consumers (tune/corpus/graph) that don't invoke the engine.
     #[serde(default)]
-    #[allow(dead_code)] // parsed for serde compat, read via extract_field in show/mod.rs
-    pub redisclose: Option<u64>,
+    pub curve: Option<Curve>,
 }
 
 /// Extract YAML frontmatter from a way file.
@@ -28,6 +31,9 @@ pub fn parse(path: &Path) -> Result<Frontmatter> {
 
     let yaml_str = extract_frontmatter_str(&content)
         .with_context(|| format!("no frontmatter in {}", path.display()))?;
+
+    detect_legacy_redisclose(&yaml_str)
+        .with_context(|| format!("legacy frontmatter in {}", path.display()))?;
 
     serde_yaml::from_str(&yaml_str)
         .with_context(|| format!("parsing frontmatter in {}", path.display()))
@@ -49,6 +55,24 @@ fn extract_frontmatter_str(content: &str) -> Option<String> {
         yaml_lines.push(line);
     }
     None
+}
+
+/// Scan raw frontmatter YAML for a top-level `redisclose:` field.
+/// Returns a migration-pointing error if present. Called from `parse`
+/// so any leftover legacy field errors loudly at load time (ADR-123 C3).
+pub fn detect_legacy_redisclose(yaml_str: &str) -> Result<()> {
+    for line in yaml_str.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("redisclose:") {
+            return Err(anyhow!(
+                "legacy `redisclose:` field is no longer supported — \
+                migrate to an explicit `curve:` block per ADR-123. See \
+                docs/architecture/system/ADR-123-firing-dynamics-progression-axis-unification.md \
+                for migration guidance."
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A single locale entry from a .locales.jsonl file.
@@ -133,4 +157,136 @@ fn parse_see_also_line(line: &str) -> Option<(String, String, String)> {
         .to_string();
 
     Some((name, domain, label))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_yaml(yaml: &str) -> Frontmatter {
+        serde_yaml::from_str(yaml).expect("frontmatter parse failed")
+    }
+
+    #[test]
+    fn parses_curve_exponential() {
+        let fm = parse_yaml(
+            r#"
+description: test way
+curve:
+  type: Exponential
+  half_life: 50000
+"#,
+        );
+        match fm.curve {
+            Some(Curve::Exponential { half_life }) => assert_eq!(half_life, 50_000),
+            other => panic!("expected Exponential, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_curve_action_potential() {
+        let fm = parse_yaml(
+            r#"
+description: test way
+curve:
+  type: ActionPotential
+  burst_threshold: 3
+  peak_multiplier: 2.0
+  absolute_refractory: 5000
+  multiplier_half_life: 25000
+"#,
+        );
+        match fm.curve {
+            Some(Curve::ActionPotential {
+                burst_threshold,
+                peak_multiplier,
+                absolute_refractory,
+                multiplier_half_life,
+            }) => {
+                assert_eq!(burst_threshold, 3);
+                assert!((peak_multiplier - 2.0).abs() < 1e-9);
+                assert_eq!(absolute_refractory, 5_000);
+                assert_eq!(multiplier_half_life, 25_000);
+            }
+            other => panic!("expected ActionPotential, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_curve_progressive_staircase() {
+        let fm = parse_yaml(
+            r#"
+description: test way
+curve:
+  type: ProgressiveStaircase
+  steps:
+    - [0, 1.0]
+    - [15000, 0.5]
+    - [40000, 0.2]
+"#,
+        );
+        match fm.curve {
+            Some(Curve::ProgressiveStaircase { steps }) => {
+                assert_eq!(steps.len(), 3);
+                assert_eq!(steps[0], (0, 1.0));
+                assert_eq!(steps[1], (15_000, 0.5));
+                assert_eq!(steps[2], (40_000, 0.2));
+            }
+            other => panic!("expected ProgressiveStaircase, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_curve_flat() {
+        let fm = parse_yaml(
+            r#"
+description: test way
+curve:
+  type: Flat
+  suppression: 15000
+"#,
+        );
+        match fm.curve {
+            Some(Curve::Flat { suppression }) => assert_eq!(suppression, 15_000),
+            other => panic!("expected Flat, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn curve_field_is_optional_for_static_consumers() {
+        // Static consumers like `ways tune` and `ways corpus` parse way
+        // frontmatter but don't invoke the firing engine, so a missing
+        // curve: block must not error at parse time. The engine path in
+        // session.rs enforces presence at the fire site.
+        let fm = parse_yaml("description: no curve\n");
+        assert!(fm.curve.is_none());
+    }
+
+    #[test]
+    fn detect_legacy_redisclose_flags_top_level_field() {
+        let yaml = "description: test way\nredisclose: 25\n";
+        let err = detect_legacy_redisclose(yaml).expect_err("should reject");
+        let msg = err.to_string();
+        assert!(msg.contains("redisclose"), "error message: {}", msg);
+        assert!(msg.contains("curve"), "error message: {}", msg);
+    }
+
+    #[test]
+    fn detect_legacy_redisclose_passes_clean_frontmatter() {
+        let yaml = r#"
+description: test way
+curve:
+  type: Exponential
+  half_life: 50000
+"#;
+        detect_legacy_redisclose(yaml).expect("clean yaml should pass");
+    }
+
+    #[test]
+    fn detect_legacy_redisclose_flags_indented_top_level() {
+        // Top-level field can have leading whitespace in some yaml styles.
+        let yaml = "description: test\n  redisclose: 25\n";
+        let err = detect_legacy_redisclose(yaml).expect_err("should reject indented");
+        assert!(err.to_string().contains("redisclose"));
+    }
 }

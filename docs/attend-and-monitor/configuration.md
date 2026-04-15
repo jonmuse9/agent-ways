@@ -21,7 +21,20 @@ The user-scope path respects `XDG_CONFIG_HOME` if set; otherwise it falls back t
 attend config init      # write a default config to ~/.config/attend/config.yaml
 attend config show      # print the merged config attend is currently using
 attend config path      # print the file paths attend loads from
+attend config lint      # schema-driven validation of user + project config files
+attend config lint --fix   # remove unknown/deprecated keys in place
+attend config lint --check # non-zero exit on errors (CI mode)
 ```
+
+`attend config lint` validates both the user-scope and project-scope
+config files against the same section schemas the loader knows about,
+reporting typos (`UNKNOWN: ...`), fields the schema accepts but are no
+longer load-bearing (`DEPRECATED: ...`), and unknown top-level sections.
+The runtime loader intentionally ignores unknown keys so a typo never
+crashes attend at startup — `config lint` is where those typos surface.
+`--fix` surgically removes the offending lines (no YAML round-trip, no
+reformatting of surviving keys). Fields whose name starts with `x-` are
+an intentional-foreign escape hatch and the linter leaves them alone.
 
 `attend config init` creates the user-scope file with fully commented defaults — useful as a starting point to understand what's available.
 
@@ -96,16 +109,26 @@ With defaults: at most 3 disclosures per 2 minutes, with at least 15 seconds bet
 
 ### `engagement`
 
-The action potential model parameters (ADR-119). Governs per-sensor refractory behavior. See [`engagement.md`](engagement.md) for the full model; the short version is:
+The action potential model parameters. Governs per-sensor refractory behavior. See [`engagement.md`](engagement.md) for the full model and the ADR-123 reframing; the short version is:
 
-- **`burst_window`** (seconds, default 900): how far back the sensor looks when counting recent disclosures. Disclosures outside this window don't count toward burst detection.
-- **`burst_threshold`** (count, default 3): number of disclosures within `burst_window` before refractory starts elevating the threshold.
-- **`step_multiplier`** (float, default 1.25): threshold elevation per additional disclosure past `burst_threshold`. After 4 disclosures, threshold is multiplied by 1.25; after 5, by 1.5; etc.
-- **`absolute_refractory`** (seconds, default 60): complete suppression after a burst. No events fire during this window regardless of magnitude.
-- **`decay_per_minute`** (float, default 0.1): rate at which the elevated threshold returns to baseline. 0.1 means the multiplier decreases by 0.1 per minute of quiet.
-- **`peer_activity_window`** (seconds, default 900): sliding window used by `sensor-peers` for the per-peer engagement boost. Matches `burst_window` by default.
+- **`burst_threshold`** (count, default 3): number of recent fires that count toward triggering refractory. After the threshold is hit, the sensor enters the elevated-threshold state.
+- **`step_multiplier`** (float, default 1.25): contributes to the peak refractory multiplier as `peak_multiplier = 1.0 + step_multiplier`. At the default, the peak multiplier is 2.25 — the effective threshold just after a burst is 2.25× the base threshold.
+- **`absolute_refractory`** (seconds, default 60): complete suppression after a burst. No events fire during this window regardless of magnitude. Directly mapped to `Curve::ActionPotential::absolute_refractory` in ticks (= seconds for attend).
+- **`decay_per_minute`** (float, default 0.1): exponential decay rate for the relative-refractory multiplier. At load time attend converts this to `multiplier_half_life = ln(0.5) / ln(1 - decay_per_minute) × 60` seconds. At `0.1`, the half-life is ≈ 395 s (~6.6 min); at `0.0256` (typical tune output), ≈ 1611 s (~27 min).
+- **`burst_window`** (seconds, default 900): **DEPRECATED**. Parsed for back-compat but no longer a runtime parameter. Under ADR-123 the burst window is implicit in the multiplier's half-life — a history entry counts toward burst detection while its exponential contribution is still above ~1% epsilon. `attend tune` still emits this field because tune's internal heuristic uses it to derive `decay_per_minute`, but the live engine ignores it. `attend config lint` flags this key as `DEPRECATED` and `attend config lint --fix` will remove it from your config in-place.
+- **`peer_activity_window`** (seconds, default 900): sliding window used by `sensor-peers` for the per-peer engagement boost. This *is* still tick-windowed — sensor-peers implements its own count-in-window logic rather than going through the shared curve engine, because the per-peer boost is a different shape than per-sensor refractory.
 
-**Auto-tuning.** Run `attend tune` to derive these from real session history. See [`engagement.md`](engagement.md) for how tuning works.
+**Yaml field stability.** The yaml keys are deliberately preserved from pre-ADR-123 attend configs, so existing tuned configs keep loading without changes. Internally the keys are translated to the `Curve::ActionPotential` parameters attend actually runs on. The doc-level mapping is:
+
+| yaml key              | runtime parameter                                  |
+|-----------------------|----------------------------------------------------|
+| `burst_threshold`     | `burst_threshold`                                  |
+| `step_multiplier`     | `peak_multiplier = 1.0 + step_multiplier`          |
+| `absolute_refractory` | `absolute_refractory` (seconds)                    |
+| `decay_per_minute`    | `multiplier_half_life = ln(0.5)/ln(1-rate) × 60`   |
+| `burst_window`        | *no runtime effect* (implicit via half-life)       |
+
+**Auto-tuning.** Run `attend tune` to derive these from real session history. See [`engagement.md`](engagement.md#tuning-with-attend-tune) for how tuning works and how the linear-derived `decay_per_minute` relates to the engine's exponential half-life.
 
 ### `cleanup`
 

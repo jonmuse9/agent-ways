@@ -4,3 +4,9 @@ version = "0.6.0"
 edition = "2021"
 description = "Sensor trait and runtime types for attend"
 license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_yaml = "0.9"

@@ -4,6 +4,9 @@ vocabulary: ship deliver deploy release commit push merge pull request pr land c
 threshold: 2.5
 embed_threshold: 0.30
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: premise -->
 # Delivery

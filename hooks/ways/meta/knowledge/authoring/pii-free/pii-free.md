@@ -4,6 +4,9 @@ vocabulary: pii personal information names emails accounts strip anonymize decom
 threshold: 2.5
 files: \.claude/(hooks/)?ways/.*way\.md$
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: constraint -->
 # PII-Free Ways

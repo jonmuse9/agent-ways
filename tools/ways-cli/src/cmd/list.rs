@@ -18,8 +18,16 @@ struct FiredWay {
     trigger: String,
     depth: u64,
     check_fires: u64,
+    #[allow(dead_code)]
     parent: String,
     agent_id: String,
+    /// Per-way re-fire distance in thousands of tokens, derived from
+    /// the way's frontmatter `curve:` block via
+    /// [`sensor_trait::Curve::refire_delta`]. Falls back to 25% of the
+    /// context window for ways whose frontmatter is missing or cannot
+    /// be parsed (shouldn't happen post-C2 but keeps the renderer
+    /// robust).
+    refire_threshold_k: u64,
 }
 
 impl WayRow for FiredWay {
@@ -30,6 +38,7 @@ impl WayRow for FiredWay {
     fn check_fires(&self) -> u64 { self.check_fires }
     fn depth(&self) -> u64 { self.depth }
     fn agent_id(&self) -> &str { &self.agent_id }
+    fn refire_threshold_k(&self) -> u64 { self.refire_threshold_k }
 }
 
 pub fn run(session: Option<&str>, sort: &str, json_out: bool) -> Result<()> {
@@ -56,13 +65,17 @@ pub fn run(session: Option<&str>, sort: &str, json_out: bool) -> Result<()> {
             (tok, if tok > 200 { 1000 } else { 200 })
         }
     };
-    let redisclose_threshold_k = context_window_k * 25 / 100;
+    // Fallback refire threshold for ways with missing/unparsable curves —
+    // matches the pre-ADR-123 visual baseline of 25% of the context window.
+    let fallback_refire_k = context_window_k * 25 / 100;
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .unwrap_or_else(|_| std::env::var("PWD").unwrap_or_else(|_| ".".to_string()));
 
     // Collect metrics from JSONL (has trigger, depth, parent)
     let metrics = load_metrics(&session_id);
 
     // Collect all fired ways from markers
-    let mut ways = collect_fired_ways(&session_id, &metrics);
+    let mut ways = collect_fired_ways(&session_id, &metrics, &project_dir, fallback_refire_k);
 
     if ways.is_empty() {
         println!("No ways triggered yet this session.");
@@ -81,7 +94,7 @@ pub fn run(session: Option<&str>, sort: &str, json_out: bool) -> Result<()> {
     }
 
     if json_out {
-        print_json(&ways, current_epoch, current_tokens_k, context_window_k, redisclose_threshold_k);
+        print_json(&ways, current_epoch, current_tokens_k, context_window_k);
         return Ok(());
     }
 
@@ -99,7 +112,7 @@ pub fn run(session: Option<&str>, sort: &str, json_out: bool) -> Result<()> {
     );
     let _ = writeln!(out);
 
-    let bar_positions = render::compute_bar_positions(&ways, context_window_k, redisclose_threshold_k);
+    let bar_positions = render::compute_bar_positions(&ways, context_window_k);
     let unique_pos = render::unique_positions(&bar_positions);
 
     render::write_table_header(&mut out);
@@ -107,7 +120,7 @@ pub fn run(session: Option<&str>, sort: &str, json_out: bool) -> Result<()> {
     for (i, w) in ways.iter().enumerate() {
         render::write_way_row(
             &mut out, w, current_epoch, current_tokens_k,
-            redisclose_threshold_k, &bar_positions, &unique_pos, i, "", "",
+            &bar_positions, &unique_pos, i, "", "",
         );
     }
 
@@ -116,7 +129,7 @@ pub fn run(session: Option<&str>, sort: &str, json_out: bool) -> Result<()> {
         let _ = writeln!(out);
         render::write_token_timeline(
             &mut out, &ways, &unique_pos,
-            current_tokens_k, context_window_k, redisclose_threshold_k,
+            current_tokens_k, context_window_k,
         );
     }
 
@@ -127,7 +140,12 @@ pub fn run(session: Option<&str>, sort: &str, json_out: bool) -> Result<()> {
 
 // ── Data collection ────────────────────────────────────────────
 
-fn collect_fired_ways(session_id: &str, metrics: &HashMap<String, MetricEntry>) -> Vec<FiredWay> {
+fn collect_fired_ways(
+    session_id: &str,
+    metrics: &HashMap<String, MetricEntry>,
+    project_dir: &str,
+    fallback_refire_k: u64,
+) -> Vec<FiredWay> {
     let way_epochs = session::list_way_epochs(session_id);
 
     way_epochs
@@ -141,6 +159,9 @@ fn collect_fired_ways(session_id: &str, metrics: &HashMap<String, MetricEntry>) 
                 .map(|m| (m.trigger.clone(), m.depth, m.parent.clone(), m.agent_id.clone()))
                 .unwrap_or_else(|| ("unknown".to_string(), 0, "none".to_string(), "main".to_string()));
 
+            let refire_threshold_k = session::way_refire_threshold_k(&way_id, project_dir)
+                .unwrap_or(fallback_refire_k);
+
             FiredWay {
                 id: way_id,
                 epoch_at_fire,
@@ -150,6 +171,7 @@ fn collect_fired_ways(session_id: &str, metrics: &HashMap<String, MetricEntry>) 
                 check_fires,
                 parent,
                 agent_id,
+                refire_threshold_k,
             }
         })
         .collect()
@@ -250,15 +272,15 @@ fn latest_session_for_project(project: &str) -> Option<String> {
 
 use crate::util::detect_project_dir;
 
-fn print_json(ways: &[FiredWay], current_epoch: u64, current_tokens_k: u64, context_window_k: u64, redisclose_threshold_k: u64) {
+fn print_json(ways: &[FiredWay], current_epoch: u64, current_tokens_k: u64, context_window_k: u64) {
     let entries: Vec<serde_json::Value> = ways
         .iter()
         .map(|w| {
             let distance = current_epoch.saturating_sub(w.epoch_at_fire);
             let token_pos_k = w.token_pos / 1000;
             let token_distance_k = current_tokens_k.saturating_sub(token_pos_k);
-            let token_pct = if redisclose_threshold_k > 0 {
-                token_distance_k * 100 / redisclose_threshold_k
+            let token_pct = if w.refire_threshold_k > 0 {
+                token_distance_k * 100 / w.refire_threshold_k
             } else {
                 0
             };
@@ -268,7 +290,8 @@ fn print_json(ways: &[FiredWay], current_epoch: u64, current_tokens_k: u64, cont
                 "epoch_distance": distance,
                 "token_pos_k": token_pos_k,
                 "token_distance_k": token_distance_k,
-                "redisclose_pct": token_pct,
+                "refire_threshold_k": w.refire_threshold_k,
+                "refire_pct": token_pct,
                 "trigger": w.trigger,
                 "depth": w.depth,
                 "check_fires": w.check_fires,

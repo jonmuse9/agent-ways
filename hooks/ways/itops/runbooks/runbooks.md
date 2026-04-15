@@ -4,6 +4,9 @@ vocabulary: runbook playbook sop procedure operational automation executable sta
 threshold: 2.0
 pattern: runbook|runbook.?(automation|executable)|playbook|sop.?(automation|as.?code)|operational.?procedure
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Runbooks Way

@@ -6,6 +6,9 @@ pattern: patch|\.diff|apply.*change
 files: \.(patch|diff)$
 commands: git\ apply|git\ diff.*\>
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Patch Creation Way

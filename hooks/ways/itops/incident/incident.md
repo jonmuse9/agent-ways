@@ -4,6 +4,9 @@ vocabulary: incident response escalation support tier l0 l1 l2 mttr mean time al
 threshold: 2.0
 pattern: incident.?response|l0.?support|l1.?support|l2.?support|escalat|mttr|mean.?time|alert.?(response|triage)|remediat
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Incident Response Way

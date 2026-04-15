@@ -4,6 +4,9 @@ vocabulary: lockfile package-lock.json yarn.lock pnpm-lock pin exact version car
 threshold: 2.5
 files: package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: lesson-learned -->
 # Lockfile Hygiene

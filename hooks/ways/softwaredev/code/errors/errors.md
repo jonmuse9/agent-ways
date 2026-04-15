@@ -4,6 +4,9 @@ vocabulary: exception handling catch throw boundary wrap rethrow fallback gracef
 threshold: 2.0
 pattern: error.?handl|exception|try.?catch|throw|catch
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: heuristic -->
 # Error Handling Way

@@ -5,6 +5,9 @@ threshold: 2.0
 scope: agent, subagent
 macro: prepend
 requires: ["Read", "Bash(find:*)", "Bash(wc:*)"]
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # ADR Context — Read Before You Build

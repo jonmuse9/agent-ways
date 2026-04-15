@@ -3,6 +3,9 @@ description: Python dependency security, pip-audit, setup.py risks, PyPI typosqu
 vocabulary: pip-audit setup.py pyproject.toml requirements.txt wheel sdist PyPI typosquat safety pip install python package
 threshold: 2.5
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Python Dependency Security

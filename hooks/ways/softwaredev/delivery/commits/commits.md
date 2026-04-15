@@ -4,7 +4,9 @@ vocabulary: commit message branch conventional feat fix refactor scope atomic sq
 threshold: 2.0
 pattern: commit|push.*(remote|origin|upstream)
 commands: git\ commit
-redisclose: 15
+curve:
+  type: Exponential
+  half_life: 30000
 scope: agent, subagent
 ---
 <!-- epistemic: convention -->

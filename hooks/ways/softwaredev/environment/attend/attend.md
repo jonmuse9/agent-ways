@@ -5,7 +5,9 @@ embed_threshold: 0.28
 threshold: 2.0
 pattern: attend|awareness.?layer|peer.?session|peer.?discover|signal.?file|focus.?group|sensor.?loop
 commands: attend
-redisclose: 15
+curve:
+  type: Exponential
+  half_life: 30000
 macro: append
 scope: agent, subagent
 requires: ["Bash(attend:*)", "Bash(grep:*)", "Bash(ps:*)", "Bash(sed:*)"]

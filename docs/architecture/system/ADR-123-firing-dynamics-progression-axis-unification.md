@@ -1,5 +1,5 @@
 ---
-status: Draft
+status: Accepted
 date: 2026-04-14
 deciders:
   - aaronsb
@@ -291,7 +291,44 @@ Keep `redisclose: N` in the schema as sugar that translates to `Curve::Flat { su
 - **ADR-113** — attend active awareness module; origin of the disclosure governor.
 - **ADR-114** — attend as insistent way trigger type; the integration point.
 - **ADR-117** — sensor crate extraction and feature flags; precedent for cargo-workspace splits.
-- **ADR-119** — action potential engagement model; the inward gate, currently shipping in attend.
-- **ADR-121** (Draft) — salience decay for signal presentation; the outward gate for attend signals.
+- **ADR-119** — action potential engagement model; the inward gate, superseded by ADR-123 and now rewritten in place to describe the shipped unified engine.
+- **ADR-121** — salience decay for signal presentation; the outward gate, superseded by ADR-123 and now rewritten in place to describe the shipped unified engine. Ways is the first concrete consumer; attend sensor-peers application still deferred.
 - **Cognitive Frameworks paper** — cognitive economics principle (`cheapest path = correct path`); the reason ways wants model-aligned decay rather than a parallel steering layer.
 - **Rotary Positional Embedding (RoPE)** — Su et al., *RoFormer: Enhanced Transformer with Rotary Position Embedding* (arXiv:2104.09864) — the mechanism that makes token position the correct axis for ways.
+
+## Implementation Status
+
+**Accepted 2026-04-14** after Phase F validation in [`docs/hooks-and-ways/observed-behavior.md`](../../hooks-and-ways/observed-behavior.md) confirmed the unified stack preserves the 2026-03-17 baseline (supertask held under detour, ~21% context use, zero operator redirections across 92 turns).
+
+### Shipped
+
+- **Phase A — Foundation (1f30b80).** `sensor_trait::Curve` enum with four variants (`Exponential`, `ActionPotential`, `ProgressiveStaircase`, `Flat`). `EngagementState` owning a `Curve` plus tick-keyed history. `Tick`/`TickDelta` aliases. `salience_at` (outward gate) and `multiplier_at` (inward gate) as the two query methods. Event-count burst detection replaces time-windowed burst detection for chunky-axis robustness. 26 unit tests in `sensor-trait`.
+- **Phase B — Attend migration (9340185).** `SensorSlot::engagement` ported to the new `EngagementState`. `decay_per_minute` converted to `multiplier_half_life` via `ln(0.5) / ln(1 - rate) × 60`. Wall-clock-seconds tick source via `sensor_trait::epoch_secs()`. Old `Instant`/`Duration`-keyed state and its unit tests deleted. B3 parity check validated live during the Phase F observation session — absolute refractory, relative suppression, governor cooldown, and graceful binary reload all hold under the new engine.
+- **Phase C — Ways integration (b94cc25, ad20744, 47bc9de).** `curve:` field added to frontmatter schema; `redisclose:` rejected at parse time via `detect_legacy_redisclose()`. 99 existing ways migrated (8 with explicit `redisclose: N` mapped to `Curve::Exponential { half_life: N × 2000 }` on a 200k baseline; 91 defaulting to `Curve::Exponential { half_life: 30000 }`). Per-way `EngagementState` persisted at `{session_dir}/way-engagement/{way_id}.json`. `REFIRE_FLOOR = 0.5` as the outward-gate cutoff. `REDISCLOSE_PCT`, `token_distance_exceeded`, and `detect_context_window` deleted. Per-way visualization in `ways list` and `ways rethink` driven by `Curve::refire_delta(floor)`.
+- **Phase D — Reactive firing (dddb4ca).** `PostToolUse` and `PostToolUseFailure` hooks wired in `settings.json`. `hooks/ways/check-post.sh` walks ways with `postcheck.sh`, pipes `tool_response` through each, and treats exit 0 as "request firing" — which then flows through the same inward-gate check as predictive fires. `hooks/ways/softwaredev/code/quality/postcheck.sh` is the load-bearing demo, firing when an Edit or Write grows a file past 500 lines. Verified live during the Phase F session: the quality way fired reactively on `tune_curves.rs` at epoch 83 when that file crossed the threshold mid-edit, which triggered the `--days` scope trim as an in-session refactor.
+- **Phase E — Empirical calibration (28527e8).** `ways tune-curves` subcommand surveys `~/.claude/stats/events.jsonl`, pairs `way_fired` + `way_redisclosed` events by (way, session), computes token-position deltas between consecutive fires, and suggests calibrated `Curve::Exponential` half-life values per way. Dry-run by default, `--apply` rewrites `curve:` blocks via line-surgery. Floor of 3 delta samples, ±20% tolerance band, round to nearest 500 tokens. Verified against the live events log: 2 ways with early data, both within ±20% of migration defaults — the initial tuning guesses were well-calibrated for the ways that have accumulated samples.
+- **Phase F — Validation (4672e44).** Re-observation written into `docs/hooks-and-ways/observed-behavior.md` from the session that landed Phases B3 through E. 92 turns, 212K / 1000K tokens, zero operator redirections, several in-session detours handled without supertask drift, Phase D reactive firing and check-firing decay both verified in-flight. ADR-123 stack preserves the 2026-03-17 baseline.
+- **Cross-tool lint hygiene (1397d68, f360ea6, c869841).** `ways lint` split from one 938-line file into 7 focused modules with `--fix` removing foreign top-level fields and `when:` sub-fields, `x-*` escape hatch, and locale stub validation for 83 newly-covered files. New `attend config lint` subcommand with matching semantics (UNKNOWN / DEPRECATED, `--fix`, `--check`) — `engagement.burst_window` is the first DEPRECATED entry with a pointer to ADR-123's "burst window is implicit in multiplier_half_life" reframing.
+- **Docs (057f3f3, d991209).** `docs/attend-and-monitor/engagement.md`, `context-decay.md`, `loop.md`, `configuration.md`, and `salience.md` all rewritten in place for the ADR-123 framing. The old "two mechanisms with different units" narrative in salience.md becomes "one engine, two queries against one state." ADR-104, 119, and 121 rewritten in place with `Status: Superseded` + `superseded_by: ADR-123`, their original Context and Alternatives preserved as the historical decision trail.
+- **Secondary fixes (679b205).** `attend config show` no longer displays a synthesized `burst_window` default when the user's file doesn't declare the key. Phase 1 of the soft-removal; Phase 2 (delete the field from the schema entirely) tracked as issue #50 for after a few real-usage cycles let the deprecation warning do its work.
+
+### Deferred
+
+- **Attend sensor-peers outward-gate application.** ADR-121 step 7 in the superseded decision, still pending. The engine is in place; what's missing is a per-signal `EngagementState` in sensor-peers and a `current_salience >= floor` check in the presentation path. See [`docs/attend-and-monitor/salience.md`](../../attend-and-monitor/salience.md) for the sketch of the path forward. Pure new consumer of an existing facility — no engine work needed.
+- **`attend status` refractory state display.** ADR-119 step 7 in the superseded decision. Should show current multiplier and refractory state per sensor in the existing `attend status` table. Not load-bearing for ADR-123; tracked as a follow-up.
+- **Motivation / reflection-overdue sensor.** ADR-119 steps 8–9. A new sensor that emits time-based sub-threshold stimuli to drive intrinsic self-prompting. Architecturally available under ADR-123 (just another consumer of the engine) but not scoped to this PR.
+- **`burst_window` YAML key removal from the schema.** Phase 2 of the soft-removal started in 679b205. Filed as issue #50. Wait at least two weeks after merge for live configs to clean up via `attend config lint --fix`, then delete the field and the parser branch.
+- **`attend config lint --check` in CI.** Once the config-lint path has a few real uses under its belt, wire it to a CI job alongside `ways lint --check`. Tracked on the PR.
+- **`tools/attend/src/main.rs` split.** 2027-line dispatcher file flagged by the quality way during this PR. Pure structural refactor, proposed module layout in issue #51. Do after the attend sensor-peers application lands (or any time it's convenient) — no dependency on ADR-123.
+- **`tools/ways-cli/src/main.rs` split.** Pushed past the 500-line review threshold by the `TuneCurves` enum variant in 28527e8. Mirror case of the attend main.rs split, much smaller. Roll into whatever PR sets the pattern for attend (noted on issue #51).
+
+### Open questions resolved during implementation
+
+The ADR's Open Questions section is preserved above for the historical record. The actual resolutions:
+
+- **Crate home:** `sensor-trait` generalized in place. No rename.
+- **Curve dispatch:** enum with serde derive. No trait object.
+- **Default curve for ways:** explicit `curve:` required; parse-time rejection of legacy `redisclose:` via `detect_legacy_redisclose()`. No default, no shim.
+- **Whether `ProgressiveStaircase` ships initially:** yes, as one of the four enum variants. No production way uses it today, but its presence proves the curve-as-parameter shape buys something beyond refactoring.
+- **Validation test for attend parameter conversion:** live session observation (the Phase F re-observation) rather than side-by-side simulation or golden trace. The conversion formula's correctness was validated by the fact that attend's cadence behavior matched pre-refactor expectations in a real workload.
+- **Epsilon for "event has decayed out of burst consideration":** deferred to empirical tuning via `ways tune`. Current default in `Curve::ActionPotential` is left at the ADR's first-guess value and will be revisited once the event log accumulates enough token-position-enriched fires for `ways tune-curves` to suggest per-way values.

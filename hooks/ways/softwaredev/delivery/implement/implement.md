@@ -5,6 +5,9 @@ threshold: 2.0
 macro: append
 scope: agent
 requires: ["Read", "Bash(cat:*)", "Bash(find:*)", "Bash(wc:*)"]
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Implementation Way

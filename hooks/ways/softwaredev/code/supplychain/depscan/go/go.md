@@ -3,6 +3,9 @@ description: Go dependency security, govulncheck, module verification, replace d
 vocabulary: govulncheck go.sum go.mod replace directive go install go get module proxy checksum
 threshold: 2.5
 scope: agent, subagent
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Go Dependency Security

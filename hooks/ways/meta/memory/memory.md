@@ -7,6 +7,9 @@ pattern: remember|save.*(to|this|that).*memory|note.*(for|this).*(later|next)|do
 macro: prepend
 scope: agent
 requires: ["Bash(jq:*)", "Bash(sed:*)", "Bash(ways:*)", "Bash(wc:*)"]
+curve:
+  type: Exponential
+  half_life: 30000
 ---
 <!-- epistemic: convention -->
 # Memory

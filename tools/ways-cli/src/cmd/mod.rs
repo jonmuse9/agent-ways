@@ -23,3 +23,4 @@ pub mod suggest;
 pub mod template;
 pub mod tree;
 pub mod tune;
+pub mod tune_curves;
