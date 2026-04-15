@@ -191,40 +191,6 @@ impl PeerSensor {
         result
     }
 
-    /// Mark all existing signal files as already seen so attend run
-    /// only processes signals that arrive after startup.
-    pub fn mark_existing_as_seen(&mut self, focus: &Focus) {
-        let base = signals_base();
-        let own_encoded = encode_cwd(&focus.working_dir);
-        let mut scan_dirs = vec![
-            base.join(&own_encoded),
-            base.join("_broadcast"),
-        ];
-        // Focus group directories (ADR-118 — named signal namespaces)
-        scan_dirs.extend(self.current_extra_scan_dirs());
-
-        for dir in &scan_dirs {
-            let entries = match fs::read_dir(dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(f) = path.file_name().and_then(|f| f.to_str()) {
-                    if f.ends_with(".signal") {
-                        let key = format!("{}:{}", dir.display(), f);
-                        self.seen_signals.insert(key);
-                    }
-                }
-            }
-        }
-
-        let count = self.seen_signals.len();
-        if count > 0 {
-            eprintln!("[attend] peers: marked {} existing signals as seen", count);
-        }
-    }
-
     /// Read signal files from peers. Scans own project dir, broadcast dir,
     /// focus list, and joined rooms. Returns observations for new signals.
     fn read_signals(&mut self, focus: &Focus) -> Vec<(f64, String)> {

@@ -139,6 +139,10 @@ This was turns, not seconds, under the ADR-121 framing. Under ADR-123 the shape 
 
 The intuition to preserve: **short sessions never see aging (nothing to prune), medium sessions see the oldest material drop out cleanly near the end, long sessions experience meaningful pruning.** Whatever wall-clock half-life attend eventually picks should produce this behavior against the live distribution, not against a one-off sweep. The 1800 s default is the placeholder — deliberately uncalibrated — until tune closes the loop.
 
+### Replacing `mark_existing_as_seen`
+
+The legacy startup flow called `peer_sensor.mark_existing_as_seen(focus)` before the tick loop started, pre-populating `seen_signals` with every signal file already on disk. This prevented a startup blast but was all-or-nothing — old *and* recent pre-existing signals were silenced alike. The salience gate replaces that coarse filter: every pre-existing file now flows through `read_signals`, the gate evaluates each one against its on-disk mtime, and only below-floor signals are suppressed. Recent-but-pre-existing signals (e.g., a focus-group message from 5 minutes ago at startup) now surface where they previously would not. The `mark_existing_as_seen` method was removed entirely as part of issue #22.
+
 ### Known v1 limitation: resurfacing already-presented parents
 
 The `seen_signals` invariant still prevents the same observer from surfacing the same signal twice, so a `re:` reply that resets the parent's salience does not cause the parent to re-appear in *this* observer's notification stream. The reset *does* affect:

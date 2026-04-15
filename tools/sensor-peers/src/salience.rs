@@ -52,14 +52,32 @@ impl SignalSalience {
     /// on-disk mtime, so its salience has already decayed when the new
     /// observer first sees it. That is the backlog-filter behavior
     /// ADR-121 designed and ADR-123 made a cross-tool facility.
+    ///
+    /// This is a deliberate asymmetry vs. ways' `way_fire_outcome`,
+    /// which always fires on first match regardless of age. The peer
+    /// sensor is consuming a *shared* resource (the on-disk signal
+    /// directory) rather than a per-session event stream, so aging has
+    /// to bite on first observation or the backlog-filter win never
+    /// materializes.
+    ///
+    /// Below-floor entries are pruned before returning to bound the map
+    /// size on long sessions and small floor values. The caller's
+    /// `seen_signals` invariant prevents re-gating the same file, so
+    /// the pruned state cannot leak back through a later scan.
     pub fn gate(&mut self, signal_id: &str, arrival_tick: Tick, now: Tick) -> bool {
         let half_life = self.half_life;
+        let floor = self.floor;
         let state = self.states.entry(signal_id.to_string()).or_insert_with(|| {
             let mut s = EngagementState::new(Curve::Exponential { half_life });
             s.record_fire(arrival_tick, 1.0);
             s
         });
-        state.current_salience(now) >= self.floor
+        if state.current_salience(now) >= floor {
+            true
+        } else {
+            self.states.remove(signal_id);
+            false
+        }
     }
 
     /// Re-engagement reset for a threaded reply.
@@ -198,6 +216,20 @@ mod tests {
         // and the state already exists — assert via a direct read of
         // the reset tick.)
         assert!(s.gate("id-1", 1_000_000, 1_004_000));
+    }
+
+    #[test]
+    fn below_floor_gate_prunes_state_entry() {
+        let mut s = SignalSalience::new();
+        s.set_params(1800, 0.3);
+        // Fresh gate seeds the entry.
+        assert!(s.gate("id-live", 1_000_000, 1_000_000));
+        // A second signal ages out — its entry should be pruned.
+        assert!(!s.gate("id-old", 1_000_000, 1_004_000));
+        // Export rows confirm only the live entry survived.
+        let rows = s.export_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "id-live");
     }
 
     #[test]
