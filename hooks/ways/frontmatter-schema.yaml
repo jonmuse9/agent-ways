@@ -188,6 +188,27 @@ check:
           required: optional
           role: Only fire when this file exists in the project
 
+# Locale stub schema — one JSON object per line in *.locales.jsonl files.
+# These are the per-language overrides for description/vocabulary used by
+# the multilingual corpus. Lint validates them against this key set.
+locale_stub:
+  lang:
+    type: string
+    required: true
+    role: ISO 639-1 language code (e.g. "en", "de", "ja")
+  description:
+    type: string
+    required: true
+    role: Language-specific description for semantic matching
+  vocabulary:
+    type: string
+    required: true
+    role: Space-separated domain keywords in the target language for BM25 scoring
+  embed_threshold:
+    type: number
+    required: optional
+    role: Language-specific cosine similarity threshold (overrides top-level default)
+
 # Lint configuration
 # Path segments that indicate backup/sync tool artifacts — not real ways.
 # The linter skips any file whose path contains one of these segments.
