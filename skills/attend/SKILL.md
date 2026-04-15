@@ -54,6 +54,19 @@ attend send --to /home/user/other-project "directed message"
 
 Keep messages under ~400 characters. Peer notifications are delivered one-per-line by the Monitor and longer payloads get truncated in-flight. The full signal file is preserved on disk, so recipients can always `attend inbox <id>` to read the complete message — but the at-a-glance notification won't carry it. Concise is the design, not a workaround.
 
+### Threaded replies
+
+When you are replying to a peer signal whose id you know, use `--re <id>` so the reply is marked as threaded. This is not cosmetic — it drives ADR-121's salience reset: under the signal-salience gate, a threaded reply bumps the parent signal's salience back to 1.0 so it stays presentable for future observers joining the same dir.
+
+```bash
+attend send --re b6b4379e-261f-4c0b-88f9-8d06f8c8b224-1776230155 "ack — picking this up"
+attend send --re <id> --focus deploy "threaded + scoped to a group"
+```
+
+The id is the filename stem of the peer's signal (everything before `.signal`). Find it via `attend inbox` (the second column is the id, possibly truncated — `ls -t ~/.cache/attend/signals/<your-project>/*.signal | head` is the fallback for the full id). Valid ids match `[A-Za-z0-9_-]+`; anything else is rejected.
+
+**Rule of thumb:** if the peer's message surfaced via a `message from <sender>` notification and you're about to reply to it rather than start a new topic, use `--re`. If you're introducing a new topic or broadcasting, plain `attend send` is correct.
+
 ### Focus groups
 
 Named groups that agents focus on for shared signal routing. Groups are dynamic — join and leave as needed.
