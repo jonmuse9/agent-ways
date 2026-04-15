@@ -1,4 +1,5 @@
 mod config;
+mod config_lint;
 mod groups;
 mod scenes;
 mod state;
@@ -1969,8 +1970,16 @@ fn main() {
                         .unwrap_or_default();
                     println!("project: {}/.claude/attend.yaml", cwd);
                 }
+                Some("lint") => {
+                    let fix = args.iter().any(|a| a == "--fix");
+                    let check = args.iter().any(|a| a == "--check");
+                    let code = config_lint::run(fix, check);
+                    if code != 0 {
+                        std::process::exit(code);
+                    }
+                }
                 Some(sub) => {
-                    eprintln!("attend config: unknown subcommand '{}' — try init, show, path", sub);
+                    eprintln!("attend config: unknown subcommand '{}' — try init, show, path, lint", sub);
                     std::process::exit(1);
                 }
             }
@@ -1994,7 +2003,7 @@ fn main() {
                 ("focus",       "Manage attention groups (on, off, list, all, clear, pin, dissolve)"),
                 ("scene",       "Activate a named scene (reconfigure focus)"),
                 ("scenes",      "List available scenes"),
-                ("config",      "Manage configuration (init/show/path)"),
+                ("config",      "Manage configuration (init/show/path/lint)"),
                 ("tune",        "Survey session history and derive engagement config (--apply to write)"),
                 ("permissions", "Audit sensor permissions against settings.json"),
                 ("cleanup",     "Remove stale signal files from the signals base (default: 5m)"),
