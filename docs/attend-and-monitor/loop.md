@@ -177,7 +177,7 @@ sequenceDiagram
     Emit->>Monitor: println! — one line per event
     Monitor->>Agent: async notification
 
-    Note over Governor,Engagement: Governor.record_disclosure()<br/>Engagement.record_disclosure() per sensor
+    Note over Governor,Engagement: Governor.record_disclosure()<br/>Engagement.record_fire(epoch_secs, 1.0) per sensor
 ```
 
 This is the one-way data flow. Signals enter via sensors (reading the environment) and leave via stdout (intercepted by Monitor). Nothing in attend's runtime is event-driven — every transition is a poll that happened to find something new.
@@ -196,11 +196,12 @@ All of these tick inside the same single-threaded loop using `Instant::now()` co
 | Sensor base_interval | per-sensor (default 30–60s) | Ceiling — rest-state polling frequency |
 | Governor cooldown | `governor.base_cooldown` (default 15s) | Minimum gap between disclosures |
 | Governor rate window | `governor.rate_window` (default 120s) | Rolling window for disclosure rate limit |
-| Action potential burst window | `engagement.burst_window` (default 900s) | Window for counting recent disclosures |
-| Absolute refractory | `engagement.absolute_refractory` (default 60s) | Full suppression after burst |
-| Relative refractory decay | `engagement.decay_per_minute` (default 0.1) | Rate at which elevated threshold returns to rest |
+| Absolute refractory | `engagement.absolute_refractory` (default 60s) | Full suppression after burst — the `Curve::ActionPotential` hard gate |
+| Multiplier half-life | derived from `engagement.decay_per_minute` (default 0.1 → ~395s) | Exponential half-life of the relative-refractory multiplier's decay back toward 1.0 (ADR-123) |
 
-The loop doesn't coordinate these explicitly — each is a separate "has enough time passed since the last time we did this?" check at the natural point in the iteration. The loop body walks through them in a fixed order so behavior is deterministic.
+Attend's engagement parameters are all in wall-clock seconds because attend's progression axis is `sensor_trait::epoch_secs()`. The `burst_window` yaml field is still parsed for back-compat but is no longer a runtime parameter — under ADR-123 the burst window is implicit in the multiplier's half-life decay rather than a standalone span. See [`engagement.md`](engagement.md#event-count-burst-detection) for the full reframing.
+
+The loop doesn't coordinate these timers explicitly — each is a separate "has enough time passed since the last time we did this?" check at the natural point in the iteration. The loop body walks through them in a fixed order so behavior is deterministic.
 
 ## Loop termination
 
