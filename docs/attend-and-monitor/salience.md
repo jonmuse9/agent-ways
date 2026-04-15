@@ -2,7 +2,7 @@
 
 This page covers the **presentation-layer aging** mechanism: how a signal's visibility in the conversation fades as the progression axis advances, even while the signal file remains on disk. It's the cousin — not the opposite — of attend's inward-gate engagement model in [`engagement.md`](engagement.md). Both sides of the gate share a single engine; this page is the outward-side explainer.
 
-**Status.** The framing comes from [ADR-121](../architecture/system/ADR-121-salience-decay-for-signal-presentation-turn-based-exponential.md). The mechanism it describes was unified with attend's inward gate in [ADR-123](../architecture/system/ADR-123-firing-dynamics-progression-axis-unification.md): both now consume the same `sensor_trait::Curve` type with the same `salience_at(delta)` query. **Ways is the first concrete implementation**, shipping cross-tool via ADR-123. **The attend sensor-peers application is still deferred** — sensor-peers emits signals as observations without consulting a salience gate today. This page describes the decision, points at the ways implementation as the canonical code reference, and sketches the attend-side path that's still pending.
+**Status.** The framing comes from [ADR-121](../architecture/system/ADR-121-salience-decay-for-signal-presentation-turn-based-exponential.md). The mechanism it describes was unified with attend's inward gate in [ADR-123](../architecture/system/ADR-123-firing-dynamics-progression-axis-unification.md): both now consume the same `sensor_trait::Curve` type with the same `salience_at(delta)` query. **Ways was the first concrete implementation**, shipping cross-tool via ADR-123. **Attend's sensor-peers application now ships too** (issue #22) — each peer signal passes through a per-id `EngagementState<Curve::Exponential>` before emitting, so aged backlog fades without being deleted and threaded replies (`re:<id>`) reset the parent's salience. This page describes the decision and points at both production implementations as canonical references.
 
 ## The problem the outward gate solves
 
@@ -81,18 +81,51 @@ For ways with `Curve::Exponential { half_life: H }` and the 0.5 floor, re-fire h
 
 Per-way visualization in `ways list` and `ways rethink` uses `Curve::refire_delta(floor)` to render each row's bar and forecast position from its own threshold, not a shared global. See [ADR-123 §2](../architecture/system/ADR-123-firing-dynamics-progression-axis-unification.md#2-pluggable-curve-as-first-class-parameter) for the curve types and [`engagement.md`](engagement.md) for the engine's other queries.
 
-## Attend's deferred application (still to ship)
+## Attend's concrete application (shipping now)
 
-Attend's sensor-peers path currently emits signals as observations without consulting an outward gate. Every poll that finds a new signal file surfaces it, regardless of whether the same signal has been surfaced before or how much wall-clock time has passed since its arrival. That's the case ADR-121 diagnosed, and ADR-123 made the fix path trivially available — the engine is already in place, the `Curve::Exponential` variant already exists in `sensor-trait`, the tick source (`epoch_secs()`) is already in production for the inward gate.
+sensor-peers consults a per-signal outward gate inside `read_signals` before each observation leaves the poll. The state lives in a small sibling module, `tools/sensor-peers/src/salience.rs`:
 
-What's missing is the *last mile*: a salience gate in `sensor-peers` that wraps each "about to present this signal" moment in a `state.current_salience(epoch_secs()) >= floor` check before emitting, and a per-signal `EngagementState` keyed by signal id (or by `(signal, agent)` for the multi-agent view). When that wiring lands:
+```rust
+// tools/sensor-peers/src/salience.rs
+pub struct SignalSalience {
+    states: HashMap<String, EngagementState>,  // keyed by signal id
+    half_life: TickDelta,                      // from attend's signals: config
+    floor: f64,
+}
 
-- Each signal carries an `arrival_tick` in wall-clock seconds (the `arrival_turn` of ADR-121, renamed for the progression-axis unification).
-- A `Curve::Exponential { half_life: N }` in attend's config controls the decay rate. Default proposed in ADR-121 was 20 turns; translated to seconds for attend it's roughly `half_life: 20 × median_turn_seconds`. Real value will come from `attend tune` survey, not the ADR-121 default.
-- A `presentation_floor: 0.3` (or whatever the operator tunes) controls when signals drop out of the presentation set.
-- Re-engagement (a reply, a reference via the `re:` threading field from ADR-120) calls `record_fire` on the signal's state, resetting salience to 1.0.
+impl SignalSalience {
+    pub fn gate(&mut self, signal_id: &str, arrival_tick: Tick, now: Tick) -> bool {
+        let state = self.states.entry(signal_id.to_string()).or_insert_with(|| {
+            let mut s = EngagementState::new(Curve::Exponential { half_life: self.half_life });
+            s.record_fire(arrival_tick, 1.0);
+            s
+        });
+        state.current_salience(now) >= self.floor
+    }
 
-The implementation is scoped to the peer sensor and a new small module for signal-state persistence. **No changes to the engine, the disclosure governor, the engagement model, or the signal file format** — this is purely a new consumer of an existing facility. That's the payoff from ADR-123's unification: the attend outward-gate application is now a hook-up, not an architecture change.
+    pub fn reset(&mut self, signal_id: &str, now: Tick) { ... }
+}
+```
+
+The key design points:
+
+- **Signal id** is the filename stem — the same shape `re:<id>` references in ADR-120 threaded replies, so reply resets are direct hash lookups. No rename table, no ownership bookkeeping.
+- **Arrival tick** comes from the file's on-disk mtime, not the first time this observer happens to scan the directory. A peer who joins a focus-group room mid-session sees old signals as already-decayed — the backlog-filter behavior ADR-121 designed, now working against real backlogs instead of hypotheticals.
+- **Re-engagement reset** runs unconditionally at scan time: if the content is a threaded 5-field signal (`re:<id>|`), the parent signal's `EngagementState` is bumped back to 1.0 at the current tick before the current signal's own gate check runs. The reset persists into the checkpoint so reconnection does not re-age the parent.
+- **Checkpoint persistence** uses the existing `sensor_trait::Sensor::export_state`/`import_state` wire format, adding a new `signal_salience` row key that carries `<signal_id>\t<json>`. Old checkpoints without the key parse cleanly — the sensor just starts fresh on those signals.
+- **No engine changes.** The full implementation is one new file in sensor-peers, one new config block, and ~30 lines of wiring inside `read_signals`. That's the payoff ADR-123 designed for.
+
+### Configuration
+
+Operators tune the gate through attend's `signals:` block:
+
+```yaml
+signals:
+  half_life_seconds: 1800   # exponential decay half-life (30 min default)
+  presentation_floor: 0.3   # suppress below this salience
+```
+
+Defaults are conservative first-value picks, subject to `attend tune` once survey coverage exists. `attend config lint` recognizes both keys; unknown sub-keys surface as warnings and can be removed with `--fix`.
 
 ### Why the session-length distribution still matters
 
@@ -102,9 +135,18 @@ ADR-121 grounded its half-life default in real session data:
 min=1  median=12  p75=45  p90=84  max=133  mean=32.6  turns
 ```
 
-This was turns, not seconds, under the ADR-121 framing. Under ADR-123 the shape of the argument is the same, the axis is different: attend should pick a wall-clock half-life that behaves reasonably against the same distribution when converted through the observed turn-cadence. `attend tune` already surveys turn cadence from real transcripts and derives engagement parameters; when the outward-gate path lands, tune can derive a second parameter — the salience half-life — from the same analysis.
+This was turns, not seconds, under the ADR-121 framing. Under ADR-123 the shape of the argument is the same, the axis is different: attend picks a wall-clock half-life that behaves reasonably against the same distribution when converted through the observed turn-cadence. `attend tune` already surveys turn cadence from real transcripts and derives engagement parameters; the outward-gate half-life is the natural next parameter for it to derive from the same analysis (tracked as a follow-up to issue #22).
 
-The intuition to preserve: **short sessions never see aging (nothing to prune), medium sessions see the oldest material drop out cleanly near the end, long sessions experience meaningful pruning.** Whatever wall-clock half-life attend eventually picks should produce this behavior against the live distribution, not against a one-off sweep.
+The intuition to preserve: **short sessions never see aging (nothing to prune), medium sessions see the oldest material drop out cleanly near the end, long sessions experience meaningful pruning.** Whatever wall-clock half-life attend eventually picks should produce this behavior against the live distribution, not against a one-off sweep. The 1800 s default is the placeholder — deliberately uncalibrated — until tune closes the loop.
+
+### Known v1 limitation: resurfacing already-presented parents
+
+The `seen_signals` invariant still prevents the same observer from surfacing the same signal twice, so a `re:` reply that resets the parent's salience does not cause the parent to re-appear in *this* observer's notification stream. The reset *does* affect:
+
+- Any other observer joining the same shared signal dir after the reply arrived.
+- Any future session of the same observer that re-reads the shared dir from checkpoint state.
+
+Widening the reset to also re-surface already-presented parents in the current observer is a targeted follow-up, not a v1 requirement — the primary ADR-121 win is backlog filtering on new-observer entry, which the above implementation fully delivers.
 
 ## Re-engagement resets
 
@@ -148,7 +190,8 @@ Preserved here for posterity. The arguments didn't change when the engine unifie
 - [`engagement.md`](engagement.md) — the inward-gate side of the same engine, attend-specific.
 - [`signals.md`](signals.md) — disk-side retention (the time-based bulk cousin).
 - [`loop.md`](loop.md) — where the presentation gate will sit in the attend tick loop when sensor-peers consumes it.
-- [`configuration.md`](configuration.md) — attend's config surface; salience-related keys will appear there when the sensor-peers gate lands.
-- **ADR-121** — the salience-decay decision record. Status under ADR-123: reframed in place; the ways implementation is the first concrete realization.
+- [`configuration.md`](configuration.md) — attend's config surface; the `signals:` block lives there alongside `engagement:`.
+- **ADR-121** — the salience-decay decision record. Status under ADR-123: reframed in place; ways was the first concrete realization, sensor-peers the second.
 - **ADR-123** — the progression-axis unification that made ADR-121's mechanism a cross-tool facility instead of an attend-local one.
-- **`tools/ways-cli/src/session.rs`** — the `way_fire_outcome` path is the first production consumer. Read it for a concrete implementation that the deferred attend-side path can mirror.
+- **`tools/ways-cli/src/session.rs`** — the `way_fire_outcome` path is the ways-side consumer, anchored to token position.
+- **`tools/sensor-peers/src/salience.rs`** — the attend-side consumer, anchored to wall-clock seconds. Mirror structure, same engine call.

@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 
 /// Known top-level sections of attend config.
-const SECTIONS: &[&str] = &["governor", "engagement", "cleanup", "sensors"];
+const SECTIONS: &[&str] = &["governor", "engagement", "cleanup", "signals", "sensors"];
 
 /// Valid keys under `governor:`.
 const GOVERNOR_KEYS: &[&str] = &["base_cooldown", "max_per_window", "rate_window"];
@@ -42,6 +42,10 @@ const ENGAGEMENT_DEPRECATED: &[(&str, &str)] = &[(
 
 /// Valid keys under `cleanup:`.
 const CLEANUP_KEYS: &[&str] = &["enabled", "interval", "retention"];
+
+/// Valid keys under `signals:`. ADR-121 outward-gate parameters consumed
+/// by sensor-peers.
+const SIGNALS_KEYS: &[&str] = &["half_life_seconds", "presentation_floor"];
 
 /// Valid per-sensor properties (indent 4 under any sensor block).
 const SENSOR_KEYS: &[&str] = &[
@@ -152,6 +156,13 @@ fn classify_section_key(section: &str, key: &str) -> KeyClass {
         }
         "cleanup" => {
             if CLEANUP_KEYS.contains(&key) {
+                KeyClass::Known
+            } else {
+                KeyClass::Unknown
+            }
+        }
+        "signals" => {
+            if SIGNALS_KEYS.contains(&key) {
                 KeyClass::Known
             } else {
                 KeyClass::Unknown
@@ -407,6 +418,26 @@ mod tests {
         assert_eq!(
             classify_section_key("engagement", "bogus"),
             KeyClass::Unknown
+        );
+    }
+
+    #[test]
+    fn classify_signals_keys() {
+        assert_eq!(
+            classify_section_key("signals", "half_life_seconds"),
+            KeyClass::Known
+        );
+        assert_eq!(
+            classify_section_key("signals", "presentation_floor"),
+            KeyClass::Known
+        );
+        assert_eq!(
+            classify_section_key("signals", "bogus"),
+            KeyClass::Unknown
+        );
+        assert_eq!(
+            classify_section_key("signals", "x-experimental"),
+            KeyClass::Known
         );
     }
 

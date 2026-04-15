@@ -7,3 +7,4 @@ license = "MIT"
 
 [dependencies]
 sensor-trait = { path = "../sensor-trait" }
+serde_json = "1"

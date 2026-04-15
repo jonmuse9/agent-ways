@@ -57,6 +57,12 @@ engagement:
   decay_per_minute: 0.1      # rate at which elevated threshold returns to baseline
   peer_activity_window: 900  # sliding window for per-peer engagement boost
 
+# Presentation-layer aging for peer signals (ADR-121, unified in ADR-123)
+# Consumed by sensor-peers to suppress aged backlog and reset on `re:` replies
+signals:
+  half_life_seconds: 1800    # exponential decay half-life (30 min default)
+  presentation_floor: 0.3    # suppress below this salience
+
 # Background cleanup of the signals base
 cleanup:
   enabled: true              # master switch
@@ -129,6 +135,17 @@ The action potential model parameters. Governs per-sensor refractory behavior. S
 | `burst_window`        | *no runtime effect* (implicit via half-life)       |
 
 **Auto-tuning.** Run `attend tune` to derive these from real session history. See [`engagement.md`](engagement.md#tuning-with-attend-tune) for how tuning works and how the linear-derived `decay_per_minute` relates to the engine's exponential half-life.
+
+### `signals`
+
+Presentation-layer aging for peer signals. Consumed by `sensor-peers` to decide whether an about-to-be-emitted observation is loud enough to surface. See [`salience.md`](salience.md) for the full design and ADR-121 / ADR-123 for the decision trail.
+
+- **`half_life_seconds`** (u64, default 1800): exponential decay half-life. A signal's salience halves every `half_life_seconds` seconds of quiet since its arrival (or its last `record_fire` reset). 30 minutes is a conservative first value; subject to `attend tune` once survey coverage exists.
+- **`presentation_floor`** (f64, default 0.3): below-floor signals are suppressed from the peer observation stream, without being deleted from disk. The 30-day retention sweep under `cleanup` is independent and unaffected.
+
+The gate runs inside `sensor-peers::read_signals`, keyed by signal id (= filename stem — the same shape `re:<id>` references in ADR-120 threaded replies). A threaded reply automatically resets the parent signal's salience to 1.0 via `record_fire` at the reply's arrival tick, so thread-alive parents stay presentable for new observers joining the same shared signal dir.
+
+`attend config lint` validates both keys; unknown sub-keys surface as warnings and can be removed with `--fix`.
 
 ### `cleanup`
 
@@ -267,7 +284,7 @@ Use this to confirm your config will actually work before launching attend — a
 
 Attend's YAML parser is deliberately minimal — it's a hand-written subset that handles the specific shape described above, with no `serde` dependency. It supports:
 
-- Two-level section headers (`governor:`, `engagement:`, `sensors:`)
+- Two-level section headers (`governor:`, `engagement:`, `signals:`, `cleanup:`, `sensors:`)
 - Four-space indent for sensor properties
 - Inline arrays (`requires: [Bash(gh:*), Read]`, `watch: [cargo, mix]`)
 - Block-form lists on a new line (`requires:` followed by indented `- item` lines) for `requires:` and `watch:`

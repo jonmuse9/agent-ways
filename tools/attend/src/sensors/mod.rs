@@ -112,6 +112,15 @@ pub fn register_sensors(
             }));
             // Align per-peer engagement window with global engagement config.
             peer_sensor.set_peer_activity_window(cfg.engagement.peer_activity_window);
+            // ADR-121 outward gate: apply the `signals:` block params so
+            // sensor-peers suppresses aged backlog and resets on `re:`
+            // replies. Defaults inside PeerSensor match SignalsConfig
+            // defaults, so this call is a no-op when the user's config
+            // does not override them.
+            peer_sensor.set_salience_params(
+                cfg.signals.half_life_seconds,
+                cfg.signals.presentation_floor,
+            );
             if !catchup {
                 peer_sensor.mark_existing_as_seen(focus);
             }
