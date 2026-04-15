@@ -137,6 +137,7 @@ pub fn way(id: &str, session_id: &str, trigger: &str) -> Result<String> {
         ("scope", scope),
         ("project", project_dir),
         ("session", session_id.to_string()),
+        ("token_position", token_pos.to_string()),
     ];
     if let Some(ref p) = parent_id {
         log_fields.push(("parent", p.clone()));
