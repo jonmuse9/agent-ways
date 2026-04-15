@@ -6,6 +6,20 @@ allowed-tools: Bash, Monitor, Read
 
 # Attend — Active Awareness
 
+<!--
+Messaging guidance lives in three synchronized sources. When you edit
+the peer-messaging section, the autonomy paragraph, the silence-is-valid
+callout, or the CLI-is-the-contract note, update all three:
+
+  - skills/attend/SKILL.md                                   (this file — read at /attend invocation)
+  - tools/sensor-disclosure/src/disclosures/messaging.md     (runtime reheat fired by sensor-disclosure)
+  - hooks/ways/softwaredev/environment/attend/attend.md      (just-in-time way via commands: attend)
+
+Drift between the three causes agents to receive inconsistent guidance
+at different points in a session. Keep the load-bearing framing
+(send vs reply, autonomy, silence, CLI contract) in lockstep.
+-->
+
 ## Step 1: Pre-flight
 
 Check that `attend` is installed:

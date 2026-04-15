@@ -13,6 +13,16 @@ scope: agent, subagent
 requires: ["Bash(attend:*)", "Bash(grep:*)", "Bash(ps:*)", "Bash(sed:*)"]
 ---
 <!-- epistemic: tool-knowledge -->
+<!--
+  Messaging guidance lives in three synchronized sources. When you edit
+  the peer-messaging section, the autonomy paragraph, the silence-is-valid
+  callout, or the CLI-is-the-contract note in this file, update the
+  other two so agents receive consistent guidance at every point:
+
+    - skills/attend/SKILL.md                                   (primer read at /attend)
+    - tools/sensor-disclosure/src/disclosures/messaging.md     (runtime reheat)
+    - hooks/ways/softwaredev/environment/attend/attend.md      (this file — just-in-time via `commands: attend`)
+-->
 # Attend
 
 `attend` is the active awareness module for Claude Code sessions. It runs as a persistent background process via Monitor, polling sensors on adaptive schedules and surfacing environmental changes as notifications.
