@@ -51,7 +51,7 @@ for WAYS_ROOT in "${WAYS_ROOTS[@]}"; do
     #   .../hooks/ways/softwaredev/code/quality/postcheck.sh
     #   -> softwaredev/code/quality
     way_dir="$(dirname "$postcheck")"
-    way_id="${way_dir#$WAYS_ROOT/}"
+    way_id="${way_dir#"$WAYS_ROOT"/}"
 
     [[ -n "${FIRED[$way_id]:-}" ]] && continue
 

@@ -146,13 +146,24 @@ fn cmd_run_with_catchup(catchup: bool) {
     // The old model's additional scaling for fires past threshold is
     // not preserved — that scaling rarely activated in practice and the
     // refactor opts for a flat ceiling.
+    let multiplier_half_life = sensor_trait::engagement::rate_per_min_to_half_life_secs(
+        cfg.engagement.decay_per_minute,
+    );
+    // Surprise guard: very high decay_per_minute values produce sub-minute
+    // half-lives that rarely match operator intent. Warn rather than clamp
+    // so the operator keeps authority over their config, but make the
+    // effective value visible instead of letting it surprise them later.
+    if cfg.engagement.decay_per_minute > 0.5 && multiplier_half_life < 60 {
+        eprintln!(
+            "[attend] note: engagement.decay_per_minute={:.3} → multiplier_half_life≈{}s (aggressive decay; adjust in attend config if unintended)",
+            cfg.engagement.decay_per_minute, multiplier_half_life,
+        );
+    }
     let engagement_curve = sensor_trait::Curve::ActionPotential {
         burst_threshold: cfg.engagement.burst_threshold,
         peak_multiplier: 1.0 + cfg.engagement.step_multiplier,
         absolute_refractory: cfg.engagement.absolute_refractory.as_secs(),
-        multiplier_half_life: sensor_trait::engagement::rate_per_min_to_half_life_secs(
-            cfg.engagement.decay_per_minute,
-        ),
+        multiplier_half_life,
     };
     for slot in &mut slots {
         slot.engagement = sensor_trait::EngagementState::new(engagement_curve.clone());

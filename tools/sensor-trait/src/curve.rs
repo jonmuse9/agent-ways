@@ -125,15 +125,23 @@ impl Curve {
         }
         match self {
             Curve::Exponential { half_life } => {
+                // Semantic: smallest delta at which salience is strictly
+                // less than floor. salience(d) = 0.5^(d/H) < floor iff
+                // d > H · log2(1/floor). The smallest integer d > X is
+                // floor(X) + 1 — which disagrees with ceil(X) only at
+                // exact-integer X (e.g., floor=0.5 → X = H exactly), and
+                // that disagreement is exactly where the old math was
+                // off-by-one relative to the caller's strict `<` check.
+                if floor >= 1.0 {
+                    // salience starts at 1.0 and only decreases; it is
+                    // never strictly less than a floor of 1.0 or more.
+                    return None;
+                }
                 if *half_life == 0 {
-                    return Some(0);
+                    return Some(1);
                 }
                 let ratio = (1.0 / floor).log2();
-                if ratio <= 0.0 {
-                    Some(0)
-                } else {
-                    Some((*half_life as f64 * ratio).ceil() as TickDelta)
-                }
+                Some((*half_life as f64 * ratio).floor() as TickDelta + 1)
             }
             Curve::Flat { suppression } => Some(*suppression),
             Curve::ProgressiveStaircase { steps } => {
@@ -271,11 +279,19 @@ mod tests {
 
     #[test]
     fn refire_delta_matches_curve_shapes() {
-        // Exponential: floor 0.5 → exactly half_life.
+        // Exponential: floor 0.5 → first delta where salience is strictly
+        // less than 0.5. At delta = half_life, salience is exactly 0.5,
+        // which is NOT strictly less than 0.5, so the first qualifying
+        // delta is half_life + 1. Same +1 logic for floor 0.25 at 2×H.
         let c = Curve::Exponential { half_life: 100 };
-        assert_eq!(c.refire_delta(0.5), Some(100));
-        // Floor 0.25 → 2 × half_life.
-        assert_eq!(c.refire_delta(0.25), Some(200));
+        assert_eq!(c.refire_delta(0.5), Some(101));
+        assert_eq!(c.refire_delta(0.25), Some(201));
+        // Non-integer boundary — no off-by-one, ceil and floor+1 agree.
+        // log2(1/0.3) ≈ 1.737, 100 × 1.737 ≈ 173.7, floor+1 = 174.
+        assert_eq!(c.refire_delta(0.3), Some(174));
+        // Floor ≥ 1.0 — salience never strictly less.
+        assert_eq!(c.refire_delta(1.0), None);
+        assert_eq!(c.refire_delta(1.5), None);
 
         // Flat: always suppression, regardless of floor.
         let c = Curve::Flat { suppression: 500 };

@@ -374,8 +374,22 @@ fn apply_one(s: &Suggestion) -> Result<PathBuf> {
     let new_block = render_curve_yaml(&s.suggested);
     let updated = replace_curve_block(&content, &new_block)
         .ok_or_else(|| anyhow::anyhow!("no curve: block found in frontmatter"))?;
-    std::fs::write(&path, updated)?;
+    write_atomic(&path, &updated)?;
     Ok(path)
+}
+
+/// Write-to-temp-and-rename. Prevents half-written files if the process
+/// is killed mid-write during a multi-file `--apply` run. `rename` within
+/// the same directory is atomic on POSIX filesystems.
+fn write_atomic(path: &Path, content: &str) -> Result<()> {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("path has no filename"))?;
+    let tmp = parent.join(format!(".{}.tmp", file_name.to_string_lossy()));
+    std::fs::write(&tmp, content).with_context(|| format!("writing temp file {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("renaming temp file to {}", path.display()))?;
+    Ok(())
 }
 
 fn render_curve_yaml(c: &Curve) -> Vec<String> {
@@ -499,6 +513,24 @@ mod tests {
         let src = "---\ndescription: no curve here\n---\nbody\n";
         let new_block = vec!["curve:".to_string(), "  type: Exponential".to_string(), "  half_life: 1000".to_string()];
         assert!(replace_curve_block(src, &new_block).is_none());
+    }
+
+    #[test]
+    fn replace_curve_block_preserves_trailing_blank_before_next_field() {
+        // A blank line that separates the curve block from a following
+        // top-level key must be preserved — it wasn't part of the curve
+        // block and removing it would churn the diff and coalesce two
+        // logically separate sections.
+        let src = "---\ndescription: test\ncurve:\n  type: Exponential\n  half_life: 30000\n\nthreshold: 2.0\n---\nbody\n";
+        let new_block = vec![
+            "curve:".to_string(),
+            "  type: Exponential".to_string(),
+            "  half_life: 18000".to_string(),
+        ];
+        let out = replace_curve_block(src, &new_block).expect("curve block found");
+        // The blank line between curve and threshold must survive the edit.
+        assert!(out.contains("half_life: 18000\n\nthreshold: 2.0"));
+        assert!(!out.contains("half_life: 30000"));
     }
 
     #[test]
