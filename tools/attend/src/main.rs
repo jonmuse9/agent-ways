@@ -200,10 +200,29 @@ fn cmd_run_with_catchup(catchup: bool) {
         env!("CARGO_PKG_VERSION"), env!("ATTEND_COMMIT"), sensor_list, focus_desc
     );
 
-    // Suppress repeated startup banners — only emit full banner when config changes
+    // Suppress repeated startup banners — only emit full banner when config
+    // changes. The `ATTEND_RELOADED_FROM` env var is set by the self-reload
+    // exec() path below; when present, this process is the post-exec child
+    // of a binary-change reload, so the banner explicitly names it as a
+    // hot-swap rather than a silent "unchanged" restart. The env var is
+    // consumed (removed) to keep it from leaking into any subprocesses
+    // attend itself spawns.
+    let reloaded_from = std::env::var("ATTEND_RELOADED_FROM").ok();
+    std::env::remove_var("ATTEND_RELOADED_FROM");
     let stamp_path = signals_base().join("_last_banner");
     let prev_fingerprint = std::fs::read_to_string(&stamp_path).unwrap_or_default();
-    if banner_fingerprint == prev_fingerprint.trim() {
+    if let Some(prev_version) = reloaded_from {
+        // Always emit on a binary hot-swap — the operator needs to know
+        // the running code changed under them, even when sensors/focus
+        // are identical.
+        println!(
+            "[attend] reloaded {} → v{} ({}) — binary updated, state preserved across exec()",
+            prev_version,
+            env!("CARGO_PKG_VERSION"),
+            env!("ATTEND_COMMIT")
+        );
+        std::fs::write(&stamp_path, &banner_fingerprint).ok();
+    } else if banner_fingerprint == prev_fingerprint.trim() {
         println!("[attend] restarted (unchanged)");
     } else {
         println!("[attend] v{} ({}) — sensors: {} | focus: {} | send: attend send <msg> (broadcast)",
@@ -270,11 +289,22 @@ fn cmd_run_with_catchup(catchup: bool) {
                             use std::io::Write;
                             std::io::stdout().flush().ok();
 
+                            // Tag the new process with the version we are
+                            // reloading from so its startup banner can name
+                            // it as a hot-swap, not a silent restart. Any
+                            // value works; format mirrors the banner string.
+                            let prev_version = format!(
+                                "v{} ({})",
+                                env!("CARGO_PKG_VERSION"),
+                                env!("ATTEND_COMMIT")
+                            );
+
                             // exec self via std::os::unix
                             use std::os::unix::process::CommandExt;
                             let args: Vec<String> = std::env::args().collect();
                             let err = std::process::Command::new(&args[0])
                                 .args(&args[1..])
+                                .env("ATTEND_RELOADED_FROM", &prev_version)
                                 .exec();
                             // exec() only returns on failure
                             emit::log(&format!("self-reload failed: {}", err));
@@ -610,12 +640,17 @@ fn cmd_inbox() {
 
     if entries.is_empty() {
         println!("no messages");
-    } else {
-        // Render a stable 6-column layout regardless of whether any
-        // message is threaded. The `Re` column stays empty for legacy
-        // entries — visual stability beats saving a column, and the
-        // inbox reshuffling mid-conversation as threads come and go
-        // was surprising in review.
+        return;
+    }
+
+    // Pipe-aware output: when stdout is a real terminal, render the
+    // compact 6-column table (nice at-a-glance scan for humans). When
+    // stdout is piped — Claude's Bash tool, `| less`, `>file`, etc. —
+    // render one untruncated block per message so ids and bodies stay
+    // legible. Mirrors the behavior of `ls` switching to one-per-line
+    // output when it detects a pipe.
+    use std::io::IsTerminal;
+    if std::io::stdout().is_terminal() {
         let mut t = agent_fmt::Table::new(&["Scope", "From", "ID", "Re", "Message", "Source"]);
         t.max_width(0, 10);
         t.max_width(1, 24);
@@ -626,6 +661,19 @@ fn cmd_inbox() {
         }
         t.print();
         println!("  {} message(s)", entries.len());
+    } else {
+        // Non-TTY: one block per message, full-width fields.
+        for entry in &entries {
+            println!("[{}] {}", entry.scope, entry.sender);
+            println!("  id:      {}", entry.id);
+            if !entry.re.is_empty() {
+                println!("  re:      {}", entry.re);
+            }
+            println!("  source:  {}", entry.source);
+            println!("  message: {}", entry.message);
+            println!();
+        }
+        println!("{} message(s)", entries.len());
     }
 }
 
@@ -907,6 +955,56 @@ fn cmd_send(args: &[String]) {
     }
 
     eprintln!("[attend] signal written ({}, {} dirs): {}", scope, dest_dirs.len(), filename);
+}
+
+/// `attend reply <message>` — thin sugar over `attend send --re <last-inbound>`.
+///
+/// Reads the most-recent inbound signal id from per-session state that
+/// `sensor-peers::read_signals` writes every time it emits a peer
+/// observation. If no prior inbound exists the command exits with a
+/// clear error rather than silently falling through to an unthreaded
+/// send — threaded-vs-unthreaded is a semantic distinction and
+/// guessing is the wrong default.
+///
+/// The entire point of this subcommand is to keep the 50-char signal
+/// uuid out of the agent's context window. A caller never sees the
+/// id, never has to hunt for it in `attend inbox`, and never reaches
+/// into `~/.cache/attend/signals/` to find it. Delegating to
+/// `cmd_send` preserves every existing `send` flag (`--focus`,
+/// `--to`, `--broadcast`) without duplication.
+#[cfg(feature = "sensor-peers")]
+fn cmd_reply(args: &[String]) {
+    let session_id = own_session_id()
+        .unwrap_or_else(|| format!("pid-{}", std::process::id()));
+    let last_id = match sensor_peers::last_inbound::read(&session_id) {
+        Some(id) => id,
+        None => {
+            eprintln!(
+                "attend reply: no prior inbound signal to thread against."
+            );
+            eprintln!(
+                "  (reply is for responding to a peer message your sensor surfaced.)"
+            );
+            eprintln!(
+                "  if you are starting a new topic, use `attend send` instead."
+            );
+            std::process::exit(1);
+        }
+    };
+    // Prepend `--re <id>` to whatever flags the caller passed, then
+    // delegate to cmd_send. All other routing flags (--focus, --to,
+    // --broadcast) flow through untouched.
+    let mut forwarded: Vec<String> = Vec::with_capacity(args.len() + 2);
+    forwarded.push("--re".to_string());
+    forwarded.push(last_id);
+    forwarded.extend(args.iter().cloned());
+    cmd_send(&forwarded);
+}
+
+#[cfg(not(feature = "sensor-peers"))]
+fn cmd_reply(_args: &[String]) {
+    eprintln!("attend reply: sensor-peers feature is not compiled in this build");
+    std::process::exit(1);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1938,6 +2036,9 @@ fn main() {
         Some("send") => {
             cmd_send(&args[1..]);
         }
+        Some("reply") => {
+            cmd_reply(&args[1..]);
+        }
         Some("focus") => {
             cmd_focus_new(&args[1..]);
         }
@@ -2013,6 +2114,7 @@ fn main() {
                 ("peers",       "List active Claude Code sessions and focus groups"),
                 ("inbox",       "Read pending messages from peers"),
                 ("send",        "Send a signal to peer sessions"),
+                ("reply",       "Reply to the most recent peer message (auto-threaded)"),
                 ("focus",       "Manage attention groups (on, off, list, all, clear, pin, dissolve)"),
                 ("scene",       "Activate a named scene (reconfigure focus)"),
                 ("scenes",      "List available scenes"),

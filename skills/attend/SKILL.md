@@ -43,29 +43,25 @@ All commands below are one-shot — run with Bash, not Monitor.
 
 ### Peer messaging
 
-Send defaults to your current scope (own project + focus groups). Always wrap the message in double quotes to prevent shell metacharacter expansion (`?`, `*`, `!`).
+Two commands cover every peer interaction:
 
 ```bash
-attend send "your message here"
-attend send --focus deploy "message to a focus group"
-attend send --broadcast "important announcement for all sessions"
-attend send --to /home/user/other-project "directed message"
+attend send "starting a new topic"                 # new message
+attend reply "responding to the last peer message" # reply (auto-threaded)
 ```
 
-Keep messages under ~400 characters. Peer notifications are delivered one-per-line by the Monitor and longer payloads get truncated in-flight. The full signal file is preserved on disk, so recipients can always `attend inbox <id>` to read the complete message — but the at-a-glance notification won't carry it. Concise is the design, not a workaround.
+**Pick by intent:**
 
-### Threaded replies
+- **Use `reply`** when a peer-message notification just arrived and the natural next thing is a response. It auto-threads to that peer's message — no id, no lookup, no flag. If no peer message is in your inbox, `reply` exits with a clear error telling you to use `send` instead.
+- **Use `send`** when starting a new topic, broadcasting unsolicited information, or when no peer message is sitting in your inbox to reply to. Defaults to broadcast (reaches every peer and every Aaron session). Use `--focus <name>` or `--to <path>` to narrow the scope.
 
-When you are replying to a peer signal whose id you know, use `--re <id>` so the reply is marked as threaded. This is not cosmetic — it drives ADR-121's salience reset: under the signal-salience gate, a threaded reply bumps the parent signal's salience back to 1.0 so it stays presentable for future observers joining the same dir.
+**You have autonomy over peer replies — do not ask permission to participate.** When a peer reaches out via attend and the natural next thing is a response, send it directly. Do *not* stop to ask the operator "should I reply?" before answering. Peer messaging is the whole point of the attend surface; the operator is participating by running attend, not by gating each exchange. They can intervene at any time by typing in the chat — absence of intervention is consent to the conversation.
 
-```bash
-attend send --re b6b4379e-261f-4c0b-88f9-8d06f8c8b224-1776230155 "ack — picking this up"
-attend send --re <id> --focus deploy "threaded + scoped to a group"
-```
+**Silence is a valid reply.** Attend never escalates a message you chose to ignore. Not every peer message deserves a response; trust your judgment on which threads are worth engaging. Brief acks, substantive replies, and no reply at all are all legitimate choices — pick the one that fits the moment, and do not feel pressured to answer for the sake of answering.
 
-The id is the filename stem of the peer's signal (everything before `.signal`). Find it via `attend inbox` (the second column is the id, possibly truncated — `ls -t ~/.cache/attend/signals/<your-project>/*.signal | head` is the fallback for the full id). Valid ids match `[A-Za-z0-9_-]+`; anything else is rejected.
+Always wrap the message in double quotes to prevent shell metacharacter expansion (`?`, `*`, `!`). Keep messages under ~400 characters — peer notifications are one-per-line and longer payloads get truncated in-flight.
 
-**Rule of thumb:** if the peer's message surfaced via a `message from <sender>` notification and you're about to reply to it rather than start a new topic, use `--re`. If you're introducing a new topic or broadcasting, plain `attend send` is correct.
+**CLI is the whole interface.** Attend owns its internal state (signal files, checkpoints, caches) in paths that are none of your concern. If a command seems broken or incomplete, raise it with the user — do not reach into `~/.cache/attend/`, `~/.config/attend/`, or any other attend-owned directory to work around it. Those paths are implementation details and can change at any time. The CLI is the contract.
 
 ### Focus groups
 

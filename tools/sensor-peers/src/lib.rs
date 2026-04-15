@@ -1,3 +1,4 @@
+pub mod last_inbound;
 mod salience;
 
 use salience::{extract_re_id, signal_id_from_filename, SignalSalience};
@@ -341,6 +342,29 @@ impl PeerSensor {
                     }
                     if include_reply_hint {
                         self.reply_hint_shown = true;
+                    }
+
+                    // Track most-recent inbound for `attend reply`. We
+                    // record here (after the gate passes and we've
+                    // decided to emit an observation) so `attend reply`
+                    // targets what the operator actually saw, not what
+                    // was silently suppressed. The own-session-id keys
+                    // the file so concurrent attend processes don't
+                    // collide.
+                    //
+                    // Filter: skip signals originating from the same
+                    // working directory as this observer. The own-session
+                    // skip above only catches the *current* claude session
+                    // id; a previous incarnation of the same agent (different
+                    // session uuid, same cwd) would otherwise pass through
+                    // and pollute last_inbound, causing `attend reply` to
+                    // auto-thread to the agent's own past self. Same-cwd
+                    // matching is a reliable proxy because Claude Code runs
+                    // one agent per project at a time.
+                    if let Some(ref sid) = self.own_session_id {
+                        if source_cwd != focus.working_dir {
+                            last_inbound::record(sid, &signal_id);
+                        }
                     }
                 }
 

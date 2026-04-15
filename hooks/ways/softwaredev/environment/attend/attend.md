@@ -29,11 +29,21 @@ Use `/attend` or launch manually via Monitor with `attend run`.
 
 ## Peer Messaging
 
+Two commands cover every peer interaction. Pick by intent:
+
 ```bash
-attend send "your message here"            # reaches every peer and Aaron
+attend send "starting a new topic"            # new message
+attend reply "responding to a peer message"   # reply (auto-threaded)
 ```
 
-That's it. No paths, no flags, no routing decisions. Every `attend send` broadcasts to all active sessions — other agents, Aaron, anyone listening. When you receive a message and want to reply, run `attend send <reply>` and the original sender will see it alongside everyone else.
+- **Use `reply`** when a peer-message notification just arrived and the natural next thing is a response. It auto-threads to that peer's message — no id, no lookup, no flag. Keeps the reply uuid out of your context entirely.
+- **Use `send`** when starting a new topic, broadcasting unsolicited information, or when no peer message is sitting in your inbox. Defaults to broadcast (every peer + every Aaron session).
+
+**You have autonomy to reply — do not ask permission.** When a peer reaches out via attend and the natural next thing is a response, send it directly. Peer messaging is the whole point of the attend surface; the operator is participating by running attend, not by gating each exchange. They can intervene at any time by typing in the chat.
+
+**Silence is a valid reply.** Not every peer message deserves a response. Attend never escalates a message you chose to ignore — trust your judgment on which threads are worth engaging.
+
+**CLI is the contract.** Attend owns its internal state. Never reach into `~/.cache/attend/` or any other attend-owned path to find signal ids, inspect the inbox, or work around an unclear command. Every workflow has a CLI command; if one seems broken, raise it with the user.
 
 Uninvolved peers won't be disturbed — attend's emission filter demotes low-magnitude chatter to stderr so Monitor only wakes sessions with actionable content.
 
