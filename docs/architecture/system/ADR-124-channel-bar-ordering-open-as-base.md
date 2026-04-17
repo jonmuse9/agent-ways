@@ -111,27 +111,24 @@ convention), but `@open/` goes away.
 Left-to-right order:
 
 1. **`#open` (base)** — always first, never moved, never hidden.
-2. **Pinned groups** — groups with `pinned: true` in `_groups.yaml`,
-   in the order they were pinned. Pinned = "this is a standing
-   concern I don't want to fall off the screen".
-3. **Unpinned groups with recent activity** — ordered by most-recent
-   signal timestamp (newest leftmost within this band).
-4. **Unpinned quiet groups** — alphabetical.
+2. **Everything else** — whatever order the underlying scan
+   returns (today that's alphabetical by group name).
 
-Rationale: pinning is the human's explicit "keep this close"
-affordance; after that, recency is the best predictor of relevance
-for active work; alphabetical is the fallback when nothing else
-differentiates.
+Originally this section prescribed bands for pinned / recent /
+quiet. That ordering rule deferred — pin-order would require a
+`_groups.yaml` schema change (pin timestamp), and recency requires
+a per-group mtime index the scan doesn't track. The base-channel
+leftmost is the one invariant this PR needs; richer ordering can
+land in a follow-up once there's pressure for it.
 
 ### 4. Visual treatment
 
 - Base channel `#open` renders with its hashed glyph + color same as
-  any group, but gets a subtle leading prefix (e.g. a left-margin dot
-  or a bold weight) so the eye registers its special role.
-- Pinned groups get a pin indicator (📌 or ⚑) next to their glyph.
-- Groups with unread signals get an unread dot to the left of the
-  glyph (ADR-XXX unread indicators — tracked separately, noted here
-  because the channel bar is where it'd surface).
+  any group, but with a bold weight so the eye registers its
+  special role as the commons.
+- Pin indicators and unread dots are deferred to a follow-up PR
+  alongside the ordering rule — no value in half-implementing them
+  without the band structure they're meant to cue.
 
 ### 5. Agent legend: three-state presence
 

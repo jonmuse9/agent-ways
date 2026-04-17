@@ -39,11 +39,22 @@ pub struct GroupMembership {
 }
 
 /// One discovered group with its display identity baked in.
+///
+/// `is_base` marks the synthetic `#open` base channel — prepended by
+/// [`channels`] regardless of on-disk state. A base-channel entry has
+/// no membership and no underlying `@open/` directory; it's the TUI
+/// surface for `_broadcast/` (see [`BASE_CHANNEL_NAME`]).
 #[derive(Debug, Clone)]
 pub struct KnownGroup {
     pub group: Group,
     pub membership: GroupMembership,
+    pub is_base: bool,
 }
+
+/// Display name for the base channel rendered as `#open`. Also the
+/// disk name we filter out of the regular scan so a lingering
+/// `@open/` dir can't double-render as a second `#open` chip.
+pub const BASE_CHANNEL_NAME: &str = "open";
 
 /// Scan the signals base for groups.
 ///
@@ -77,6 +88,7 @@ pub fn scan_in(base: &Path, caps: TermCaps) -> Vec<KnownGroup> {
             Some(KnownGroup {
                 group: Group::for_name(&bare, caps),
                 membership,
+                is_base: false,
             })
         })
         .collect();
@@ -84,6 +96,37 @@ pub fn scan_in(base: &Path, caps: TermCaps) -> Vec<KnownGroup> {
     // Groups aren't temporally ordered the way agents are (no
     // "newest-seen" concept) — alpha is the least-surprising default.
     out.sort_by(|a, b| a.group.name.cmp(&b.group.name));
+    out
+}
+
+/// Channel-bar view: base `#open` followed by every discovered group.
+///
+/// The base channel is synthesised at the head of the list so it
+/// always renders leftmost and never depends on `@open/` existing on
+/// disk (per ADR-124 §1). Any literal `open` directory surfaced by
+/// [`scan`] is dropped — `#open` is the base's display name, and the
+/// real traffic rides `_broadcast/` under the hood (ADR-124 §2).
+///
+/// Groups after `#open` preserve the order [`scan`] returns them
+/// in — alphabetical today. Richer ordering (pinned, recent) is
+/// deferred per ADR-124 §3.
+pub fn channels(caps: TermCaps) -> Vec<KnownGroup> {
+    channels_in(&signals_base(), caps)
+}
+
+/// Test-seam counterpart to [`channels`] — same shape, arbitrary base.
+pub fn channels_in(base: &Path, caps: TermCaps) -> Vec<KnownGroup> {
+    let mut out = Vec::with_capacity(8);
+    out.push(KnownGroup {
+        group: Group::for_name(BASE_CHANNEL_NAME, caps),
+        membership: GroupMembership::default(),
+        is_base: true,
+    });
+    out.extend(
+        scan_in(base, caps)
+            .into_iter()
+            .filter(|g| g.group.name != BASE_CHANNEL_NAME),
+    );
     out
 }
 
@@ -165,9 +208,15 @@ fn parse_groups_yaml(content: &str) -> HashMap<String, GroupMembership> {
 }
 
 /// Resolve a `#name` addressed send to the group's signal directory.
+///
 /// Returns `None` if the named group has no on-disk dir (i.e. the
-/// user typed an unknown group name).
+/// user typed an unknown group name). The special name `"open"`
+/// resolves to `_broadcast/` — that's the base channel's
+/// on-disk home (ADR-124 §2); there is no `@open/` directory.
 pub fn resolve_group_dir(name: &str) -> Option<PathBuf> {
+    if name == BASE_CHANNEL_NAME {
+        return Some(crate::signal::broadcast_dir());
+    }
     let dir = signals_base().join(format!("{GROUP_PREFIX}{name}"));
     if dir.is_dir() {
         Some(dir)
@@ -197,6 +246,58 @@ mod tests {
     fn write_yaml(base: &Path, content: &str) {
         let mut f = fs::File::create(base.join("_groups.yaml")).unwrap();
         f.write_all(content.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn channels_prepends_base_with_empty_scan() {
+        // No groups on disk → the channel bar still shows `#open`.
+        // This is the ADR-124 §1 invariant: base never hides.
+        let base = tempdir_like();
+        let ch = channels_in(&base, TermCaps::Rich);
+        assert_eq!(ch.len(), 1);
+        assert!(ch[0].is_base);
+        assert_eq!(ch[0].group.name, BASE_CHANNEL_NAME);
+        assert!(ch[0].membership.members.is_empty());
+    }
+
+    #[test]
+    fn channels_base_leads_real_groups() {
+        let base = tempdir_like();
+        fs::create_dir_all(base.join("@deploy")).unwrap();
+        fs::create_dir_all(base.join("@infra")).unwrap();
+        let ch = channels_in(&base, TermCaps::Rich);
+        let names: Vec<_> = ch.iter().map(|c| c.group.name.as_str()).collect();
+        assert_eq!(names, vec!["open", "deploy", "infra"]);
+        assert!(ch[0].is_base);
+        assert!(!ch[1].is_base);
+        assert!(!ch[2].is_base);
+    }
+
+    #[test]
+    fn channels_drops_literal_open_dir() {
+        // A lingering `@open/` dir from before ADR-124 must not
+        // double-render. The synthetic base replaces it; real
+        // traffic rides `_broadcast/`.
+        let base = tempdir_like();
+        fs::create_dir_all(base.join("@open")).unwrap();
+        fs::create_dir_all(base.join("@deploy")).unwrap();
+        let ch = channels_in(&base, TermCaps::Rich);
+        let names: Vec<_> = ch.iter().map(|c| c.group.name.as_str()).collect();
+        // Exactly one `open` — the synthetic base — and `deploy`
+        // follows. The on-disk `@open/` is filtered out.
+        assert_eq!(names, vec!["open", "deploy"]);
+        assert!(ch[0].is_base);
+    }
+
+    #[test]
+    fn resolve_group_dir_open_routes_to_broadcast() {
+        // `#open` writes land in `_broadcast/` — ADR-124 §2.
+        // Point $HOME at a temp dir so the resolver doesn't touch
+        // the real cache.
+        let home = tempdir_like();
+        std::env::set_var("HOME", &home);
+        let dir = resolve_group_dir("open").expect("open must resolve");
+        assert_eq!(dir, crate::signal::broadcast_dir());
     }
 
     #[test]

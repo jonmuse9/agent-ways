@@ -18,7 +18,7 @@ use iocraft::prelude::*;
 use crate::chip::{chip_for, color_for, known_identities, resolve_nickname, CHIP_WIDTH};
 use crate::sessions::discover as discover_sessions;
 use crate::text_layout::{render_cursor, split_at_char, visual_line_count};
-use crate::groups::{resolve_group_dir, scan as scan_groups};
+use crate::groups::{channels, resolve_group_dir};
 use crate::legend::{
     apply_completion, best_completion, best_group_completion, find_trailing_mention,
     group_legend_row, legend_row, parse_addressed, Addressed, Sigil,
@@ -145,7 +145,7 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                                 .map(|hit| apply_completion(&buf, &mention, &hit.nickname))
                         }
                         Sigil::Group => {
-                            let groups = scan_groups(caps);
+                            let groups = channels(caps);
                             best_group_completion(mention.partial, &groups)
                                 .map(|hit| apply_completion(&buf, &mention, &hit.group.name))
                         }
@@ -253,7 +253,11 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     //   do anyway. Simpler than caching with invalidation.
     let seed_sessions = discover_sessions();
     let known = known_identities(&signals.read(), &seed_sessions, caps);
-    let groups_known = scan_groups(caps);
+    // `channels` prepends the synthetic `#open` base and drops any
+    // lingering literal `open` group so the legend has a single
+    // commons chip (ADR-124 §1–§2). The base entry has empty
+    // membership, so it's a no-op for `session_to_groups` below.
+    let groups_known = channels(caps);
     // Pre-index session-id → groups once per render so the chip
     // loop is O(signals) instead of O(signals · groups · members).
     // At today's scale neither form matters, but the render path is
