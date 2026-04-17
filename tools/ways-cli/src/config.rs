@@ -214,6 +214,19 @@ mod tests {
     }
 
     #[test]
+    fn apply_yaml_threshold_fields() {
+        let mut cfg = Config::default();
+        cfg.apply_yaml(
+            "default_embed_threshold: 0.35\n\
+             default_multi_embed_threshold: 0.60\n\
+             parent_boost_floor: 0.30",
+        );
+        assert_eq!(cfg.default_embed_threshold, 0.35);
+        assert_eq!(cfg.default_multi_embed_threshold, 0.60);
+        assert_eq!(cfg.parent_boost_floor, 0.30);
+    }
+
+    #[test]
     fn apply_ways_json() {
         let mut cfg = Config::default();
         cfg.apply_ways_json(r#"{"output_language":"de","disabled":["ea"]}"#);

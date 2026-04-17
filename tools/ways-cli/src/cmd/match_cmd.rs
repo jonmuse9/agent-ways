@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use agent_fmt::{Align, Table};
 use crate::util::xdg_cache_dir;
@@ -101,7 +100,3 @@ fn load_descriptions(corpus_path: &str) -> HashMap<String, String> {
     map
 }
 
-#[allow(dead_code)]
-fn default_corpus_path() -> PathBuf {
-    xdg_cache_dir().join("claude-ways/user/ways-corpus.jsonl")
-}
