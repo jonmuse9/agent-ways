@@ -104,7 +104,7 @@ The second prompt — "are our ADRs current with what we've shipped" — missed.
 
 ### Step 3: Diagnose the miss
 
-Historical note: this walkthrough was authored when scoring used BM25 (term-overlap weighted by rarity). Under BM25, the prompt's "current" and "shipped" didn't appear in the vocabulary, and the only matching term was "adr" — a single term can't carry the score past 2.5. The embedding engine (ADR-125) makes the same diagnosis more forgiving for paraphrase, but the underlying lesson stands: vocabulary tuned for what *users actually say* outperforms vocabulary tuned for the topic in the author's head.
+The prompt's "current" and "shipped" didn't appear in the vocabulary, and the only overlapping term was "adr" — not enough signal to clear the threshold. The embedding engine (ADR-125) is more forgiving for paraphrase than term-overlap scoring would have been, but the underlying lesson stands: vocabulary tuned for what *users actually say* outperforms vocabulary tuned for the topic in the author's head.
 
 This is the kind of gap that's invisible when you write the vocabulary by thinking about the *topic* — you think "ADR reconciliation" and write `reconcile drift stale`. But a user says "are our ADRs current with what we've shipped" using completely different words for the same concept.
 

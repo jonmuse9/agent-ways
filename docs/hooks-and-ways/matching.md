@@ -107,7 +107,7 @@ The matching system is a **text retrieval** system. The user's prompt is the que
 
 The test harness is essentially the **Cranfield evaluation paradigm**: a fixed test collection (`test-fixtures.jsonl`) + relevance judgments (expected values) + evaluation metrics (TP/FP/TN/FN). Cyril Cleverdon developed this at Cranfield University in the early 1960s. TREC (Text REtrieval Conference) has been running standardized evaluations on the same model since 1992. Our harness is a miniature TREC track.
 
-Earlier versions of this system used Okapi BM25 (Robertson and Sparck Jones, 1976; refined at City University London's Okapi system through the 1990s) as the primary scorer. With the multilingual and semantic-coverage requirements in ADR-108 and ADR-125, the system moved to sentence-embedding cosine similarity as the sole retrieval tier. The IR lineage below still frames the tuning workflow, but the numerator changed from IDF-weighted term overlap to learned embedding similarity.
+The system uses sentence-embedding cosine similarity as the sole retrieval tier (ADR-108 and ADR-125). The IR lineage below still frames the tuning workflow — document representations, test collections, precision-first evaluation — but the numerator is learned embedding similarity rather than hand-tuned term overlap.
 
 ### Why this matters
 
@@ -131,9 +131,8 @@ The field term for where we sit: **manual relevance engineering** with **Cranfie
 ### References
 
 - Cleverdon, C. W. (1967). The Cranfield tests on index language devices. *Aslib Proceedings*, 19(6), 173-194.
-- Robertson, S. E., & Sparck Jones, K. (1976). Relevance weighting of search terms. *Journal of the American Society for Information Science*, 27(3), 129-146.
-- Robertson, S. E., Walker, S., et al. (1995). Okapi at TREC-3. *Proceedings of TREC-3*, NIST.
 - Voorhees, E. M. (2002). The philosophy of information retrieval evaluation. *CLEF 2001*, LNCS 2406, 355-370.
+- Reimers, N., & Gurevych, I. (2019). Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks. *EMNLP 2019*.
 
 ## State Triggers
 

@@ -287,7 +287,7 @@ flowchart TB
 |--------|----------|--------|-------------|
 | **Embedding** | 98.4% (63/64) | ~20ms | `way-embed` binary + GGUF model (21MB) |
 
-The embedding model is a hard dependency of `ways`. See ADR-125 for why BM25 and other fallback tiers were removed.
+The embedding model is a hard dependency of `ways`. See ADR-125 for the authored disclosure graph model and the single-tier decision.
 
 ## Macro Injection
 
