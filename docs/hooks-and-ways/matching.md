@@ -1,18 +1,130 @@
-# Matching Modes
+# Matching and Routing
 
-How ways decide when to fire.
+How ways decide when to fire, and how progressive disclosure is structured.
 
-## Overview
+## The Way Graph
 
-Each way declares a matching strategy in its YAML frontmatter. The strategy determines what input is tested and how similarity is measured.
+Ways are not a flat list — they form an **authored disclosure graph** (ADR-125). Each way is a node; the graph has three kinds of edges.
 
-| Mode | Speed | Precision | Best For |
-|------|-------|-----------|----------|
-| **Regex** | Fast | Exact | Known keywords, command names, file patterns |
-| **Semantic (embedding)** | Fast | Fuzzy | Broad concepts that users describe many ways |
-| **State** | Fast | Conditional | Session conditions, not content matching |
+```mermaid
+graph TD
+    SD[softwaredev]
+    Code[softwaredev/code]
+    Quality[softwaredev/code/quality]
+    Testing[softwaredev/code/testing]
+    Delivery[softwaredev/delivery]
+    Commits[softwaredev/delivery/commits]
+    Branching[softwaredev/delivery/branching]
 
-Matching is **additive**: a way can have both pattern and semantic triggers. Either channel firing activates the way.
+    SD --> Code
+    SD --> Delivery
+    Code --> Quality
+    Code --> Testing
+    Delivery --> Commits
+    Delivery --> Branching
+
+    Commits -. See Also .-> Branching
+    Quality -. sibling 0.62 .-> Testing
+
+    classDef node fill:#f9f,stroke:#333,stroke-width:1px
+    classDef sibling stroke-dasharray: 5 5
+```
+
+- **Parent/child edges** — from the directory tree (`softwaredev/delivery/commits` is a child of `softwaredev/delivery`)
+- **See Also edges** — declared explicitly in a way's body prose
+- **Sibling edges** — computed by `ways siblings`, weighted by cosine similarity between canonical embeddings
+
+Every node carries one or more **coordinate aliases** — embeddings that route queries to it. The canonical alias comes from the English frontmatter (description + vocabulary); each active language has a locale alias in `.locales.jsonl`. All aliases on a node route to the same node's body content.
+
+```mermaid
+graph LR
+    subgraph "Node: softwaredev/delivery/commits"
+        EN["EN alias<br/>'git commit messages,<br/>conventional commits'"]
+        RU["ru alias<br/>'закоммитить, пуш,<br/>conventional'"]
+        JA["ja alias<br/>'gitコミットメッセージ'"]
+        ZH["zh alias<br/>'Git 提交消息'"]
+    end
+
+    EN -. embed EN model .-> V1[("384-dim vector")]
+    RU -. embed multi model .-> V2[("768-dim vector")]
+    JA -. embed multi model .-> V3[("768-dim vector")]
+    ZH -. embed multi model .-> V4[("768-dim vector")]
+```
+
+Each alias is embedded once (at `ways corpus` time) into the appropriate model's vector space and stored. At match time, the query is embedded and compared against every alias of every node; the node's score is the max across its aliases.
+
+## How a Prompt Routes to a Way
+
+Three channels decide whether a way fires. They run additively — any one firing activates the way.
+
+```mermaid
+flowchart TD
+    Q[User prompt / tool input]
+    Q --> Reg{pattern / commands / files<br/>regex match?}
+    Q --> EN[Embed query with<br/>EN model]
+    Q --> MU[Embed query with<br/>multilingual model]
+
+    Reg -- match --> F1[Fire: channel=keyword]
+    Reg -- no match --> SEM
+
+    EN --> CORPEN[(ways-corpus-en<br/>English aliases)]
+    MU --> CORPMU[(ways-corpus-multi<br/>locale aliases)]
+
+    CORPEN --> AGG[Per node:<br/>max over aliases]
+    CORPMU --> AGG
+
+    AGG --> SEM{score ≥ effective<br/>threshold?}
+    SEM -- yes --> F2[Fire: channel=semantic:embedding]
+    SEM -- no --> Skip[Skip this way]
+```
+
+**Channel 1 — explicit triggers.** `pattern:` (prompt text), `commands:` (bash commands), `files:` (file paths). Regex, case-insensitive, case-sensitive to match boundary anchors the author writes. These always fire if they match; they are the author's "I know exactly when this should fire" surface.
+
+**Channel 2 — embedding.** Sole semantic retrieval tier (ADR-125). The query is embedded by both models against their respective corpora; per-node score is the max across the node's aliases. Multilingual and English queries both land on the same nodes via whichever alias is closer. The embedding model is a hard dependency — if missing, no semantic matching happens.
+
+**Channel 3 — state triggers.** Not content-based. `trigger: context-threshold` fires when transcript size exceeds the configured percentage; `file-exists` fires when a glob matches; `session-start` fires once per session. See the [State Triggers](#state-triggers) section.
+
+## Progressive Disclosure (Session Subgraph)
+
+"Progressive disclosure" in this system is not a top-down cascade. It is the gradual accumulation of fired nodes in the session — the **session subgraph** — and a per-way threshold boost that applies once a parent has fired.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as Session
+    participant M as Matcher
+    participant Ways
+
+    Note over S: Empty frontier<br/>no ways shown yet
+
+    U->>M: "let's refactor this module"
+    M->>Ways: score all nodes at base thresholds
+    Ways-->>M: softwaredev/code/quality hits 0.72
+    M->>S: mark code/quality shown
+    Note over S: Frontier: {code, code/quality}<br/>(parent auto-pulled)
+
+    U->>M: "rename extract_method"
+    M->>Ways: score all; code/quality is ancestor of<br/>code/quality/refactoring — apply 0.8 boost
+    Ways-->>M: code/quality/refactoring hits 0.31<br/>effective threshold 0.35 × 0.8 = 0.28 ✓
+    M->>S: mark refactoring shown
+    Note over S: Frontier grows:<br/>{code, code/quality, refactoring}
+```
+
+**Two mechanics make this work together:**
+
+1. **Marker accumulation.** Each time a way fires, a per-session marker records it. The set of fired markers is the session subgraph — the portion of the way DAG that has been "disclosed" in this conversation.
+
+2. **Parent-boost.** Before comparing a candidate way's score to its threshold, the matcher checks the way's ancestor chain for any fired marker. If found, the effective threshold is `base_threshold * parent_threshold_multiplier` (default 0.8). Children within an active parent domain fire on weaker signal; children in cold domains need to clear the full bar.
+
+Configure via `~/.config/ways/config.yaml`:
+```yaml
+parent_threshold_multiplier: 0.8   # 1.0 disables the boost
+default_embed_threshold: 0.35      # base for nodes without explicit override
+```
+
+A way's **effective threshold** therefore depends on session state, not just frontmatter. This is what makes disclosure feel progressive: the same query "rename this variable" may not fire the refactoring way in a fresh session but will fire it once the code/quality parent has been active.
+
+The matcher itself is stateless per call — it reads session markers every turn and recomputes effective thresholds. There is no "revealed ways list" to maintain.
 
 ## Regex Matching
 
@@ -43,19 +155,19 @@ For concepts that users express in varied language. "Make this faster", "optimiz
 
 ### How it works
 
-A way with `description:` and `vocabulary:` frontmatter fields is automatically eligible for semantic matching. The `description` provides natural language context; the `vocabulary` provides domain-specific keywords. These are combined into a canonical alias per way and scored against the user's prompt using sentence-embedding cosine similarity (all-MiniLM-L6-v2 for English, a multilingual variant routes locale stubs).
+A way with `description:` and `vocabulary:` frontmatter fields is automatically eligible for semantic matching. The `description` plus `vocabulary` is the way's **canonical alias**. Locale stubs in `.locales.jsonl` add language-specific aliases to the same node. See [The Way Graph](#the-way-graph) above for how aliases relate to nodes.
 
 ```yaml
 description: debugging code issues, troubleshooting errors, investigating broken behavior
 vocabulary: debug breakpoint stacktrace investigate troubleshoot regression bisect crash error
-embed_threshold: 0.35
+embed_threshold: 0.35   # optional per-way override of default_embed_threshold
 ```
+
+At match time, the query is embedded once per model and scored against every alias in the corpus. The node's score is the max across its aliases; the way fires if that score clears the effective threshold (see [How a Prompt Routes](#how-a-prompt-routes-to-a-way) for the full flow and [Progressive Disclosure](#progressive-disclosure-session-subgraph) for how the effective threshold is computed).
 
 ### Engine and setup
 
-Semantic matching uses the embedding engine built into the `ways` binary (invoking `way-embed` internally against the corpus). The embedding model is a hard dependency — `make setup` fetches the binary and GGUF model.
-
-If the embedding model is unavailable, semantic matching is silently skipped and pattern matching still works. See ADR-125 for the rationale behind the embedding-only design.
+The embedding engine is a hard dependency (ADR-125). `make setup` fetches the `way-embed` binary and the GGUF models (English + multilingual). If either is missing, ways with only semantic triggers will not fire — only `pattern:`, `commands:`, `files:` ways will. The `ways status` command reports whether the engine is installed.
 
 ### Vocabulary design
 
@@ -75,17 +187,7 @@ This means expanding vocabulary can be counterproductive. Adding generic terms l
 
 ### Which ways use semantic matching
 
-Ways covering broad concepts where keyword matching would be either too narrow or too noisy:
-- `testing` (2.0) — unit tests, TDD, mocking, coverage
-- `api` (2.0) — REST APIs, endpoints, HTTP, versioning
-- `debugging` (2.0) — debugging, troubleshooting, investigation
-- `security` (2.0) — authentication, secrets, vulnerabilities
-- `design` (2.0) — architecture, patterns, schema, modeling
-- `config` (2.0) — environment variables, dotenv, configuration
-- `adr-context` (2.0) — planning, approach decisions, context
-- `knowledge/optimization` (2.0) — vocabulary tuning, way health analysis
-
-All use threshold 2.0. The test harness maintains 0 false positives as a hard constraint.
+Ways covering broad concepts where regex would be too narrow or too noisy use semantic matching — most ways in `softwaredev/code/*`, `softwaredev/architecture/*`, `softwaredev/delivery/*`, and domains like `ea`, `itops`, `writing`, `research`. The test harness maintains 0 false positives as a hard constraint; see [scoring-and-testing.md](scoring-and-testing.md) for the vocabulary-tuning workflow.
 
 ## What This Actually Is
 
