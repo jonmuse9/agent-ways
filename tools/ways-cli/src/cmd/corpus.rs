@@ -257,7 +257,6 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
                 "id": id,
                 "description": le.description,
                 "vocabulary": le.vocabulary.unwrap_or_default(),
-                "embed_threshold": le.embed_threshold.unwrap_or(0.25),
                 "embed_model": "multilingual",
             });
 

@@ -21,7 +21,7 @@ for wayfile in $(find -L "${HOME}/.claude/hooks/ways" -name "*.md" ! -name "*.ch
   has_desc=$(awk 'NR==1 && /^---$/{p=1;next} p&&/^---$/{exit} p && /^description:/{print "yes";exit}' "$wayfile")
 
   if [[ "$has_vocab" == "yes" && "$has_desc" == "yes" ]]; then
-    match_type="BM25"
+    match_type="embed"
   elif [[ "$has_desc" == "yes" ]]; then
     match_type="desc"
   else
@@ -30,7 +30,7 @@ for wayfile in $(find -L "${HOME}/.claude/hooks/ways" -name "*.md" ! -name "*.ch
     match_type="${match_type:-regex}"
   fi
 
-  if [[ "$match_type" == "BM25" ]]; then
+  if [[ "$match_type" == "embed" ]]; then
     stderr=$(ways suggest "$wayfile" 2>&1 >/dev/null)
     gaps=$(echo "$stderr" | sed -n 's/suggest: \([0-9]*\) gaps.*/\1/p')
     covered=$(echo "$stderr" | sed -n 's/.*, \([0-9]*\) covered.*/\1/p')

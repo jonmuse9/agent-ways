@@ -17,17 +17,12 @@ way:
     vocabulary:
       type: string
       required: conditional  # required if description present
-      role: Space-separated domain keywords for BM25 scoring
-    threshold:
-      type: number
-      required: recommended  # always explicit about scoring sensitivity
-      default: 2.0
-      role: BM25 score threshold (higher = stricter)
+      role: Space-separated domain keywords reinforcing the description (embedded as part of the canonical way alias per ADR-125)
     embed_threshold:
       type: number
       required: optional
       default: 0.35
-      role: Cosine similarity threshold for embedding engine (0.0-1.0, higher = stricter)
+      role: Cosine similarity threshold for the embedding engine (0.0-1.0, higher = stricter). One per node (English frontmatter); no per-locale override — ADR-125.
     curve:
       type: block
       required: recommended
@@ -203,11 +198,7 @@ locale_stub:
   vocabulary:
     type: string
     required: true
-    role: Space-separated domain keywords in the target language for BM25 scoring
-  embed_threshold:
-    type: number
-    required: optional
-    role: Language-specific cosine similarity threshold (overrides top-level default)
+    role: Space-separated domain keywords in the target language (carries the "objective match words" of the way intent — ADR-125)
 
 # Lint configuration
 # Path segments that indicate backup/sync tool artifacts — not real ways.
