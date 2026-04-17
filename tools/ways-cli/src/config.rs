@@ -36,9 +36,23 @@ pub struct Config {
     /// session. Values <1.0 make children fire more easily once their parent
     /// domain is active (progressive disclosure). 1.0 disables the boost.
     pub parent_threshold_multiplier: f64,
-    /// Default cosine-similarity threshold used when a way's frontmatter
-    /// does not specify embed_threshold.
+    /// Minimum effective threshold after parent-boost. Without a floor,
+    /// cascading boosts can push children into the noise band where any
+    /// generic-word collision fires. Default 0.40 — just below the per-way
+    /// default but well above the multilingual-corpus noise floor (~0.30).
+    pub parent_boost_floor: f64,
+    /// Default cosine threshold for the English model/corpus path.
+    /// Used when a way's frontmatter doesn't specify embed_threshold.
+    /// The EN model (384-dim, English-only) has sharper discrimination
+    /// than the multilingual model, so this can sit lower.
     pub default_embed_threshold: f64,
+    /// Default cosine threshold for the multilingual model/corpus path.
+    /// The multilingual model (768-dim, 52 languages) has coarser
+    /// discrimination and produces a wider noise band, so multi-corpus
+    /// matches need a stricter bar. Kept separate from EN — the two
+    /// models produce scores in different distributions, so comparing
+    /// them directly (max, average) is apples-to-oranges.
+    pub default_multi_embed_threshold: f64,
 }
 
 impl Default for Config {
@@ -48,7 +62,9 @@ impl Default for Config {
             language: "auto".to_string(),
             disabled_domains: Vec::new(),
             parent_threshold_multiplier: 0.8,
-            default_embed_threshold: 0.35,
+            parent_boost_floor: 0.40,
+            default_embed_threshold: 0.40,
+            default_multi_embed_threshold: 0.55,
         }
     }
 }
@@ -123,8 +139,14 @@ impl Config {
         if let Some(v) = doc.get("parent_threshold_multiplier").and_then(|v| v.as_f64()) {
             self.parent_threshold_multiplier = v;
         }
+        if let Some(v) = doc.get("parent_boost_floor").and_then(|v| v.as_f64()) {
+            self.parent_boost_floor = v;
+        }
         if let Some(v) = doc.get("default_embed_threshold").and_then(|v| v.as_f64()) {
             self.default_embed_threshold = v;
+        }
+        if let Some(v) = doc.get("default_multi_embed_threshold").and_then(|v| v.as_f64()) {
+            self.default_multi_embed_threshold = v;
         }
     }
 
@@ -178,7 +200,9 @@ mod tests {
         assert_eq!(cfg.language, "auto");
         assert_eq!(cfg.default_scope, "agent");
         assert_eq!(cfg.parent_threshold_multiplier, 0.8);
-        assert_eq!(cfg.default_embed_threshold, 0.35);
+        assert_eq!(cfg.parent_boost_floor, 0.40);
+        assert_eq!(cfg.default_embed_threshold, 0.40);
+        assert_eq!(cfg.default_multi_embed_threshold, 0.55);
     }
 
     #[test]

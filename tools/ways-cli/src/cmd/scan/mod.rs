@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use crate::session;
 
 use candidates::{check_when, collect_candidates, collect_checks};
-use scoring::{capture_show_check, capture_show_way, default_project};
+use scoring::{capture_show_check, capture_show_way, default_project, EmbedScores};
 
 pub(crate) struct WayCandidate {
     pub id: String,
@@ -65,8 +65,8 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
             query,
             &way.pattern,
             &way.id,
-            effective_embed_threshold(way, session_id),
-            embed_matches.as_deref(),
+            effective_thresholds(way, session_id),
+            &embed_matches,
         );
 
         if let Some(trigger) = channel {
@@ -120,8 +120,8 @@ pub fn task(
             query,
             &way.pattern,
             &way.id,
-            effective_embed_threshold(way, session_id),
-            embed_matches.as_deref(),
+            effective_thresholds(way, session_id),
+            &embed_matches,
         );
 
         if let Some(trigger) = channel {
@@ -220,7 +220,6 @@ pub fn command(
     );
 
     let embed_check_matches = batch_embed_score(&query_for_checks);
-    let semantic_matches: &[(String, f64)] = embed_check_matches.as_deref().unwrap_or(&[]);
 
     for check in &checks {
         if !session::scope_matches(&check.scope, &scope) {
@@ -239,11 +238,7 @@ pub fn command(
         }
 
         if match_score == 0.0 && !check.description.is_empty() && !check.vocabulary.is_empty() {
-            if let Some(score) = semantic_matches.iter().find(|(id, _)| *id == check.id).map(|(_, s)| *s) {
-                if score >= effective_embed_threshold(check, session_id) {
-                    match_score = score;
-                }
-            }
+            match_score = check_semantic_score(check, session_id, &embed_check_matches);
         }
 
         if match_score > 0.0 {
@@ -301,7 +296,6 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
 
     let checks = collect_checks(&project_dir);
     let embed_matches = batch_embed_score(filepath);
-    let semantic_matches: &[(String, f64)] = embed_matches.as_deref().unwrap_or(&[]);
 
     for check in &checks {
         if !session::scope_matches(&check.scope, &scope) {
@@ -320,11 +314,7 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
         }
 
         if match_score == 0.0 && !check.description.is_empty() && !check.vocabulary.is_empty() {
-            if let Some(score) = semantic_matches.iter().find(|(id, _)| *id == check.id).map(|(_, s)| *s) {
-                if score >= effective_embed_threshold(check, session_id) {
-                    match_score = score;
-                }
-            }
+            match_score = check_semantic_score(check, session_id, &embed_matches);
         }
 
         if match_score > 0.0 {
@@ -354,8 +344,8 @@ fn match_prompt(
     query: &str,
     pattern: &Option<String>,
     way_id: &str,
-    effective_embed_threshold: f64,
-    embed: Option<&[(String, f64)]>,
+    thresholds: EffectiveThresholds,
+    scores: &EmbedScores,
 ) -> Option<String> {
     // Channel 1: Regex pattern — always checked first, always fires on match.
     if let Some(ref pat) = pattern {
@@ -364,43 +354,85 @@ fn match_prompt(
         }
     }
 
-    // Channel 2: Embedding — sole semantic retrieval tier (ADR-125).
-    // way-embed returns all scores; we gate on effective_embed_threshold here
-    // (which already includes any parent-boost multiplier).
-    if let Some(embed_results) = embed {
-        let best_score = embed_results
-            .iter()
-            .filter_map(|(id, s)| (id == way_id).then_some(*s))
-            .fold(f64::NEG_INFINITY, f64::max);
-        if best_score.is_finite() && best_score >= effective_embed_threshold {
-            return Some("semantic:embedding".to_string());
-        }
-    }
+    // Channel 2: Embedding. Each model path stands on its own threshold;
+    // scores don't cross-compare (apples and oranges). Either path firing
+    // is sufficient, but the thresholds are calibrated independently so
+    // each model's noise band sits below its gate:
+    //   - EN model (0.40): sharp on English, noise below 0.35
+    //   - multi model (0.55): cross-lingual but coarser, noise at 0.30-0.50
+    let en_fires = scores.best_en(way_id).is_some_and(|s| s >= thresholds.en);
+    let multi_fires = scores.best_multi(way_id).is_some_and(|s| s >= thresholds.multi);
 
-    None
+    if en_fires {
+        Some("semantic:embedding:en".to_string())
+    } else if multi_fires {
+        Some("semantic:embedding:multi".to_string())
+    } else {
+        None
+    }
 }
 
-/// Effective embedding threshold for a way, accounting for parent-boost.
-///
-/// If any ancestor of the way (by directory-path hierarchy) has fired in
-/// the session, multiply the base threshold by `parent_threshold_multiplier`
-/// (default 0.8) — lowering the bar so children fire more easily once
-/// their parent domain is active. This is the session-subgraph mechanism
-/// referenced by ADR-125: as the subgraph grows, children within fired
-/// parents become more salient.
-fn effective_embed_threshold(way: &WayCandidate, session_id: &str) -> f64 {
-    let base = way
-        .embed_threshold
-        .unwrap_or_else(|| crate::config::global().default_embed_threshold);
+/// Per-model thresholds for a way at a given moment in a session.
+#[derive(Clone, Copy)]
+struct EffectiveThresholds {
+    en: f64,
+    multi: f64,
+}
 
-    let mut path = way.id.as_str();
-    while let Some(idx) = path.rfind('/') {
-        path = &path[..idx];
-        if session::way_is_shown(path, session_id) {
-            return base * crate::config::global().parent_threshold_multiplier;
+/// Compute effective thresholds for both models, accounting for parent-boost.
+///
+/// Parent-boost (ADR-125): if any ancestor has fired in the session, each
+/// model's base threshold is multiplied by `parent_threshold_multiplier`
+/// (default 0.8), floored at `parent_boost_floor`. The floor prevents
+/// cascading boosts from pushing children into the noise band.
+///
+/// The EN base comes from the way's frontmatter `embed_threshold:` or
+/// `default_embed_threshold`. The multi base uses `default_multi_embed_threshold`
+/// uniformly — locale aliases don't carry per-way thresholds (ADR-125).
+fn effective_thresholds(way: &WayCandidate, session_id: &str) -> EffectiveThresholds {
+    let cfg = crate::config::global();
+    let en_base = way.embed_threshold.unwrap_or(cfg.default_embed_threshold);
+    let multi_base = cfg.default_multi_embed_threshold;
+
+    let ancestor_shown = {
+        let mut path = way.id.as_str();
+        let mut found = false;
+        while let Some(idx) = path.rfind('/') {
+            path = &path[..idx];
+            if session::way_is_shown(path, session_id) {
+                found = true;
+                break;
+            }
         }
+        found
+    };
+
+    if ancestor_shown {
+        let boost = cfg.parent_threshold_multiplier;
+        let floor = cfg.parent_boost_floor;
+        EffectiveThresholds {
+            en: (en_base * boost).max(floor),
+            multi: (multi_base * boost).max(floor),
+        }
+    } else {
+        EffectiveThresholds { en: en_base, multi: multi_base }
     }
-    base
+}
+
+/// Semantic score for a check, taking the higher of the two model paths
+/// that clears its own threshold. The two models are evaluated
+/// independently (apples and oranges); if either path's score >= its
+/// threshold, the check fires at that score. Returns 0.0 if neither
+/// path clears.
+fn check_semantic_score(check: &WayCandidate, session_id: &str, scores: &EmbedScores) -> f64 {
+    let t = effective_thresholds(check, session_id);
+    let en = scores.best_en(&check.id).filter(|s| *s >= t.en);
+    let mu = scores.best_multi(&check.id).filter(|s| *s >= t.multi);
+    match (en, mu) {
+        (Some(e), Some(m)) => e.max(m),
+        (Some(s), None) | (None, Some(s)) => s,
+        (None, None) => 0.0,
+    }
 }
 
 fn regex_matches(pattern: &str, text: &str) -> bool {

@@ -1,64 +1,95 @@
 //! Batch scoring and subprocess calls for the embedding matcher (ADR-125).
+//!
+//! The two models (EN-only 384-dim, multilingual 768-dim) produce cosine
+//! scores in different distributions. Scores are NOT comparable across
+//! models — each is scored and gated independently, then the scan loop
+//! fires a way if either path clears its own threshold. Confidence rises
+//! when both paths agree (they're independent confirmations of the same
+//! semantic match).
 
-// ── Batch scoring ───────────────────────────────────────────────
+pub(crate) struct EmbedScores {
+    /// Scores from the English model × English corpus.
+    /// `None` means the engine/corpus/model is unavailable.
+    pub(crate) en: Option<Vec<(String, f64)>>,
+    /// Scores from the multilingual model × multilingual corpus.
+    /// `None` means the engine/corpus/model is unavailable.
+    pub(crate) multi: Option<Vec<(String, f64)>>,
+}
 
-/// Returns `Some(matches)` when the embedding engine ran successfully
-/// (even if no ways matched), or `None` when the engine is unavailable.
-/// Queries both EN and multilingual corpora (when available) and merges
-/// results. Each way is scored by its derived model (EN for .md ways,
-/// multilingual for .locales.jsonl entries).
-pub(crate) fn batch_embed_score(query: &str) -> Option<Vec<(String, f64)>> {
-    let embed_bin = find_way_embed()?;
+impl EmbedScores {
+    /// True if at least one model produced scores.
+    pub(crate) fn any_ran(&self) -> bool {
+        self.en.is_some() || self.multi.is_some()
+    }
+
+    /// Best score for `way_id` in the EN corpus, or None if absent.
+    pub(crate) fn best_en(&self, way_id: &str) -> Option<f64> {
+        best_score(self.en.as_deref(), way_id)
+    }
+
+    /// Best score for `way_id` in the multi corpus, or None if absent.
+    pub(crate) fn best_multi(&self, way_id: &str) -> Option<f64> {
+        best_score(self.multi.as_deref(), way_id)
+    }
+}
+
+fn best_score(rows: Option<&[(String, f64)]>, way_id: &str) -> Option<f64> {
+    rows?
+        .iter()
+        .filter(|(id, _)| id == way_id)
+        .map(|(_, s)| *s)
+        .fold(None, |acc, s| Some(acc.map_or(s, |a: f64| a.max(s))))
+}
+
+/// Run both models against `query` and return per-model scores independently.
+/// Either or both may be None if their engine/model is unavailable.
+pub(crate) fn batch_embed_score(query: &str) -> EmbedScores {
+    let Some(embed_bin) = find_way_embed() else {
+        return EmbedScores { en: None, multi: None };
+    };
     let xdg = xdg_cache_dir().join("claude-ways/user");
 
-    let mut results: Vec<(String, f64)> = Vec::new();
-    let mut any_ran = false;
-
-    // EN corpus + EN model
     let en_corpus = xdg.join("ways-corpus-en.jsonl");
     let en_model = xdg.join("minilm-l6-v2.gguf");
-    if en_corpus.is_file() && has_entries(&en_corpus) {
-        if en_model.is_file() {
-            if let Some(matches) = run_embed_match(&embed_bin, &en_corpus, &en_model, query) {
-                results.extend(matches);
-                any_ran = true;
-            }
-        } else {
-            eprintln!("WARNING: {} ways in EN corpus but model missing ({})",
-                line_count(&en_corpus), en_model.display());
-            eprintln!("  Run: make setup");
-        }
-    }
+    let en = run_if_ready(&embed_bin, &en_corpus, &en_model, query, "EN");
 
-    // Multilingual corpus + multilingual model
     let multi_corpus = xdg.join("ways-corpus-multi.jsonl");
     let multi_model = xdg.join("multilingual-minilm-l12-v2-q8.gguf");
-    if multi_corpus.is_file() && has_entries(&multi_corpus) {
-        if multi_model.is_file() {
-            if let Some(matches) = run_embed_match(&embed_bin, &multi_corpus, &multi_model, query) {
-                results.extend(matches);
-                any_ran = true;
-            }
-        } else {
-            eprintln!("WARNING: {} multilingual ways in corpus but model missing ({})",
-                line_count(&multi_corpus), multi_model.display());
-            eprintln!("  These ways will not match non-English prompts.");
-            eprintln!("  Run: make setup");
-        }
-    }
+    let multi = run_if_ready(&embed_bin, &multi_corpus, &multi_model, query, "multilingual");
 
-    // Fallback: combined corpus with EN model (backward compat)
-    if !any_ran {
+    // Legacy fallback: combined corpus + EN model if neither ran.
+    if en.is_none() && multi.is_none() {
         let combined = xdg.join("ways-corpus.jsonl");
         if combined.is_file() && en_model.is_file() {
-            if let Some(matches) = run_embed_match(&embed_bin, &combined, &en_model, query) {
-                results.extend(matches);
-                any_ran = true;
-            }
+            let fallback = run_embed_match(&embed_bin, &combined, &en_model, query);
+            return EmbedScores { en: fallback, multi: None };
         }
     }
 
-    if any_ran { Some(results) } else { None }
+    EmbedScores { en, multi }
+}
+
+fn run_if_ready(
+    bin: &std::path::Path,
+    corpus: &std::path::Path,
+    model: &std::path::Path,
+    query: &str,
+    label: &str,
+) -> Option<Vec<(String, f64)>> {
+    if !corpus.is_file() || !has_entries(corpus) {
+        return None;
+    }
+    if !model.is_file() {
+        eprintln!(
+            "WARNING: {} {} ways in corpus but model missing ({})",
+            line_count(corpus),
+            label,
+            model.display()
+        );
+        eprintln!("  Run: make setup");
+        return None;
+    }
+    run_embed_match(bin, corpus, model, query)
 }
 
 /// Run way-embed match against a single corpus/model pair.
