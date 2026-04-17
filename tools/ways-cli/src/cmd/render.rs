@@ -483,6 +483,8 @@ pub fn predict_next<W: WayRow>(
 pub fn format_trigger(trigger: &str) -> String {
     match trigger {
         "semantic:embedding" | "semantic" => "embed".to_string(),
+        "semantic:embedding:en" => "embed:en".to_string(),
+        "semantic:embedding:multi" => "embed:multi".to_string(),
         "keyword" => "keyword".to_string(),
         "check-pull" => "check-pull".to_string(),
         "bash" | "file" | "state" => trigger.to_string(),

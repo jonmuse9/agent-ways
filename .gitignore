@@ -103,6 +103,11 @@ hooks/ways/.obsidian/
 !scripts/attend-demo.sh
 !scripts/attend-format-probe.sh
 !scripts/hook-fire-detector.sh
+!scripts/signal-report.py
+!docs/signal-analysis/
+!docs/signal-analysis/*.md
+!docs/signal-analysis/*.png
+!docs/signal-analysis/*.csv
 
 # Governance traceability (separable)
 # CLI tools (root symlinks to implementation scripts)
