@@ -1,7 +1,6 @@
 ---
 description: dependency installation check
 vocabulary: install add dependency package
-threshold: 1.5
 commands: ^(npm|pip|cargo)\ (install|add)
 scope: agent
 ---

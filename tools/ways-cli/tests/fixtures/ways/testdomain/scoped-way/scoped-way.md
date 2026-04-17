@@ -1,6 +1,7 @@
 ---
 description: teammate collaboration delegation
 vocabulary: teammate delegate collaborate subagent
+pattern: (?i)(teammate|delegate|collaborate|subagent)
 scope: teammate
 curve:
   type: Exponential

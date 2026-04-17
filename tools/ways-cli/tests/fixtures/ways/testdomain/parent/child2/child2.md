@@ -1,7 +1,7 @@
 ---
 description: refactoring extract method rename variable decompose
 vocabulary: refactor extract rename decompose inline simplify restructure reorganize
-threshold: 1.5
+pattern: (?i)(refactor|extract.*method|decompose|rename.*variable)
 scope: agent
 curve:
   type: Exponential

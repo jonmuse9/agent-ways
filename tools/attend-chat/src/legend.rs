@@ -135,10 +135,10 @@ pub enum Addressed<'a> {
     Group(&'a str),
 }
 
-/// If `msg` starts with an addressing sigil + name, return the kind
-/// + name (without the sigil). Both `@Name` and `#Name` work. Keeps
-/// the original token in the outgoing body so receivers still see
-/// the address they were matched on.
+/// If `msg` starts with an addressing sigil + name, return the kind and
+/// name (without the sigil). Both `@Name` and `#Name` work. Keeps the
+/// original token in the outgoing body so receivers still see the
+/// address they were matched on.
 pub fn parse_addressed(msg: &str) -> Option<Addressed<'_>> {
     let trimmed = msg.trim_start();
     let mut chars = trimmed.chars();
