@@ -8,6 +8,7 @@
 pub mod app;
 pub mod chip;
 pub mod groups;
+pub mod helper;
 pub mod legend;
 pub mod sessions;
 pub mod signal;

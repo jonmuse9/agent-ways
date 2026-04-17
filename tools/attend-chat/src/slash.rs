@@ -34,12 +34,30 @@ pub enum Status {
     Planned,
 }
 
+/// What registry the helper row should switch to once the user is
+/// past a command's name and typing its argument. The app-side
+/// state machine in `crate::helper` reads this to pick the right
+/// chip source — keeping the "which commands expect which kind of
+/// argument" data next to the command definition itself, so adding
+/// a command means adding one row here and nothing elsewhere.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ArgKind {
+    /// Command takes no argument. Helper stays on the default
+    /// (agents) once the name is complete.
+    None,
+    /// Expects an `@Agent`. Helper switches to the agent legend.
+    Agent,
+    /// Expects a `#group`. Helper switches to the channel legend.
+    Group,
+}
+
 /// One row of the slash-command registry.
 #[derive(Copy, Clone, Debug)]
 pub struct SlashCommand {
     pub name: &'static str,
     pub description: &'static str,
     pub status: Status,
+    pub arg_kind: ArgKind,
 }
 
 /// Every slash command the TUI knows about. Implemented ones
@@ -50,33 +68,47 @@ pub const REGISTRY: &[SlashCommand] = &[
         name: "help",
         description: "List available commands",
         status: Status::Implemented,
+        arg_kind: ArgKind::None,
     },
     SlashCommand {
         name: "whois",
         description: "Show a peer's identity + cwd",
         status: Status::Planned,
+        arg_kind: ArgKind::Agent,
     },
     SlashCommand {
         name: "peers",
         description: "List active claudes + humans",
         status: Status::Planned,
+        arg_kind: ArgKind::None,
     },
     SlashCommand {
         name: "join",
         description: "Join a focus group",
         status: Status::Planned,
+        arg_kind: ArgKind::Group,
     },
     SlashCommand {
         name: "leave",
         description: "Leave a focus group",
         status: Status::Planned,
+        arg_kind: ArgKind::Group,
     },
     SlashCommand {
         name: "clear",
         description: "Clear the message buffer",
         status: Status::Planned,
+        arg_kind: ArgKind::None,
     },
 ];
+
+/// Look up a registered command by name (exact match, case-sensitive).
+/// The helper state machine uses this to inspect `arg_kind` once the
+/// user is past the name; callers that need prefix matching use
+/// [`best_slash_completion`] instead.
+pub fn lookup(name: &str) -> Option<&'static SlashCommand> {
+    REGISTRY.iter().find(|c| c.name == name)
+}
 
 /// Parse a slash command from the input buffer.
 ///

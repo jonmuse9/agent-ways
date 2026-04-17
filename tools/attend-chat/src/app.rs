@@ -19,6 +19,7 @@ use crate::chip::{chip_for, color_for, known_identities, resolve_nickname, CHIP_
 use crate::sessions::discover as discover_sessions;
 use crate::text_layout::{render_cursor, split_at_char, visual_line_count};
 use crate::groups::{channels, resolve_group_dir};
+use crate::helper::{self, HelperMode};
 use crate::legend::{
     apply_completion, best_completion, best_group_completion, find_trailing_mention,
     group_legend_row, legend_row, parse_addressed, Addressed, Sigil,
@@ -29,17 +30,6 @@ use crate::slash;
 #[derive(Default, Props)]
 pub struct AppProps {
     pub receiver: Option<Receiver<Signal>>,
-}
-
-/// Which registry the helper row (below the input box) is showing
-/// right now. Derived once per render from the input buffer and the
-/// trailing-mention context. The payload is the current partial —
-/// what the user has typed after the sigil — used to underline
-/// matching chips for Tab-target affordance.
-enum HelperMode {
-    Agents(Option<String>),
-    Groups(Option<String>),
-    Slash(Option<String>),
 }
 
 /// Upper bound on the in-memory message buffer. At typical chat rates
@@ -322,31 +312,21 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     // binding so `find_trailing_mention`'s `&str` doesn't outlive
     // the temporary guard.
     let input_snapshot = input.read().clone();
+    // Trailing-mention context is still consumed by the top channel
+    // bar so it can underline a matching `#partial` when the user is
+    // picking a group; the agent-side partial now flows through
+    // `helper::derive` below and doesn't need its own binding here.
     let mention_ctx = find_trailing_mention(&input_snapshot);
-    let agent_partial: Option<String> = mention_ctx
-        .as_ref()
-        .filter(|m| m.sigil == Sigil::Agent)
-        .map(|m| m.partial.to_string());
     let group_partial: Option<String> = mention_ctx
         .as_ref()
         .filter(|m| m.sigil == Sigil::Group)
         .map(|m| m.partial.to_string());
-    // Helper-row mode: the row below the input switches its content
-    // based on what the user is typing. Slash wins if the buffer
-    // starts with `/` (slash grammar is start-of-input-only and
-    // unambiguous); otherwise the trailing mention's sigil decides
-    // between groups and agents; default is agents so the "who's
-    // around" glance stays available when no sigil is active.
-    let slash_partial: Option<String> = slash::find_slash_partial(&input_snapshot)
-        .map(|p| p.partial.to_string());
-    let helper_mode = if input_snapshot.starts_with('/') {
-        HelperMode::Slash(slash_partial.clone())
-    } else {
-        match mention_ctx.as_ref().map(|m| m.sigil) {
-            Some(Sigil::Group) => HelperMode::Groups(group_partial.clone()),
-            _ => HelperMode::Agents(agent_partial.clone()),
-        }
-    };
+    // Helper-row mode is a pure function of the input buffer. The
+    // state machine lives in `helper::derive` — see that module's
+    // docs + tests for the full rule table. Once a slash command
+    // is past its name, the registry's `ArgKind` routes the helper
+    // (`/whois ` → agents, `/join ` → channels).
+    let helper_mode = helper::derive(&input_snapshot);
     let rows: Vec<_> = signals
         .read()
         .iter()
