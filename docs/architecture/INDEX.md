@@ -44,6 +44,8 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-121](./system/ADR-121-salience-decay-for-signal-presentation-turn-based-exponential.md) | Salience decay for signal presentation — turn-based exponential | Superseded |
 | [ADR-122](./system/ADR-122-attend-disclosure-sensor-token-gated-affordance-reheat.md) | Attend disclosure sensor — token-gated affordance reheat | Draft |
 | [ADR-123](./system/ADR-123-firing-dynamics-progression-axis-unification.md) | Firing dynamics — progression-axis unification for attend and ways | Accepted |
+| [ADR-124](./system/ADR-124-channel-bar-ordering-open-as-base.md) | TUI Legend Architecture — Base Channel, Liveness, and Ordering | Accepted |
+| [ADR-125](./system/ADR-125-authored-disclosure-graph-and-removal-of-bm25.md) | Authored Disclosure Graph and Removal of BM25 | Draft |
 
 ## Documentation
 _Documentation structure, tooling, coherence_

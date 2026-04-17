@@ -2,6 +2,7 @@
 status: Accepted
 date: 2026-04-02
 supersedes: ADR-107 Draft (2026-03-20)
+superseded_in_part_by: ADR-125
 deciders:
   - aaronsb
   - claude
@@ -9,9 +10,12 @@ related:
   - ADR-108
   - ADR-110
   - ADR-111
+  - ADR-125
 ---
 
 # ADR-107: Corpus, Matching Pipeline, and Locale Support
+
+> **Note (2026-04-17):** The matching pipeline architecture described here (two-tier embedding → BM25 → keyword/regex) has been superseded by [ADR-125: Authored Disclosure Graph and Removal of BM25](ADR-125-authored-disclosure-graph-and-removal-of-bm25.md). BM25 is removed; the embedding model is the sole retrieval tier. Locale stubs remain as specified (packed `.locales.jsonl`, one file per way), but the per-locale `embed_threshold` field is removed — thresholds are per-node, in English frontmatter. Sections below describing the two-tier pipeline, BM25 stemmer selection, and the `bm25_stemmer` field in `languages.json` are historical; refer to ADR-125 for the current model.
 
 ## Context
 
@@ -23,7 +27,7 @@ This ADR was originally drafted when the matching system was a C binary (`way-ma
 
 **Batch scoring** — `ways scan prompt --query "..." --session ID` scores all ways in one call. The Rust binary loads the corpus once, tokenizes the query once, and scores every way. Scanner hooks call this instead of N separate invocations.
 
-**Two-tier matching** — ADR-108 added embedding (all-MiniLM-L6-v2, 98% accuracy). The pipeline is: embedding → BM25 fallback → keyword/regex patterns. All three tiers run in the same binary. Engine selection is automatic based on model availability.
+**Matching pipeline (historical)** — ADR-108 added embedding (all-MiniLM-L6-v2, 98% accuracy). The original shipped pipeline was embedding → BM25 fallback → keyword/regex patterns with automatic engine selection by model availability. ADR-125 removed BM25; the current pipeline is embedding-only, with explicit `pattern:` / `commands:` regex triggers as a separate override surface.
 
 **Security boundary preserved** — runtime scanners never write to `~/.claude/`. The corpus and embedding model live in `~/.cache/claude-ways/user/` (XDG cache). Regeneration is an explicit authoring operation (`ways corpus`, `make setup`).
 
@@ -136,7 +140,7 @@ ea/briefing/
 ```
 
 Design constraints:
-- **No `embed_threshold`** in packed format — hardcoded to `0.25` in the corpus generator. Per-way override requires externalizing to a full `.lang.md` file.
+- **No `embed_threshold` per locale entry** — per ADR-125, thresholds are per-node (English frontmatter only). Locale entries are coordinate aliases; they do not carry their own gates. The corpus generator uses the node's threshold (or system default) for all of a node's aliases.
 - **No `embed_model`** in packed format — always `"multilingual"` for locale stubs.
 - **Override mechanism**: if `briefing.ja.md` exists as a real file on disk, it supersedes the `ja` entry in `briefing.locales.jsonl`. This allows graduating any stub to a full native-language way with body content.
 - **Co-location over aggregation**: one `.locales.jsonl` per way (not per language, not one global file). Way deletion = directory deletion, translations go with it.
@@ -204,8 +208,8 @@ This makes model selection empirical: run the tests against candidate models, pi
 - ADR-108: Embedding-Based Way Matching with all-MiniLM-L6-v2
 - ADR-110: Way File Separation and Graph-Compatible Structure
 - ADR-111: Unified Ways CLI — Single Binary Tool Consolidation
+- ADR-125: Authored Disclosure Graph and Removal of BM25 (supersedes the matching pipeline described here)
 - `tools/ways-cli/src/agents/` — Agent config module (Claude Code, system locale)
-- `tools/ways-cli/src/bm25.rs` — BM25 engine with stemmer selection
 - `tools/ways-cli/languages.json` — Supported language definitions
-- [paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) — Multilingual upgrade candidate
-- [rust_stemmers](https://docs.rs/rust-stemmers/) — Snowball stemmer implementations
+- [paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) — Multilingual embedding model
+- [rust_stemmers](https://docs.rs/rust-stemmers/) — Snowball stemmer implementations (removed with BM25 per ADR-125)
