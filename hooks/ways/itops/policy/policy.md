@@ -1,7 +1,6 @@
 ---
 description: Operation classification, policy enforcement, approval gates, blast radius assessment, and risk scoring
 vocabulary: operation class policy enforcement approval gate workflow blast radius risk score level dangerous safe critical
-threshold: 2.0
 pattern: operation.?class|policy.?(engine|enforcement)|approval.?(gate|level|workflow)|blast.?radius|risk.?(class|level|score)
 scope: agent, subagent
 curve:

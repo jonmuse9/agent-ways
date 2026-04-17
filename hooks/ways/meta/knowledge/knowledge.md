@@ -1,7 +1,6 @@
 ---
 description: Overview of the ways system — how ways, skills, and hooks relate, domain organization, matching modes
 vocabulary: ways way knowledge guidance context inject hook trigger matching semantic vocabulary domain
-threshold: 2.0
 pattern: (^| )ways?( |$)|knowledge|guidance|context.?inject
 scope: agent, subagent
 curve:

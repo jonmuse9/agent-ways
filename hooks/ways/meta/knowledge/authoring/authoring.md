@@ -14,13 +14,12 @@ Each way lives in `{domain}/{wayname}/{wayname}.md` with YAML frontmatter.
 
 ## Matching Strategy
 
-**Use semantic matching.** This is the primary matching strategy for prompt-triggered ways. The engine uses embeddings (cosine similarity) with BM25 as fallback.
+**Use semantic matching.** This is the primary matching strategy for prompt-triggered ways. The engine uses embeddings (cosine similarity) — this is the sole retrieval tier (per ADR-125).
 
 ```markdown
 ---
 description: what this way covers, in natural language
 vocabulary: domain specific keywords users would say
-threshold: 2.0            # BM25 score threshold (higher = stricter)
 embed_threshold: 0.35     # cosine similarity threshold (optional, per-way tuning)
 scope: agent
 ---
@@ -57,9 +56,8 @@ threshold: 90             # percentage (0-100)
 **Semantic:**
 - `description:` - Natural language reference text for what this way covers
 - `vocabulary:` - Space-separated domain keywords users would say
-- `threshold:` - BM25 score threshold (default 2.0, higher = stricter)
-- `embed_threshold:` - Cosine similarity override (optional, per-way tuning)
-- Engine: embedding → BM25 → skip (regex still works without either)
+- `embed_threshold:` - Cosine similarity threshold (optional, per-way tuning; default applied if absent)
+- Engine: embedding-only (per ADR-125). Explicit `pattern:` / `commands:` regex still fire independently.
 
 **State-based:**
 - `trigger:` - State condition type (`context-threshold`, `file-exists`, `session-start`)

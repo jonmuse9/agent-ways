@@ -1,6 +1,5 @@
 ---
 trigger: context-threshold
-threshold: 95
 scope: agent
 curve:
   type: Exponential

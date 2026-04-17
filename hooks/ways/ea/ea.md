@@ -1,7 +1,6 @@
 ---
 description: executive assistant helping with email inbox calendar tasks and communications across multiple accounts, catch me up on what I missed
 vocabulary: executive assistant triage briefing catch up morning inbox day look like schedule agenda accounts workspace assistant help manage
-threshold: 1.8
 scope: agent, subagent
 curve:
   type: Exponential

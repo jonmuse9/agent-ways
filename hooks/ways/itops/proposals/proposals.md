@@ -1,7 +1,6 @@
 ---
 description: Structured proposals for human approval before executing high-risk operations, human-in-the-loop workflows
 vocabulary: proposal approval human loop review confirm dangerous operation lifecycle primitive structured request permission sign-off authorize before running
-threshold: 2.0
 pattern: proposal.?(primitive|lifecycle|structure)|human.?in.?(the.?)?loop|approval.?workflow|operation.?proposal
 scope: agent, subagent
 curve:

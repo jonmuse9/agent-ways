@@ -1,7 +1,6 @@
 ---
 description: Using human's accounts, tools, and infrastructure responsibly — email inboxes, repos, APIs, communication channels as borrowed resources
 vocabulary: account inbox send publish create delete access permission borrow resource verify contact safe unsent attributed consequences behalf someone wrong
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential

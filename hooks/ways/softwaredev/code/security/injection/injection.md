@@ -1,7 +1,6 @@
 ---
 description: injection prevention, SQL injection, XSS, command injection, input sanitization
 vocabulary: injection sql xss innerHTML parameterized sanitize escape shell command template interpolation
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential

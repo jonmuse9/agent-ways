@@ -1,7 +1,6 @@
 ---
 description: prepare me for a meeting, weekly review, cross-reference email calendar tasks and chat to build context about a person or topic
 vocabulary: meeting prep weekly review cross-reference intelligence synthesize prepare context research attendees background history
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential

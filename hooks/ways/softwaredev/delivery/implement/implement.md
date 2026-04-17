@@ -1,7 +1,6 @@
 ---
 description: Post-ADR implementation — planning work breakdown, safe parallelization, and briefing the human before executing
 vocabulary: implement build begin start work execute plan breakdown parallelize worktree task sprint kick off begin coding
-threshold: 2.0
 macro: append
 scope: agent
 requires: ["Read", "Bash(cat:*)", "Bash(find:*)", "Bash(wc:*)"]

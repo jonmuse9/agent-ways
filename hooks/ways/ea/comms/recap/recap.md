@@ -1,7 +1,6 @@
 ---
 description: meeting recaps, transcripts, AI-generated meeting summaries, action items from meetings, recording playback
 vocabulary: recap transcript summary meeting notes recording action items discussed what happened review minutes speaker chapters follow-up
-threshold: 2.5
 scope: agent, subagent
 curve:
   type: Exponential

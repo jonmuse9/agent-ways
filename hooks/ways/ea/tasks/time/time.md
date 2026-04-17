@@ -1,7 +1,6 @@
 ---
 description: time tracking, logging billable hours, time entries, invoicing, billing reports, end of day wrap-up
 vocabulary: time tracking log hours billable timesheet EOD end of day wrap up invoice billing client project entry weekly report
-threshold: 2.5
 scope: agent, subagent
 curve:
   type: Exponential

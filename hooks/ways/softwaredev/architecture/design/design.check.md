@@ -1,7 +1,6 @@
 ---
 description: introducing new architectural pattern, restructuring module boundaries, designing service interfaces
 vocabulary: restructure boundary interface architectural introduce new pattern module service layer
-threshold: 3.0
 scope: agent
 ---
 

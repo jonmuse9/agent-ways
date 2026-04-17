@@ -2,7 +2,6 @@
 description: Persistent memory system — MEMORY.md, topic files, what to record and when
 vocabulary: remember memory save note forget recall persist session learning gotcha pattern
 trigger: context-threshold
-threshold: 80
 pattern: remember|save.*(to|this|that).*memory|note.*(for|this).*(later|next)|don't forget|keep.*in.*mind
 macro: prepend
 scope: agent

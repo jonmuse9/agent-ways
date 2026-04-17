@@ -1,7 +1,6 @@
 ---
 description: security boundary, authentication, authorization, input validation, credential handling, secret management
 vocabulary: auth token secret credential permission access control sanitize validate escape inject session
-threshold: 2.0
 scope: agent
 ---
 

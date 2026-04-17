@@ -1,7 +1,6 @@
 ---
 description: documentation philosophy, markdown conventions, when to write docs
 vocabulary: documentation markdown technical prose project docs
-threshold: 1.8
 pattern: readme|documentation|docs|document.*project|explain.*repo
 files: README\.md$|docs/.*\.md$
 scope: agent, subagent

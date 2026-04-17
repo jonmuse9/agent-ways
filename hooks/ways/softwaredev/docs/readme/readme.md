@@ -1,7 +1,6 @@
 ---
 description: README authoring, project overview, getting started guide, README structure
 vocabulary: readme project overview getting started quick start onboarding introduction about what is this
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential

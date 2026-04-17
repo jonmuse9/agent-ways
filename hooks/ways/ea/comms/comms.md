@@ -1,7 +1,6 @@
 ---
 description: team chat and messaging platforms, reading chat messages, sending messages with approval, communication channels
 vocabulary: teams chat message slack channel unread conversation direct message group chat send reply mention notification
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential

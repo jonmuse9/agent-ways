@@ -1,7 +1,6 @@
 ---
 description: Claude Code skills — SKILL.md format, creation, discovery, slash commands, frontmatter
 vocabulary: skill slash command SKILL.md create author invoke user-invocable plugin
-threshold: 2.0
 pattern: skill|SKILL\.md|skill.?(creation|author|write)|claude.?code.?skill|~\/\.claude\/skills
 scope: agent, subagent
 curve:

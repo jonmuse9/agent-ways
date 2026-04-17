@@ -1,7 +1,6 @@
 ---
 description: code documentation, docstrings, JSDoc, Godoc, rustdoc, inline comments
 vocabulary: docstring jsdoc godoc pydoc rustdoc comment annotation type hint documentation
-threshold: 2.5
 scope: agent, subagent
 curve:
   type: Exponential

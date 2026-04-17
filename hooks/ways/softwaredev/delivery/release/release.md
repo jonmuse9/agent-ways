@@ -1,7 +1,6 @@
 ---
 description: software releases, changelog generation, version bumping, semantic versioning, tagging
 vocabulary: release changelog version bump semver tag publish ship major minor breaking
-threshold: 2.0
 curve:
   type: Exponential
   half_life: 30000

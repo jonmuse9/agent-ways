@@ -1,7 +1,6 @@
 ---
 description: establishing team norms, coding conventions, testing philosophy, dependency policy, accessibility requirements
 vocabulary: convention norm guideline accessibility style guide linting rule agreement philosophy
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential

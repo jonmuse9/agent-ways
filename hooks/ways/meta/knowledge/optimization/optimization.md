@@ -1,7 +1,6 @@
 ---
 description: optimizing way vocabulary, tuning thresholds, reviewing matching quality, analyzing gaps and coverage
 vocabulary: optimize vocabulary suggest gaps coverage unused threshold tune scoring health audit sparsity discrimination overlap
-threshold: 2.0
 macro: prepend
 scope: agent
 requires: ["Read", "Bash(awk:*)", "Bash(find:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(sort:*)", "Bash(ways:*)"]

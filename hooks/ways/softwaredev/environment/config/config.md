@@ -2,7 +2,6 @@
 description: configuration, environment variables, dotenv files, connection settings
 vocabulary: dotenv environment configuration envvar config.json config.yaml connection port host url setting variable string
 files: \.env|config\.(json|yaml|yml|toml)$
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential
