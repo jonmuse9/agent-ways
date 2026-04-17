@@ -1,7 +1,6 @@
 ---
 description: database migration, schema change, alter table, add column, index creation, data migration
 vocabulary: migration schema alter column index table constraint foreign key rollback seed data transform
-threshold: 2.0
 scope: agent
 ---
 

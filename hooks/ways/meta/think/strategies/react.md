@@ -2,8 +2,6 @@
 
 ## Signature
 keywords: investigate debug systematically figure out why what's happening trace through
-threshold: 6.0
-
 ## Stages (cyclic, max 8 iterations)
 
 ### 1. Problem Reception

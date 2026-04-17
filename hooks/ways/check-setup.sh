@@ -43,7 +43,7 @@ MSG
   exit 0
 fi
 
-# Optional: note if embedding model is missing (BM25 still works)
+# Warn loudly if embedding model is missing — ADR-125 made it a hard dependency
 MODEL="${XDG_WAY}/minilm-l6-v2.gguf"
 EMBED_BIN="${XDG_WAY}/way-embed"
 if [[ ! -f "$MODEL" ]] || [[ ! -x "$EMBED_BIN" ]]; then
@@ -52,9 +52,10 @@ if [[ ! -f "$MODEL" ]] || [[ ! -x "$EMBED_BIN" ]]; then
   if [[ ! -f "$MARKER" ]]; then
     cat <<'MSG'
 
-ℹ️  Embedding model not installed — using BM25 fallback (91% vs 98% accuracy).
+⚠  Embedding engine not installed — semantic way matching is unavailable.
+   Only explicit pattern:/commands:/files: triggers will fire.
 
-To install the embedding engine:
+To install:
 
     cd ~/.claude && make setup
 

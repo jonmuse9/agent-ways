@@ -16,10 +16,10 @@ No configuration files to update. No registration step. The discovery scripts sc
 | If your trigger is... | Use |
 |----------------------|-----|
 | Specific keywords or commands | `pattern:`, `commands:`, or `files:` (regex) |
-| A broad concept users describe variously | `description:` + `vocabulary:` (BM25 semantic matching) |
+| A broad concept users describe variously | `description:` + `vocabulary:` (embedding semantic matching) |
 | A session condition, not content | `trigger:` with `context-threshold`, `file-exists`, or `session-start` |
 
-Matching is additive — pattern and semantic are OR'd. A way can have both a `pattern:` and `description:` + `vocabulary:`; either channel can fire it. Semantic matching uses embeddings (`ways embed`) with BM25 (`ways match`) as fallback — both are subcommands of the unified `ways` binary.
+Matching is additive — pattern and semantic are OR'd. A way can have both a `pattern:` and `description:` + `vocabulary:`; either channel can fire it. Semantic matching uses embeddings (`ways embed`) — a subcommand of the unified `ways` binary.
 
 ### Writing effective guidance
 

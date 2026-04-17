@@ -223,7 +223,6 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
             "id": id,
             "description": fm.description,
             "vocabulary": fm.vocabulary.unwrap_or_default(),
-            "threshold": fm.threshold.unwrap_or(2.0),
             "embed_threshold": fm.embed_threshold.unwrap_or(0.35),
             "embed_model": "en",
         });
@@ -238,9 +237,6 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
         let parent = path.parent().unwrap_or(Path::new(""));
         let relparent = parent.strip_prefix(dir).unwrap_or(parent);
         let id = format!("{}{}", id_prefix, relparent.display());
-
-        // Read the parent way's threshold for inheritance
-        let parent_threshold = find_parent_threshold(parent);
 
         let entries = match frontmatter::parse_locales_jsonl(path) {
             Ok(e) => e,
@@ -261,8 +257,6 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
                 "id": id,
                 "description": le.description,
                 "vocabulary": le.vocabulary.unwrap_or_default(),
-                "threshold": parent_threshold,
-                "embed_threshold": le.embed_threshold.unwrap_or(0.25),
                 "embed_model": "multilingual",
             });
 
@@ -273,32 +267,6 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
     }
 
     Ok(count)
-}
-
-/// Find the BM25 threshold from the parent way's frontmatter.
-fn find_parent_threshold(dir: &Path) -> f64 {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            // Skip locale stubs and check files
-            if fname.contains('.') && fname.ends_with(".md") {
-                let stem = fname.strip_suffix(".md").unwrap_or("");
-                if stem.contains('.') {
-                    continue;
-                }
-            }
-            if let Ok(fm) = frontmatter::parse(&path) {
-                if !fm.description.is_empty() {
-                    return fm.threshold.unwrap_or(2.0);
-                }
-            }
-        }
-    }
-    2.0
 }
 
 /// Shell out to way-embed generate for embedding vectors.
@@ -314,8 +282,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
     let bin = match embed_bin {
         Some(b) => b,
         None => {
-            log("Tip: install the embedding engine for 98% matching accuracy (vs 91% BM25):");
-            log("  cd ~/.claude && make setup");
+            log("ERROR: embedding engine required (ADR-125). Run: cd ~/.claude && make setup");
             return Ok(());
         }
     };

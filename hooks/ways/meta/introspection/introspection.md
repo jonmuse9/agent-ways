@@ -1,7 +1,6 @@
 ---
 description: PR creation as a reflection point — pause and consider what was learned this session
 vocabulary: pull request create pr open pr ship merge review reflect session learning introspection
-threshold: 2.5
 pattern: pull.?request|create.*pr|pr.*create|write.*pr|open.*pr
 commands: gh\ pr\ create
 macro: prepend

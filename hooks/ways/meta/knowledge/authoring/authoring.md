@@ -14,13 +14,12 @@ Each way lives in `{domain}/{wayname}/{wayname}.md` with YAML frontmatter.
 
 ## Matching Strategy
 
-**Use semantic matching.** This is the primary matching strategy for prompt-triggered ways. The engine uses embeddings (cosine similarity) with BM25 as fallback.
+**Use semantic matching.** This is the primary matching strategy for prompt-triggered ways. The engine uses embeddings (cosine similarity) — this is the sole retrieval tier (per ADR-125).
 
 ```markdown
 ---
 description: what this way covers, in natural language
 vocabulary: domain specific keywords users would say
-threshold: 2.0            # BM25 score threshold (higher = stricter)
 embed_threshold: 0.35     # cosine similarity threshold (optional, per-way tuning)
 scope: agent
 ---
@@ -57,9 +56,8 @@ threshold: 90             # percentage (0-100)
 **Semantic:**
 - `description:` - Natural language reference text for what this way covers
 - `vocabulary:` - Space-separated domain keywords users would say
-- `threshold:` - BM25 score threshold (default 2.0, higher = stricter)
-- `embed_threshold:` - Cosine similarity override (optional, per-way tuning)
-- Engine: embedding → BM25 → skip (regex still works without either)
+- `embed_threshold:` - Cosine similarity threshold (optional, per-way tuning; default applied if absent)
+- Engine: embedding-only (per ADR-125). Explicit `pattern:` / `commands:` regex still fire independently.
 
 **State-based:**
 - `trigger:` - State condition type (`context-threshold`, `file-exists`, `session-start`)
@@ -118,15 +116,14 @@ For state transitions and process flows, prefer Cypher-style notation over ASCII
 
 When a way covers multiple distinct concerns (>80 lines, >2 sub-topics, language/tool-specific variants), decompose into a tree. The supply chain tree (`softwaredev/code/supplychain/`) is the reference implementation.
 
-**Threshold progression** — thresholds increase with depth:
-- Root: `1.8` (broad catch, overview/orientation)
-- Mid-tier: `2.0` (focused, actionable guidance)
-- Leaf/specialist: `2.5` (narrow, specific implementation)
+**How disclosure works now** (ADR-125): ways are nodes in a DAG. When a parent fires, a session marker is set. Child ways get a threshold boost (`config.parent_threshold_multiplier`, default 0.8) whenever any ancestor has a marker — so children fire more easily once their domain is active. This is the mechanism behind "progressive disclosure": children are always candidates, but the boost makes in-domain children fire on weaker signal. Full model in [hooks-and-ways/matching.md](../../../../docs/hooks-and-ways/matching.md).
+
+**Embedding thresholds** — only English frontmatter carries `embed_threshold:`. Broader ways at the root typically leave it unset (use the default 0.35); more specific children may set a higher value (e.g., 0.45) to avoid cross-firing with the root. Locale stubs don't carry thresholds.
 
 **Vocabulary isolation** — sibling ways MUST NOT share vocabulary:
 - Target Jaccard similarity < 0.15 between siblings
 - Each child owns its own keyword space
-- Use `/ways-tests jaccard <tree>` to verify
+- Use `ways siblings <path>` to verify; use `ways tune --way <path>` to surface cross-way confusers in multilingual space
 
 **Token awareness** — aim for:
 - Realistic path (root→leaf): ~1200 tokens
@@ -175,16 +172,19 @@ Full authoring guide: `docs/hooks-and-ways/extending.md`
 
 ## Locale Stubs
 
-Ways can have native-language matching stubs stored in `{wayname}.locales.jsonl` alongside the way file. These are packed JSONL — one line per language with `description` and `vocabulary` in the target language. The way body stays English.
+Ways can have native-language matching stubs stored in `{wayname}.locales.jsonl` alongside the way file. These are **coordinate aliases** on the way's graph node (ADR-125): one line per language with `description` and `vocabulary` in the target language. The way body stays English. Every alias must carry the objective match words of the way's intent in local form — translations must actually translate, not just share a name.
 
 ```jsonl
-{"lang":"ja","description":"セキュリティ脆弱性スキャン","vocabulary":"セキュリティ 脆弱性 CVE","embed_threshold":0.74}
+{"lang":"ja","description":"セキュリティ脆弱性スキャン","vocabulary":"セキュリティ 脆弱性 CVE"}
 ```
 
-Use `ways tune --apply` to auto-set thresholds, `ways tune --audit` to find ambiguous descriptions. Full guide: `docs/hooks-and-ways/languages.md`.
+No per-locale threshold field: the node's English `embed_threshold` governs all aliases.
+
+**Audit your stubs** with `ways tune` — it measures fidelity (do sibling translations agree?) and discrimination (does another way's alias outrank yours?). Entries where a non-sibling confuser wins need the stub re-authored with sharper vocabulary. See `knowledge/optimization/tuning(meta)` for the full workflow and failure-mode categories. Full guide: `docs/hooks-and-ways/languages.md`.
 
 ## See Also
 
 - knowledge/authoring/tool-agnostic(meta) — ways describe intent, not tool calls
 - knowledge/authoring/pii-free(meta) — privacy constraint on way content
-- knowledge/optimization(meta) — vocabulary tuning, threshold auto-tuning, discrimination audit
+- knowledge/optimization(meta) — vocabulary tuning, sparsity, discrimination
+- knowledge/optimization/tuning(meta) — locale alias audit, failure modes, re-authoring guidance

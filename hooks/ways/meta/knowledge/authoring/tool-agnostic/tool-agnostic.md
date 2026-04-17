@@ -1,7 +1,6 @@
 ---
 description: writing ways that describe patterns and intentions rather than referencing specific tool names, MCP servers, or CLI commands
 vocabulary: tool agnostic vendor neutral portable abstract intention pattern mcp cli specific
-threshold: 2.5
 files: \.claude/(hooks/)?ways/.*way\.md$
 scope: agent, subagent
 curve:

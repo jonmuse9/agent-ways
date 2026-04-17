@@ -1,7 +1,6 @@
 ---
 description: performance optimization, query optimization, caching, reducing latency, memory usage
 vocabulary: optimize performance latency cache slow query index bottleneck throughput memory profile benchmark
-threshold: 2.0
 scope: agent
 ---
 

@@ -1,7 +1,6 @@
 ---
 description: Structured investigation — exploring topics, comparing options, synthesizing findings, evaluating sources
 vocabulary: research investigate explore find out compare evaluate analyze synthesize sources evidence survey landscape assess discover understand learn about look into dig into alternatives options
-threshold: 2.0
 macro: append
 scope: agent
 requires: ["Bash(grep:*)"]

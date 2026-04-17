@@ -1,7 +1,6 @@
 ---
 description: pre-install trust check for untrusted or unfamiliar repositories
 vocabulary: pip install npm install cargo build go build make docker run setup.py postinstall git clone
-threshold: 2.5
 scope: agent
 ---
 ## anchor

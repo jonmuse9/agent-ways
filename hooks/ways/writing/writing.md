@@ -1,7 +1,6 @@
 ---
 description: Content creation — documents, presentations, reports, proposals, editing, and structured writing beyond code documentation
 vocabulary: write draft compose author proposal report presentation deck slides memo brief narrative outline revise edit polish tone audience prose style
-threshold: 2.0
 macro: append
 scope: agent
 requires: ["Bash(grep:*)"]

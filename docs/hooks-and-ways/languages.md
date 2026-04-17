@@ -152,17 +152,8 @@ Two dimensions to optimize:
 Languages are defined in `tools/ways-cli/languages.json`. Each entry specifies:
 
 - **`name`** / **`native`** — display names for normalization
-- **`bm25_stemmer`** — Snowball stemmer algorithm name, or `"impossible"` if BM25 cannot support this language
 
-### BM25 feasibility
-
-BM25 is the fallback matching engine when the embedding model is unavailable. It works for languages with whitespace word boundaries and suffix-stripping morphology:
-
-**BM25 works**: Danish, Dutch, English, Finnish, French, German, Greek, Hungarian, Italian, Norwegian, Portuguese, Romanian, Russian, Spanish, Swedish, Turkish
-
-**BM25 impossible**: Arabic, Burmese, Chinese, Georgian, Gujarati, Hebrew, Hindi, Japanese, Korean, Marathi, Mongolian, Thai, Urdu, Vietnamese — and others marked `"impossible"` in `languages.json`
-
-For "impossible" languages, the embedding engine is required — not optional. Without it, only keyword/regex patterns fire.
+The multilingual embedding model handles all supported languages uniformly through the alias model (see ADR-125) — there is no per-language stemmer or script-class fallback. Without the embedding engine, only keyword/regex patterns fire.
 
 ## Checking language status
 

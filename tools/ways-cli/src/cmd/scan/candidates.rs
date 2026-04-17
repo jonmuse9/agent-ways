@@ -126,10 +126,12 @@ fn parse_candidate(id: &str, path: &Path, content: &str) -> Option<WayCandidate>
         files: get_fm_field(&fm, "files"),
         description: get_fm_field(&fm, "description").unwrap_or_default(),
         vocabulary: get_fm_field(&fm, "vocabulary").unwrap_or_default(),
-        // config::global() — future migration: ctx.config.bm25_threshold
+        // threshold: only read for ways with trigger: context-threshold (percentage).
+        // Post-ADR-125, no semantic/BM25 meaning; default 0.0 is never compared for other triggers.
         threshold: get_fm_field(&fm, "threshold")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(crate::config::global().bm25_threshold),
+            .unwrap_or(0.0),
+        embed_threshold: get_fm_field(&fm, "embed_threshold").and_then(|s| s.parse().ok()),
         // config::global() — future migration: ctx.config.default_scope
         scope: get_fm_field(&fm, "scope")
             .unwrap_or_else(|| crate::config::global().default_scope.clone()),

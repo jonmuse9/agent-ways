@@ -1,7 +1,6 @@
 ---
 description: drafting email replies, writing style calibration, creating email drafts with proper threading
 vocabulary: draft reply respond compose email write message tone voice style thread attachment
-threshold: 2.5
 scope: agent, subagent
 curve:
   type: Exponential

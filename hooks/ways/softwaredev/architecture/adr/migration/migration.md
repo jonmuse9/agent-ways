@@ -1,7 +1,6 @@
 ---
 description: migrating to ADR tooling, adopting ADRs, converting existing decisions, setting up adr.yaml, bootstrapping architecture records
 vocabulary: migrate adopt convert bootstrap setup greenfield legacy rename renumber frontmatter yaml scaffold import consolidate
-threshold: 3.0
 macro: prepend
 scope: agent, subagent
 curve:
@@ -78,7 +77,7 @@ legacy:
 ADRs with metadata in the markdown body instead of YAML frontmatter:
 
 ```markdown
-# ADR-014: Use BM25 Matching          # Before (inline)
+# ADR-014: Use Postgres for Session State          # Before (inline)
 
 Status: Accepted
 Date: 2026-01-15
@@ -97,7 +96,7 @@ deciders:
 related: []
 ---
 
-# ADR-014: Use BM25 Matching
+# ADR-014: Use Postgres for Session State
 ```
 
 Remove the inline metadata lines from the body after moving them to frontmatter. Run `docs/scripts/adr lint` to verify the conversion.

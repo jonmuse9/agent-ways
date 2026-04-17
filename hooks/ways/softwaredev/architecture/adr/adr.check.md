@@ -1,7 +1,6 @@
 ---
 description: writing architecture decision record, documenting design choice, ADR context and consequences
 vocabulary: adr decision record context consequences alternatives trade-off architectural choice
-threshold: 2.0
 scope: agent
 ---
 

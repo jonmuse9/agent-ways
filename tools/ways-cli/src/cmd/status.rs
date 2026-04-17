@@ -18,14 +18,9 @@ pub fn run(json_output: bool) -> Result<()> {
     let model_exists = model_path.is_file();
     let corpus_exists = corpus_path.is_file();
 
-    // config::global() — future migration: ctx.config.matcher
-    let configured = crate::config::global().matcher.clone();
-
-    // Active engine
+    // Post-ADR-125: embedding is the sole engine. "none" means model or corpus missing.
     let engine = if way_embed.is_some() && model_exists && corpus_exists {
         "embedding"
-    } else if corpus_exists {
-        "bm25"
     } else {
         "none"
     };
@@ -85,7 +80,6 @@ pub fn run(json_output: bool) -> Result<()> {
         let output = json!({
             "engine": {
                 "active": engine,
-                "configured": configured,
             },
             "binaries": {
                 "ways": std::env::current_exe().ok().map(|p| p.display().to_string()),
@@ -119,7 +113,7 @@ pub fn run(json_output: bool) -> Result<()> {
         println!();
 
         // Engine & language
-        println!("Engine:    {engine} (configured: {configured})");
+        println!("Engine:    {engine}");
         println!("Language:  {output_language}");
         println!();
 

@@ -1,7 +1,6 @@
 ---
 description: mocking dependencies, test doubles, fakes, stubs, spies, dependency injection for tests
 vocabulary: mock fake stub spy double dependency inject external isolate test double
-threshold: 2.5
 scope: agent, subagent
 curve:
   type: Exponential

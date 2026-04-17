@@ -1,7 +1,6 @@
 ---
 description: GitHub pull requests, issues, code review, CI checks, repository management
 vocabulary: pr pullrequest issue review checks ci label milestone fork repository upstream draft ship land merge squash rebase
-threshold: 2.0
 pattern: github|\ issue|pull.?request|\ pr\ |\ pr$|review.?(pr|comment)|merge.?request|ship.?(it|this|the)|land.?(it|this)|merge.?(it|this)|squash.?merge|rebase.?merge
 commands: ^gh\ |^gh$
 curve:

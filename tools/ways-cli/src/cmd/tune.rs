@@ -1,14 +1,24 @@
-//! Tune embed_threshold values for locale stubs.
+//! Locale alias fidelity + discrimination audit (ADR-125).
 //!
-//! Two modes:
-//! - **Tune** (default): compute optimal thresholds per locale entry
-//! - **Audit** (`--audit`): surface entries with low discrimination —
-//!   where the description doesn't clearly separate this way from others
+//! Two measurements per locale entry, run on the same query (the locale's
+//! own description + vocabulary):
 //!
-//! Parallelized: uses all cores minus 4, one way per thread.
+//! **Fidelity** — min cosine against peer aliases on the *same* way.
+//! Tightest cross-lingual positive; if a peer disagrees, fidelity drops.
+//! Low fidelity → stub is a poor translation of the same intent; fix by
+//! re-authoring.
+//!
+//! **Discrimination** — best score against any *other* way's alias,
+//! minus the stub's own self-match. If another way scores higher than
+//! this stub's peers, the stub is being outranked by a confuser (the
+//! "mocking beats commits in ru" failure mode). Fix by sharpening
+//! vocabulary or by splitting/merging neighboring ways.
+//!
+//! Neither measurement writes thresholds; both inform re-authoring.
+//!
+//! Parallelized: one way per thread, n_cores - 4 workers.
 
 use anyhow::{bail, Context, Result};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -17,43 +27,34 @@ use walkdir::WalkDir;
 use crate::frontmatter;
 use crate::util::{home_dir, xdg_cache_dir};
 
-/// A confuser: a non-self way that scores close to self.
+#[derive(Clone)]
+struct FidelityResult {
+    way_id: String,
+    lang: String,
+    /// Min cosine against peer aliases on the same way (tightest cross-lingual positive)
+    min_peer: f64,
+    /// Mean cosine across peer aliases
+    mean_peer: f64,
+    /// How many peer aliases scored
+    peer_count: usize,
+    /// Best cosine against any alias on a *different* way (the top confuser)
+    top_confuser: Option<Confuser>,
+    /// Gap = min_peer - top_confuser.score. Negative means a confuser outranks
+    /// the weakest same-way peer (the locale stub is being dominated).
+    discrimination_gap: f64,
+}
+
 #[derive(Clone)]
 struct Confuser {
     way_id: String,
     score: f64,
 }
 
-#[derive(Clone)]
-struct TuneResult {
-    way_id: String,
-    lang: String,
-    current: f64,
-    optimal: f64,
-    best_self: f64,
-    best_non_self: Option<f64>,
-    /// Gap between self and best non-self (discrimination signal)
-    gap: f64,
-    changed: bool,
-    /// Top 3 closest non-self ways
-    confusers: Vec<Confuser>,
-}
-
-struct WayTuneResult {
-    way_id: String,
-    locale_path: PathBuf,
-    results: Vec<TuneResult>,
-    tuned_entries: Vec<frontmatter::LocaleEntry>,
-    original_entries: Vec<frontmatter::LocaleEntry>,
-}
-
 pub fn run(
     ways_dir: Option<String>,
     way_filter: Option<String>,
-    apply: bool,
-    audit: bool,
-    audit_threshold: f64,
-    margin: f64,
+    fidelity_threshold: f64,
+    discrimination_threshold: f64,
     json_output: bool,
 ) -> Result<()> {
     let global_dir = ways_dir
@@ -75,111 +76,58 @@ pub fn run(
         .context("way-embed binary not found. Run `make setup` to install.")?;
 
     let excluded = crate::util::load_excluded_segments();
+    let locale_files = collect_locale_files(&global_dir, way_filter.as_deref(), &excluded)?;
 
-    // Collect all .locales.jsonl files
-    let mut locale_files: Vec<(String, PathBuf)> = Vec::new();
-    for entry in WalkDir::new(&global_dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if !fname.ends_with(".locales.jsonl") {
-            continue;
-        }
-        if crate::util::is_excluded_path(path, &excluded) {
-            continue;
-        }
-
-        let parent = path.parent().unwrap_or(Path::new(""));
-        let rel = parent.strip_prefix(&global_dir).unwrap_or(parent);
-        let way_id = rel.display().to_string();
-
-        if let Some(ref filter) = way_filter {
-            if !way_id.contains(filter.as_str()) {
-                continue;
-            }
-        }
-
-        locale_files.push((way_id, path.to_path_buf()));
-    }
-    locale_files.sort_by(|a, b| a.0.cmp(&b.0));
-
-    if locale_files.is_empty() {
-        if way_filter.is_some() {
-            bail!("No .locales.jsonl files matched filter");
-        }
-        bail!("No .locales.jsonl files found");
-    }
-
-    // Parallelism: all cores minus 4 (leave headroom), minimum 1
-    let n_cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
+    let n_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let n_workers = n_cores.saturating_sub(4).max(1);
 
-    let total_ways = locale_files.len();
     eprintln!(
-        "{} {} ways across {} threads...",
-        if audit { "Auditing" } else { "Tuning" },
-        total_ways,
+        "Measuring alias fidelity for {} ways across {} threads...",
+        locale_files.len(),
         n_workers
     );
 
-    // Shared state
-    let work_queue: Arc<Mutex<Vec<(String, PathBuf)>>> = Arc::new(Mutex::new(locale_files));
+    let total = locale_files.len();
+    let queue: Arc<Mutex<Vec<(String, PathBuf)>>> = Arc::new(Mutex::new(locale_files));
     let completed: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
     let failed: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-    let all_results: Arc<Mutex<Vec<WayTuneResult>>> = Arc::new(Mutex::new(Vec::new()));
+    let results: Arc<Mutex<Vec<FidelityResult>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Spawn workers
     let mut handles = Vec::new();
     for _ in 0..n_workers {
-        let queue = Arc::clone(&work_queue);
-        let results = Arc::clone(&all_results);
+        let queue = Arc::clone(&queue);
+        let results = Arc::clone(&results);
         let completed = Arc::clone(&completed);
         let failed = Arc::clone(&failed);
         let embed_bin = embed_bin.clone();
         let multi_corpus = multi_corpus.clone();
         let multi_model = multi_model.clone();
 
-        let handle = std::thread::spawn(move || {
-            loop {
-                let item = {
-                    let mut q = queue.lock().unwrap();
-                    q.pop()
-                };
+        handles.push(std::thread::spawn(move || loop {
+            let item = { queue.lock().unwrap().pop() };
+            let (way_id, locale_path) = match item {
+                Some(x) => x,
+                None => break,
+            };
 
-                let (way_id, locale_path) = match item {
-                    Some(i) => i,
-                    None => break,
-                };
-
-                match tune_way(&way_id, &locale_path, &embed_bin, &multi_corpus, &multi_model, margin) {
-                    Ok(result) => {
-                        let mut r = results.lock().unwrap();
-                        r.push(result);
-                    }
-                    Err(e) => {
-                        eprintln!("\nERROR tuning {}: {}", way_id, e);
-                        let mut f = failed.lock().unwrap();
-                        *f += 1;
-                    }
+            match measure_way(&way_id, &locale_path, &embed_bin, &multi_corpus, &multi_model) {
+                Ok(mut ws) => {
+                    let mut r = results.lock().unwrap();
+                    r.append(&mut ws);
                 }
-
-                let done = {
-                    let mut c = completed.lock().unwrap();
-                    *c += 1;
-                    *c
-                };
-                eprint!("\r  {}/{} ways", done, total_ways);
+                Err(e) => {
+                    eprintln!("\nERROR measuring {way_id}: {e}");
+                    *failed.lock().unwrap() += 1;
+                }
             }
-        });
-        handles.push(handle);
+
+            let done = {
+                let mut c = completed.lock().unwrap();
+                *c += 1;
+                *c
+            };
+            eprint!("\r  {done}/{total} ways");
+        }));
     }
 
     for h in handles {
@@ -189,235 +137,78 @@ pub fn run(
 
     let fail_count = *failed.lock().unwrap();
     if fail_count > 0 {
-        eprintln!("WARNING: {} ways failed to tune", fail_count);
+        eprintln!("WARNING: {fail_count} ways failed to measure");
     }
 
-    // Collect and sort
-    let mut way_results = Arc::try_unwrap(all_results)
-        .map_err(|_| anyhow::anyhow!("failed to unwrap results"))
-        .unwrap()
+    let mut all_results = Arc::try_unwrap(results)
+        .map_err(|_| anyhow::anyhow!("failed to unwrap results"))?
         .into_inner()
         .unwrap();
-    way_results.sort_by(|a, b| a.way_id.cmp(&b.way_id));
-
-    let mut all_tune_results: Vec<TuneResult> = Vec::new();
-    let mut files_to_update: BTreeMap<PathBuf, Vec<frontmatter::LocaleEntry>> = BTreeMap::new();
-
-    for wr in &way_results {
-        all_tune_results.extend(wr.results.clone());
-
-        let any_changed = wr.tuned_entries.iter().any(|e| {
-            let orig = wr.original_entries.iter().find(|o| o.lang == e.lang);
-            orig.is_some_and(|o| o.embed_threshold != e.embed_threshold)
-        });
-        if any_changed {
-            files_to_update.insert(wr.locale_path.clone(), wr.tuned_entries.clone());
-        }
-    }
-
-    // Output
-    if audit {
-        output_audit(&all_tune_results, audit_threshold, json_output)?;
-    } else {
-        output_tune(&all_tune_results, apply, json_output)?;
-    }
-
-    // Apply if requested (tune mode only)
-    if !audit && apply {
-        let changed_count = all_tune_results.iter().filter(|r| r.changed).count();
-        if changed_count > 0 {
-            for (path, entries) in &files_to_update {
-                let mut lines: Vec<String> = Vec::new();
-                for entry in entries {
-                    lines.push(serde_json::to_string(entry)?);
-                }
-                lines.sort();
-                let content = lines.join("\n") + "\n";
-                std::fs::write(path, content)
-                    .with_context(|| format!("writing {}", path.display()))?;
-            }
-            eprintln!("Updated {} .locales.jsonl files", files_to_update.len());
-            eprintln!("Run `ways corpus` to regenerate the corpus with tuned thresholds.");
-        }
-    }
-
-    Ok(())
-}
-
-/// Standard tune output: threshold table.
-fn output_tune(results: &[TuneResult], apply: bool, json_output: bool) -> Result<()> {
-    let changed_count = results.iter().filter(|r| r.changed).count();
+    all_results.sort_by(|a, b| a.way_id.cmp(&b.way_id).then(a.lang.cmp(&b.lang)));
 
     if json_output {
-        let json_results: Vec<serde_json::Value> = results
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "way": r.way_id,
-                    "lang": r.lang,
-                    "current": r.current,
-                    "optimal": r.optimal,
-                    "self_score": r.best_self,
-                    "best_non_self": r.best_non_self,
-                    "gap": r.gap,
-                    "changed": r.changed,
-                    "confusers": r.confusers.iter().map(|c| {
-                        serde_json::json!({"way": c.way_id, "score": c.score})
-                    }).collect::<Vec<_>>(),
-                })
-            })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&json_results)?);
+        emit_json(&all_results, fidelity_threshold, discrimination_threshold)?;
     } else {
-        let mut table =
-            agent_fmt::Table::new(&["Way", "Lang", "Current", "Optimal", "Self", "Noise", "Gap", "Δ"]);
-        table.max_width(0, 40);
-
-        for r in results {
-            let delta = if r.changed {
-                format!("{:+.2}", r.optimal - r.current)
-            } else {
-                "—".to_string()
-            };
-            let noise = r
-                .best_non_self
-                .map_or("—".to_string(), |s| format!("{:.4}", s));
-
-            table.add(vec![
-                &r.way_id,
-                &r.lang,
-                &format!("{:.2}", r.current),
-                &format!("{:.2}", r.optimal),
-                &format!("{:.4}", r.best_self),
-                &noise,
-                &format!("{:.2}", r.gap),
-                &delta,
-            ]);
-        }
-        table.print();
-
-        println!();
-        println!("{} entries analyzed, {} would change", results.len(), changed_count);
-
-        if changed_count > 0 && !apply {
-            println!();
-            println!("Run with --apply to write tuned thresholds to .locales.jsonl files.");
-            println!("Then run `ways corpus` to regenerate the corpus.");
-        }
+        emit_report(&all_results, fidelity_threshold, discrimination_threshold);
     }
 
     Ok(())
 }
 
-/// Audit output: surface low-discrimination entries with confusers.
-fn output_audit(results: &[TuneResult], min_gap: f64, json_output: bool) -> Result<()> {
-    let mut flagged: Vec<&TuneResult> = results
-        .iter()
-        .filter(|r| r.gap < min_gap)
-        .collect();
-    flagged.sort_by(|a, b| a.gap.partial_cmp(&b.gap).unwrap_or(std::cmp::Ordering::Equal));
+fn collect_locale_files(
+    global_dir: &Path,
+    way_filter: Option<&str>,
+    excluded: &[String],
+) -> Result<Vec<(String, PathBuf)>> {
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    for entry in WalkDir::new(global_dir).follow_links(true).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if !path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".locales.jsonl")) {
+            continue;
+        }
+        if crate::util::is_excluded_path(path, excluded) {
+            continue;
+        }
 
-    if json_output {
-        let json_results: Vec<serde_json::Value> = flagged
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "way": r.way_id,
-                    "lang": r.lang,
-                    "gap": r.gap,
-                    "self_score": r.best_self,
-                    "best_non_self": r.best_non_self,
-                    "confusers": r.confusers.iter().map(|c| {
-                        serde_json::json!({"way": c.way_id, "score": c.score})
-                    }).collect::<Vec<_>>(),
-                })
-            })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&json_results)?);
-        return Ok(());
-    }
+        let parent = path.parent().unwrap_or(Path::new(""));
+        let rel = parent.strip_prefix(global_dir).unwrap_or(parent);
+        let way_id = rel.display().to_string();
 
-    if flagged.is_empty() {
-        println!("No entries with discrimination gap < {:.2}", min_gap);
-        println!("All locale descriptions have clear separation from neighbors.");
-        return Ok(());
-    }
-
-    println!("Discrimination Audit");
-    println!("====================");
-    println!();
-    println!(
-        "{} of {} entries have gap < {:.2} (ambiguous — description doesn't clearly",
-        flagged.len(),
-        results.len(),
-        min_gap,
-    );
-    println!("separate this way from others. Consider revising description/vocabulary.)");
-    println!();
-
-    // Group by way for cleaner output
-    let mut current_way = "";
-    for r in &flagged {
-        if r.way_id != current_way {
-            if !current_way.is_empty() {
-                println!();
+        if let Some(filter) = way_filter {
+            if !way_id.contains(filter) {
+                continue;
             }
-            current_way = &r.way_id;
-            println!("  {} ", current_way);
         }
-
-        let confuser_str = r
-            .confusers
-            .iter()
-            .map(|c| format!("{} ({:.2})", c.way_id, c.score))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        println!(
-            "    {} — gap {:.2}  (self {:.2}, noise {:.2})  confused with: {}",
-            r.lang,
-            r.gap,
-            r.best_self,
-            r.best_non_self.unwrap_or(0.0),
-            confuser_str,
-        );
+        files.push((way_id, path.to_path_buf()));
     }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    println!();
-    println!("To fix: revise the description or vocabulary in the .locales.jsonl to");
-    println!("better distinguish from confusers. Then re-run `ways tune` to update thresholds.");
-
-    // Summary stats
-    let total = results.len();
-    let clear = total - flagged.len();
-    println!();
-    println!(
-        "Summary: {} clear, {} ambiguous, {} total",
-        clear,
-        flagged.len(),
-        total
-    );
-
-    Ok(())
+    if files.is_empty() {
+        if way_filter.is_some() {
+            bail!("No .locales.jsonl files matched filter");
+        }
+        bail!("No .locales.jsonl files found");
+    }
+    Ok(files)
 }
 
-/// Tune all locale entries for a single way.
-fn tune_way(
+/// Measure fidelity for every locale alias on a single way.
+fn measure_way(
     way_id: &str,
     locale_path: &Path,
     embed_bin: &Path,
     multi_corpus: &Path,
     multi_model: &Path,
-    margin: f64,
-) -> Result<WayTuneResult> {
-    let all_entries = frontmatter::parse_locales_jsonl(locale_path)?;
-    // Only tune active languages
-    let entries: Vec<frontmatter::LocaleEntry> = all_entries
+) -> Result<Vec<FidelityResult>> {
+    let entries: Vec<frontmatter::LocaleEntry> = frontmatter::parse_locales_jsonl(locale_path)?
         .into_iter()
         .filter(|e| crate::agents::is_language_active(&e.lang))
         .collect();
-    let mut results: Vec<TuneResult> = Vec::new();
-    let mut tuned_entries: Vec<frontmatter::LocaleEntry> = Vec::new();
+
+    let mut out = Vec::with_capacity(entries.len());
 
     for entry in &entries {
         let query = format!(
@@ -429,148 +220,180 @@ fn tune_way(
         let output = Command::new(embed_bin)
             .args([
                 "match",
-                "--corpus",
-                multi_corpus.to_str().unwrap(),
-                "--model",
-                multi_model.to_str().unwrap(),
-                "--query",
-                &query,
-                "--threshold",
-                "0.0",
+                "--corpus", multi_corpus.to_str().unwrap(),
+                "--model", multi_model.to_str().unwrap(),
+                "--query", &query,
+                "--threshold", "0.0",
             ])
             .output()
-            .with_context(|| format!("way-embed match for {}/{}", way_id, entry.lang))?;
+            .with_context(|| format!("way-embed match for {way_id}/{lang}", lang = entry.lang))?;
 
         if !output.status.success() {
-            tuned_entries.push(entry.clone());
             continue;
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut self_scores: Vec<f64> = Vec::new();
-        let mut non_self_entries: Vec<(String, f64)> = Vec::new();
-
-        for line in stdout.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() < 2 {
-                continue;
-            }
-            let id = parts[0];
-            let score: f64 = match parts[1].parse() {
-                Ok(s) => s,
-                Err(_) => continue,
+        // Collect same-way peer scores (excluding self-row at ~1.0) and
+        // best non-self score (the top confuser — another way's alias that
+        // competes with this stub in embedding space).
+        let mut peer_scores: Vec<f64> = Vec::new();
+        let mut top_confuser: Option<Confuser> = None;
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let mut parts = line.split('\t');
+            let id = match parts.next() {
+                Some(s) => s,
+                None => continue,
+            };
+            let score: f64 = match parts.next().and_then(|s| s.parse().ok()) {
+                Some(s) => s,
+                None => continue,
             };
 
             if id == way_id {
-                self_scores.push(score);
-            } else if is_hierarchical(id, way_id) {
-                // Parent/child/ancestor matches are expected — they share
-                // vocabulary by design, and runtime fires them together via
-                // parent_threshold_multiplier. Don't count them as confusers.
-                continue;
-            } else {
-                non_self_entries.push((id.to_string(), score));
-            }
-        }
-
-        // Sort non-self by score descending, dedup by way_id (keep best)
-        non_self_entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let mut seen = std::collections::HashSet::new();
-        let mut top_confusers: Vec<Confuser> = Vec::new();
-        for (id, score) in &non_self_entries {
-            if seen.insert(id.clone()) {
-                top_confusers.push(Confuser {
-                    way_id: id.clone(),
-                    score: *score,
-                });
-                if top_confusers.len() >= 3 {
-                    break;
+                if score > 0.999 {
+                    continue; // self-match
                 }
+                peer_scores.push(score);
+            } else if top_confuser.as_ref().is_none_or(|c| score > c.score) {
+                top_confuser = Some(Confuser { way_id: id.to_string(), score });
             }
         }
 
-        // Treat all same-way stubs as positives (cross-lingual equivalence):
-        // the threshold must admit the *tightest* positive, so use min not max.
-        let min_self = self_scores
-            .iter()
-            .cloned()
-            .fold(f64::INFINITY, f64::min);
-        let best_self = if min_self.is_finite() {
-            min_self
+        let (min_peer, mean_peer) = if peer_scores.is_empty() {
+            (f64::NAN, f64::NAN)
         } else {
-            f64::NEG_INFINITY
-        };
-        let best_non_self = non_self_entries
-            .first()
-            .map(|(_, s)| *s)
-            .unwrap_or(f64::NEG_INFINITY);
-
-        let gap = if best_non_self > f64::NEG_INFINITY && best_self > f64::NEG_INFINITY {
-            best_self - best_non_self
-        } else if best_self > f64::NEG_INFINITY {
-            best_self // no confusers at all = perfect discrimination
-        } else {
-            0.0
+            let min = peer_scores.iter().cloned().fold(f64::INFINITY, f64::min);
+            let mean = peer_scores.iter().sum::<f64>() / peer_scores.len() as f64;
+            (min, mean)
         };
 
-        let optimal = if best_self > f64::NEG_INFINITY && best_non_self > f64::NEG_INFINITY {
-            // Midpoint if there's a clean gap; otherwise fall back to
-            // tightest positive minus margin so we still catch all stubs.
-            if best_self > best_non_self + 2.0 * margin {
-                (best_self + best_non_self) / 2.0
-            } else {
-                (best_self - margin).max(best_non_self + margin / 2.0)
-            }
-        } else if best_self > f64::NEG_INFINITY {
-            // No confusers — just below tightest positive.
-            best_self - margin
-        } else {
-            0.15
+        let discrimination_gap = match (&top_confuser, peer_scores.is_empty()) {
+            (Some(c), false) => min_peer - c.score,
+            _ => f64::NAN,
         };
 
-        let optimal = optimal.clamp(0.10, 0.90);
-        let optimal = (optimal * 100.0).round() / 100.0;
-
-        let current = entry.embed_threshold.unwrap_or(0.25);
-        let changed = (optimal - current).abs() > 0.005;
-
-        results.push(TuneResult {
+        out.push(FidelityResult {
             way_id: way_id.to_string(),
             lang: entry.lang.clone(),
-            current,
-            optimal,
-            best_self,
-            best_non_self: if best_non_self > f64::NEG_INFINITY {
-                Some(best_non_self)
-            } else {
-                None
-            },
-            gap,
-            changed,
-            confusers: top_confusers,
+            min_peer,
+            mean_peer,
+            peer_count: peer_scores.len(),
+            top_confuser,
+            discrimination_gap,
         });
-
-        let mut tuned = entry.clone();
-        if changed {
-            tuned.embed_threshold = Some(optimal);
-        }
-        tuned_entries.push(tuned);
     }
 
-    Ok(WayTuneResult {
-        way_id: way_id.to_string(),
-        locale_path: locale_path.to_path_buf(),
-        results,
-        tuned_entries,
-        original_entries: entries,
-    })
+    Ok(out)
 }
 
-/// True iff one way_id is an ancestor of the other in the path hierarchy.
-/// Way IDs are slash-separated paths (e.g. `softwaredev/delivery/github`).
-fn is_hierarchical(a: &str, b: &str) -> bool {
-    let (shorter, longer) = if a.len() < b.len() { (a, b) } else { (b, a) };
-    longer.starts_with(shorter) && longer.as_bytes().get(shorter.len()) == Some(&b'/')
+fn emit_report(results: &[FidelityResult], fidelity_threshold: f64, discrimination_threshold: f64) {
+    use agent_fmt::{Align, Table};
+
+    // Entries to flag: low fidelity OR low/negative discrimination.
+    let flagged: Vec<&FidelityResult> = results
+        .iter()
+        .filter(|r| {
+            r.peer_count > 0
+                && (r.min_peer < fidelity_threshold
+                    || (!r.discrimination_gap.is_nan()
+                        && r.discrimination_gap < discrimination_threshold))
+        })
+        .collect();
+
+    println!("Locale Alias Fidelity + Discrimination");
+    println!("======================================");
+    println!();
+
+    let total = results.iter().filter(|r| r.peer_count > 0).count();
+    println!(
+        "{}/{} entries flagged (fidelity < {:.2} or discrimination gap < {:.2})",
+        flagged.len(),
+        total,
+        fidelity_threshold,
+        discrimination_threshold
+    );
+    println!();
+    println!("Fidelity     = min cosine vs peer aliases on same way (how well translations agree).");
+    println!("Discrimination = min_peer − top_confuser.score (how clearly this stub outranks other ways).");
+    println!("A negative discrimination gap means another way outranks this locale's own peers.");
+    println!();
+
+    if flagged.is_empty() {
+        println!("All aliases pass both checks. No re-authoring needed.");
+        return;
+    }
+
+    let mut t = Table::new(&["Way", "Lang", "MinPeer", "MeanPeer", "Gap", "Top confuser"]);
+    t.align(2, Align::Right);
+    t.align(3, Align::Right);
+    t.align(4, Align::Right);
+
+    for r in &flagged {
+        let gap_str = if r.discrimination_gap.is_nan() {
+            "—".to_string()
+        } else {
+            format!("{:+.4}", r.discrimination_gap)
+        };
+        let confuser_str = match &r.top_confuser {
+            Some(c) => format!("{} ({:.4})", c.way_id, c.score),
+            None => "—".to_string(),
+        };
+        t.add_owned(vec![
+            r.way_id.clone(),
+            r.lang.clone(),
+            format!("{:.4}", r.min_peer),
+            format!("{:.4}", r.mean_peer),
+            gap_str,
+            confuser_str,
+        ]);
+    }
+
+    t.print();
+    println!();
+}
+
+fn emit_json(
+    results: &[FidelityResult],
+    fidelity_threshold: f64,
+    discrimination_threshold: f64,
+) -> Result<()> {
+    let rows: Vec<serde_json::Value> = results
+        .iter()
+        .map(|r| {
+            let below_fidelity = r.peer_count > 0 && r.min_peer < fidelity_threshold;
+            let below_discrimination = !r.discrimination_gap.is_nan()
+                && r.discrimination_gap < discrimination_threshold;
+            serde_json::json!({
+                "way": r.way_id,
+                "lang": r.lang,
+                "min_peer": nan_to_null(r.min_peer),
+                "mean_peer": nan_to_null(r.mean_peer),
+                "peer_count": r.peer_count,
+                "top_confuser": r.top_confuser.as_ref().map(|c| serde_json::json!({
+                    "way": c.way_id,
+                    "score": c.score,
+                })),
+                "discrimination_gap": nan_to_null(r.discrimination_gap),
+                "below_fidelity": below_fidelity,
+                "below_discrimination": below_discrimination,
+                "flagged": below_fidelity || below_discrimination,
+            })
+        })
+        .collect();
+    let out = serde_json::json!({
+        "fidelity_threshold": fidelity_threshold,
+        "discrimination_threshold": discrimination_threshold,
+        "entries": rows,
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+fn nan_to_null(x: f64) -> serde_json::Value {
+    if x.is_nan() {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!(x)
+    }
 }
 
 fn find_way_embed() -> Option<PathBuf> {
@@ -583,39 +406,4 @@ fn find_way_embed() -> Option<PathBuf> {
         return Some(bin);
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_hierarchical;
-
-    #[test]
-    fn detects_parent_child() {
-        assert!(is_hierarchical("softwaredev/delivery", "softwaredev/delivery/github"));
-        assert!(is_hierarchical("softwaredev/delivery/github", "softwaredev/delivery"));
-    }
-
-    #[test]
-    fn detects_grandparent() {
-        assert!(is_hierarchical("softwaredev", "softwaredev/delivery/github"));
-    }
-
-    #[test]
-    fn rejects_siblings() {
-        assert!(!is_hierarchical(
-            "softwaredev/delivery/github",
-            "softwaredev/delivery/branching"
-        ));
-    }
-
-    #[test]
-    fn rejects_prefix_collision() {
-        // "softwaredev/deli" is NOT an ancestor of "softwaredev/delivery"
-        assert!(!is_hierarchical("softwaredev/deli", "softwaredev/delivery"));
-    }
-
-    #[test]
-    fn rejects_unrelated() {
-        assert!(!is_hierarchical("meta/trust", "softwaredev/delivery"));
-    }
 }

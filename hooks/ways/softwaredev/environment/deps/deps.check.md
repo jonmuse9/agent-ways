@@ -1,7 +1,6 @@
 ---
 description: dependency change, package upgrade, version bump, adding library, removing package
 vocabulary: dependency package library version upgrade downgrade install add remove npm pip cargo requirements lock
-threshold: 2.0
 scope: agent
 ---
 

@@ -28,7 +28,7 @@ use agent_identity::{ansi, Identity, TermCaps};
 pub(crate) fn render_sender_label(from: &str, cwd: &str, caps: TermCaps) -> String {
     if from.strip_prefix("claude:").is_some() {
         let id = Identity::for_cwd(cwd, caps);
-        compose(&id.nickname.to_string(), &id.cwd_basename, &id, caps)
+        compose(id.nickname, &id.cwd_basename, &id, caps)
     } else if let Some(rest) = from.strip_prefix("external:") {
         let username = rest.split('@').next().unwrap_or(rest);
         let scope = agent_identity::cwd_basename(cwd);

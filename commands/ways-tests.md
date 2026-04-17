@@ -51,24 +51,19 @@ When the user gives a short name like "security" instead of a full path:
 
 ### Score mode
 
-Use the `ways match` subcommand:
+Use the `ways embed` subcommand for embedding-based cosine similarity:
 
 ```bash
-# Score with BM25
-ways match \
-  --description "$description" \
-  --vocabulary "$vocabulary" \
-  --query "$prompt" \
-  --threshold "${threshold:-2.0}"
-# Exit code: 0 = match, 1 = no match
-# Stderr: "match: score=X.XXXX threshold=Y.YYYY"
+ways embed \
+  --query "$prompt"
+# Prints ranked top-N results with cosine scores.
 ```
 
-Display the score, threshold, and match/no-match result. If the way has no vocabulary, note that semantic matching is unavailable — only pattern matching applies.
+For a single-way score against a specific description/vocabulary pair, use `ways embed` with a filter or run the batch and pick out the target way. Display the score, threshold, and match/no-match result. If the way has no vocabulary, note that semantic matching is unavailable — only pattern matching applies.
 
 ### Score-all mode
 
-For each way file found (project-local + global), extract description+vocabulary and run `way-match pair`. Display results as a ranked table:
+Use `ways embed` to batch-score all ways (project-local + global) against the prompt and display results as a ranked table:
 
 ```
 Score   Threshold  Match  Way
@@ -180,7 +175,7 @@ Simulate decay:
 
 Implementation:
 1. Extract frontmatter from check file (description, vocabulary, threshold)
-2. Score the query with `way-match pair` to get match_score
+2. Score the query with `ways embed` to get match_score
 3. Apply the curve: `effective = match_score × (ln(distance+1)+1) × (1/(fires+1))`
 4. Show the breakdown and simulate successive firings until the check stops
 
@@ -210,7 +205,7 @@ All testing and analysis operations are built into the `ways` binary. **Do not w
 
 | Need | Use | NOT |
 |------|-----|-----|
-| Score a way against a prompt | `ways match --query "..."` | hand-rolled BM25 in bash/python |
+| Score a way against a prompt | `ways embed --query "..."` | hand-rolled similarity scoring in bash/python |
 | Embedding similarity | `way-embed match --corpus ... --query "..."` | ad-hoc cosine similarity scripts |
 | Sibling vocabulary overlap | `ways siblings <path>` | python Jaccard calculations |
 | Vocabulary gap analysis | `ways suggest --file <way>` | manual term frequency counting |
@@ -221,6 +216,6 @@ If the CLI doesn't support what you need, that's a signal to extend the CLI — 
 
 ## Notes
 
-- BM25 scoring is built into the `ways` binary. If `ways` is missing, run `make setup` in `~/.claude`
+- Embedding scoring is built into the `ways` binary. If `ways` is missing, run `make setup` in `~/.claude`
 - The UNUSED section in suggest output is informational — unused vocabulary terms are often intentional (they catch user query terms that don't appear in the way body). Don't automatically remove them.
 - When displaying results, use the human-readable format, not the raw machine output from the binary.

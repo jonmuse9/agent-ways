@@ -307,7 +307,8 @@ if [[ -f "$DEST/Makefile" ]]; then
   make -C "$DEST" install || {
     echo ""
     echo -e "${YELLOW}Semantic matching setup had issues.${RESET}"
-    echo "BM25 fallback is still active. You can retry later:"
+    echo "Ways will only fire on explicit pattern/commands triggers until the"
+    echo "embedding engine is installed. Retry later with:"
     echo "  cd ~/.claude && make setup"
     echo ""
   }

@@ -43,7 +43,7 @@ flowchart LR
         direction LR
         Sensors["sensors<br/>(file, git, context, peers)"]:::cheap
         Attend["attend<br/>(salience, insistence, state)"]:::cheap
-        Matcher["ways matcher<br/>(embedding + BM25)"]:::cheap
+        Matcher["ways matcher<br/>(embedding)"]:::cheap
         Gate["disclosure gate<br/>(ADR-104 habituation)"]:::cheap
         Ledger["ledger writer"]:::cheap
         Memory["memory projection<br/>(optional, e.g. KG)"]:::cheap

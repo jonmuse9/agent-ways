@@ -123,20 +123,20 @@ The beauty of this dual role is that it's self-calibrating. A system that captur
 The implementation uses deliberately simple detection mechanisms:
 
 - **Regex matching** for keywords, commands, and file patterns
-- **BM25 term-frequency scoring** for semantic similarity
+- **Sentence-embedding cosine similarity** for semantic similarity
 
-The matching pipeline uses a lightweight embedding model (all-MiniLM-L6-v2) for cosine-similarity scoring, with BM25 (built into the `ways` binary) as fallback. Both run in milliseconds. The embedding engine scores all ways in a single batch call (~20ms), while BM25 scores term importance across the way corpus — common words contribute less, domain-specific vocabulary contributes more.
+The matching pipeline uses a lightweight embedding model (all-MiniLM-L6-v2) for cosine-similarity scoring. It runs in milliseconds — the embedding engine scores all ways in a single batch call (~20ms).
 
 This simplicity is a feature, not a limitation. It's evidence of a design principle: **well-calibrated timing beats sophisticated detection**.
 
 The matching doesn't need to be perfect. It needs to be good enough to fire at roughly the right moment, because the value comes from the architecture -- delivering small, relevant context at state transitions -- not from the precision of the trigger. A regex that fires on `git commit|git push|conventional` doesn't need to understand natural language. It needs to reliably detect the neighborhood of an action where commit guidance is useful.
 
-The matching tiers, in practice:
+The matching channels, in practice:
 
 | Mechanism | Latency | Accuracy | When We Use It |
 |-----------|---------|----------|----------------|
 | Regex | < 1ms | High for known patterns | Most ways — keywords, commands, file paths |
-| BM25 | ~5ms | Good for semantic neighborhood | Ways where exact keywords aren't predictable |
+| Embedding | ~20ms | Good for semantic neighborhood | Ways where exact keywords aren't predictable |
 
 ## References
 

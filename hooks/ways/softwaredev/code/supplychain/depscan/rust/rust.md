@@ -1,7 +1,6 @@
 ---
 description: Rust dependency security, cargo audit, unsafe blocks, build script risks
 vocabulary: cargo audit Cargo.lock Cargo.toml unsafe build.rs crate crates.io rustsec advisory
-threshold: 2.5
 scope: agent, subagent
 curve:
   type: Exponential

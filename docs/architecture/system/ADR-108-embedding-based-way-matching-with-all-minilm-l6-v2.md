@@ -1,15 +1,19 @@
 ---
 status: Accepted
 date: 2026-03-21
+amended_by: ADR-125
 deciders:
   - aaronsb
   - claude
 related:
   - ADR-014
   - ADR-107
+  - ADR-125
 ---
 
 # ADR-108: Embedding-Based Way Matching with all-MiniLM-L6-v2
+
+> **Amendment note (2026-04-17):** [ADR-125](ADR-125-authored-disclosure-graph-and-removal-of-bm25.md) removed BM25 entirely. The "BM25 remains as a fallback" decision below is historical — the embedding model is now the sole retrieval tier. Sections describing the engine-selection cascade (`way-embed` → `way-match` → NCD), BM25 fields in the corpus, and the "fallback chain is automatic" behavior no longer apply.
 
 ## Context
 
@@ -34,7 +38,7 @@ The 3 remaining false positives (docs, docstrings, subagents) all match on stem 
 
 ## Decision
 
-Replace BM25 with embedding-based semantic matching using **all-MiniLM-L6-v2** as the primary way-matching engine. BM25 remains as a zero-dependency fallback.
+Replace BM25 with embedding-based semantic matching using **all-MiniLM-L6-v2** as the primary way-matching engine. BM25 initially remained as a zero-dependency fallback; [ADR-125](ADR-125-authored-disclosure-graph-and-removal-of-bm25.md) subsequently removed BM25 entirely, making the embedding model the sole retrieval tier.
 
 ### Model choice: all-MiniLM-L6-v2
 
@@ -95,17 +99,19 @@ Future option: llamafile-style single binary with model weights concatenated int
 }
 ```
 
-BM25 fields remain for the fallback path. The corpus serves both engines.
+BM25 fields (`threshold`, tokenized vocabulary) were retained in the corpus at the time of this ADR to serve the fallback path. [ADR-125](ADR-125-authored-disclosure-graph-and-removal-of-bm25.md) removed the BM25 engine; these fields are no longer read at runtime.
 
-### Configuration
+### Configuration (superseded)
 
-The scanner detects which engine is available:
+> Superseded by ADR-125: embedding is the sole tier; no fallback cascade.
+
+Originally, the scanner detected which engine was available:
 
 1. If `bin/way-embed` exists and model file present → use embedding
 2. Else if `bin/way-match` exists → use BM25 with corpus
 3. Else if gzip + bc available → use NCD (legacy fallback)
 
-No user configuration needed. Install the binary + model to upgrade. Remove them to downgrade. The fallback chain is automatic.
+Per ADR-125, the embedding model is a hard dependency. If the embedding engine is unavailable, matching does not degrade — it errors. This surfaces setup problems early rather than silently returning degraded results.
 
 ### Security boundary
 
@@ -132,8 +138,8 @@ The model file is a published, checksummed artifact from HuggingFace. It can be 
 
 ### Neutral
 
-- `way-match` binary and BM25 scoring remain in the repo as the fallback. No removal, no migration pressure.
-- The `ways-corpus.jsonl` format is additive — embedding vectors sit alongside BM25 fields. Both engines read the same file.
+- `way-match` binary and BM25 scoring initially remained in the repo as the fallback. ADR-125 subsequently removed both, as the fallback was rarely exercised once the multilingual model was reliably distributed.
+- The `ways-corpus.jsonl` format was initially additive — embedding vectors sat alongside BM25 fields. Per ADR-125, the BM25 fields are no longer read at runtime; the corpus format will drop them when convenient.
 - The `/ways-tests` skill needs to learn to score with embeddings (cosine similarity thresholds are on a different scale than BM25 scores).
 - Threshold values will need recalibration. BM25 thresholds (1.8-2.5) don't apply to cosine similarity (0.0-1.0). The test fixture corpus provides the calibration data.
 

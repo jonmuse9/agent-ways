@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 pub mod agents;
-mod bm25;
 mod cmd;
 pub mod config;
 mod frontmatter;
@@ -57,7 +56,7 @@ enum Commands {
         #[arg(long)]
         if_stale: bool,
     },
-    /// Score a query against ways (semantic cosine similarity, BM25 fallback)
+    /// Score a query against ways (embedding cosine similarity, ADR-125)
     Match {
         /// The query string to match
         query: String,
@@ -142,9 +141,6 @@ enum Commands {
         /// Vocabulary — space-separated domain keywords users would say
         #[arg(long, short = 'V')]
         vocabulary: Option<String>,
-        /// Matching threshold — higher = stricter (default: 2.0, semantic threshold auto-tuned by `ways tune`)
-        #[arg(long, default_value = "2.0")]
-        threshold: f64,
         /// Scope: agent, subagent, teammate (comma-separated)
         #[arg(long, default_value = "agent")]
         scope: String,
@@ -239,7 +235,7 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigCommand,
     },
-    /// Tune embed_threshold values for locale stubs based on corpus similarity
+    /// Audit locale alias fidelity + discrimination (ADR-125 — flags stubs to re-author)
     Tune {
         /// Ways root directory (default: ~/.claude/hooks/ways)
         #[arg(long)]
@@ -247,18 +243,14 @@ enum Commands {
         /// Filter to ways matching this substring (e.g., "security", "ea/")
         #[arg(long)]
         way: Option<String>,
-        /// Write tuned thresholds to .locales.jsonl files
-        #[arg(long)]
-        apply: bool,
-        /// Discrimination audit — flag entries with ambiguous descriptions
-        #[arg(long)]
-        audit: bool,
-        /// Minimum gap for audit (entries below this are flagged, default: 0.15)
-        #[arg(long, default_value = "0.15")]
-        audit_threshold: f64,
-        /// Margin above best non-self score (default: 0.03)
+        /// Minimum cross-lingual cosine to accept for fidelity (default: 0.60)
+        #[arg(long, default_value = "0.60")]
+        fidelity_threshold: f64,
+        /// Minimum discrimination gap (min_peer − top_confuser.score);
+        /// entries below this are flagged as being outranked by another way.
+        /// Default 0.03 — small positive margin required.
         #[arg(long, default_value = "0.03")]
-        margin: f64,
+        discrimination_threshold: f64,
         /// Machine-readable JSON output
         #[arg(long)]
         json: bool,
@@ -378,7 +370,7 @@ enum ShowCommand {
         /// Session ID
         #[arg(long)]
         session: String,
-        /// Trigger channel (keyword, semantic:embedding, semantic:bm25)
+        /// Trigger channel (keyword, semantic:embedding)
         #[arg(long, default_value = "unknown")]
         trigger: String,
     },
@@ -489,7 +481,7 @@ fn main() -> Result<()> {
         Commands::Context { project, json } => cmd::context::run(project.as_deref(), json),
         Commands::Lint { path, schema, check, fix, global } => cmd::lint::run(path, schema, check, fix, global),
         Commands::Corpus { ways_dir, quiet, if_stale } => cmd::corpus::run(ways_dir, quiet, if_stale),
-        Commands::Match { query, corpus } => cmd::match_bm25::run(query, corpus),
+        Commands::Match { query, corpus } => cmd::match_cmd::run(query, corpus),
         Commands::Embed { query, corpus, model } => cmd::embed::run(query, corpus, model),
         Commands::Siblings { id, threshold, corpus, model } => {
             cmd::siblings::run(id, threshold, corpus, model)
@@ -498,8 +490,8 @@ fn main() -> Result<()> {
         Commands::Tree { path, jaccard } => cmd::tree::run(path, jaccard),
         Commands::Provenance { ways_dir } => cmd::provenance::run(ways_dir),
         Commands::Init { project } => cmd::init::run(project.as_deref()),
-        Commands::Template { path, description, vocabulary, threshold, scope, global } => {
-            cmd::template::run(path, description, vocabulary, threshold, scope, global)
+        Commands::Template { path, description, vocabulary, scope, global } => {
+            cmd::template::run(path, description, vocabulary, scope, global)
         }
         Commands::Language { filter, audit, json } => cmd::language::run(filter.as_deref(), audit, json),
         Commands::Stats { days, project, json, global } => {
@@ -570,8 +562,8 @@ fn main() -> Result<()> {
             }
         },
         Commands::Suggest { file, min_freq } => cmd::suggest::run(file, min_freq),
-        Commands::Tune { ways_dir, way, apply, audit, audit_threshold, margin, json } => {
-            cmd::tune::run(ways_dir, way, apply, audit, audit_threshold, margin, json)
+        Commands::Tune { ways_dir, way, fidelity_threshold, discrimination_threshold, json } => {
+            cmd::tune::run(ways_dir, way, fidelity_threshold, discrimination_threshold, json)
         }
         Commands::TuneCurves { apply, min_fires, project, way } => {
             cmd::tune_curves::run(apply, min_fires, project, way)

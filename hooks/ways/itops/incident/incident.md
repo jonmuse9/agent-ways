@@ -1,7 +1,6 @@
 ---
 description: Incident response tiers, escalation paths, MTTR targets, alert triage, and remediation workflows
 vocabulary: incident response escalation support tier l0 l1 l2 mttr mean time alert triage remediate on-call outage severity page production down broken
-threshold: 2.0
 pattern: incident.?response|l0.?support|l1.?support|l2.?support|escalat|mttr|mean.?time|alert.?(response|triage)|remediat
 scope: agent, subagent
 curve:

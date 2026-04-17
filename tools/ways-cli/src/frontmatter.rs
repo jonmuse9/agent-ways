@@ -11,8 +11,6 @@ pub struct Frontmatter {
     #[serde(default)]
     pub vocabulary: Option<String>,
     #[serde(default)]
-    pub threshold: Option<f64>,
-    #[serde(default)]
     #[allow(dead_code)] // parsed for serde compat, accessed via scan's own scope field
     pub scope: Option<String>,
     #[serde(default)]
@@ -82,8 +80,6 @@ pub struct LocaleEntry {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vocabulary: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embed_threshold: Option<f64>,
 }
 
 /// Parse a .locales.jsonl file into locale entries.

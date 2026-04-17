@@ -1,7 +1,6 @@
 ---
 description: Mermaid diagrams, flowcharts, sequence diagrams, state diagrams, diagram styling
 vocabulary: mermaid diagram flowchart sequence state class gantt chart gitgraph timeline svg
-threshold: 2.0
 scope: agent, subagent
 curve:
   type: Exponential

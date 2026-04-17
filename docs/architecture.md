@@ -85,7 +85,7 @@ flowchart TB
     subgraph Session["Claude Code Session"]
         SS[SessionStart]:::event --> Core["ways show core<br/>Dynamic table + core.md"]:::script
 
-        UP[UserPromptSubmit]:::event --> CP["check-prompt.sh → ways scan<br/>Regex · Embedding/BM25"]:::script
+        UP[UserPromptSubmit]:::event --> CP["check-prompt.sh → ways scan<br/>Regex · Embedding"]:::script
 
         subgraph PreTool["PreToolUse"]
             Bash[Bash tool]:::event --> CB["check-bash-pre.sh"]:::script
@@ -268,54 +268,26 @@ flowchart TB
 
     subgraph Input
         Prompt["User prompt"]:::input
-        Corpus["ways-corpus.jsonl<br/>(pre-computed vectors + BM25 fields)"]:::input
+        Corpus["ways-corpus.jsonl<br/>(pre-computed embedding vectors)"]:::input
     end
 
-    subgraph Embedding["Embedding (preferred — ADR-108)"]
+    subgraph Embedding["Embedding (ADR-108, ADR-125)"]
         Embed["way-embed match<br/>all-MiniLM-L6-v2"]:::process
         Cosine["Cosine similarity<br/>vs 384-dim pre-computed vectors"]:::process
         EmbedResult["similarity ≥ embed_threshold?"]:::check
     end
 
-    subgraph BM25["BM25 (fallback)"]
-        Tokenize["Tokenize + Porter2 stem"]:::process
-        Score["Okapi BM25 score<br/>k1=1.2, b=0.75"]:::process
-        BM25Result["score ≥ threshold?"]:::check
-    end
-
-    subgraph NCD["Gzip NCD (legacy)"]
-        Compress["Compress description + prompt"]:::process
-        Formula["NCD = (C(ab) - min) / max"]:::process
-        NCDResult["NCD < 0.58?"]:::check
-    end
-
     Prompt --> Embed --> Cosine --> EmbedResult
     EmbedResult -->|Yes| Match["MATCH"]:::yes
-    EmbedResult -->|"No binary/model"| Tokenize
+    EmbedResult -->|No| NoMatch["No match"]:::no
     Corpus --> Embed
-    Corpus --> Tokenize
-
-    Tokenize --> Score --> BM25Result
-    BM25Result -->|Yes| Match
-    BM25Result -->|"No binary"| Compress
-    Prompt --> Compress
-    Compress --> Formula --> NCDResult
-    NCDResult -->|Yes| Match
-    NCDResult -->|No| NoMatch["No match"]:::no
 ```
 
 | Engine | Accuracy | Timing | Requirements |
 |--------|----------|--------|-------------|
 | **Embedding** | 98.4% (63/64) | ~20ms | `way-embed` binary + GGUF model (21MB) |
-| **BM25** | 90.6% (58/64) | ~2ms (score mode) | Built into `ways` binary |
-| **NCD** | ~70% | ~5ms | `gzip` + `bc` |
 
-Engine is auto-detected or forced via `ways.json` (`"semantic_engine": "embedding"` / `"bm25"` / `"ncd"`).
-
-```
-NCD("software design", "design the database schema") = 0.52 (similar)
-NCD("software design", "button design looks off")    = 0.63 (different)
-```
+The embedding model is a hard dependency of `ways`. See ADR-125 for the authored disclosure graph model and the single-tier decision.
 
 ## Macro Injection
 
@@ -415,7 +387,6 @@ flowchart LR
     classDef util fill:#00695C,stroke:#004D40,color:#fff
 
     WAYS["ways binary<br/>(scan + show + session)"]:::shared --> EMB["Embedding<br/>(all-MiniLM-L6-v2)"]:::util
-    WAYS -.->|"fallback"| BM25["BM25<br/>(built-in)"]:::util
 
     CP["check-prompt.sh"]:::trigger --> WAYS
     CB["check-bash-pre.sh"]:::trigger --> WAYS

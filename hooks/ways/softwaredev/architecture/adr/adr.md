@@ -1,7 +1,6 @@
 ---
 description: Architecture Decision Records — creating, managing, and referencing ADRs for technical choices
 vocabulary: adr architecture decision record design pattern technical choice trade-off rationale alternative
-threshold: 2.0
 pattern: (^| )adr( |$)|architect|decision|design.?pattern|technical.?choice|trade.?off
 files: docs/architecture/.*\.md$
 macro: prepend
