@@ -1,5 +1,5 @@
 ---
-status: Draft
+status: Accepted
 date: 2026-04-16
 deciders:
   - aaronsb
@@ -274,20 +274,25 @@ The work naturally splits into two PRs (post-slash-commands):
 
 ## Open questions
 
-- Does the `#open` naming trigger a rename of the `_broadcast/`
-  directory too, or is it display-only? (This ADR assumes
-  display-only.)
-- Is "pinned" mutually exclusive with "unread dot" visually, or do
-  we stack both indicators? (Probably stack.)
+Settled during PR A:
+
+- `#open` is display-only — `_broadcast/` stays as the on-disk name.
+- `open` is reserved in `validate_group_name` so nobody can
+  create an `@open/` group that would shadow the base.
+
+Still open (for PR B and beyond):
+
 - Do we need a `/unpin` slash command pair to `/pin`, or does
   `attend focus unpin <name>` suffice? (Slash commands PR will
   decide.)
 - Liveness cache TTL — is 2 seconds the right number? Too short and
   we burn syscalls on a busy signal stream; too long and a stopped
   agent lingers visibly. 2s is a guess based on "humans don't
-  notice", but we should measure and tune after the first PR lands.
+  notice", but we should measure and tune after PR B lands.
 - Should `attend peers` CLI output apply the same liveness filter as
   the TUI? If so, the detection logic wants to live in a shared
   crate (or in agent-identity), not duplicated. Leaving undecided
-  until the implementation PR — two duplicates is tolerable, three
-  is extract-pressure.
+  until the PR B implementation — two duplicates is tolerable,
+  three is extract-pressure.
+- Richer channel ordering (pinned band, recent-activity band) —
+  deferred per §3, revisit when there's concrete pressure.
