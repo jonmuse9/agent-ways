@@ -1,5 +1,6 @@
 ---
 trigger: context-threshold
+threshold: 75
 repeat: true
 macro: prepend
 scope: agent, subagent

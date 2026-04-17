@@ -491,6 +491,13 @@ pub fn state(
 }
 
 fn evaluate_context_threshold(threshold_pct: u64, transcript: Option<&str>) -> bool {
+    // Guard: a missing or 0 threshold on a context-threshold trigger is a bug
+    // (would fire on every non-empty transcript). Caller should have set a
+    // percentage in frontmatter. Refuse to fire rather than spam.
+    if threshold_pct == 0 {
+        return false;
+    }
+
     let transcript = match transcript {
         Some(t) if std::path::Path::new(t).is_file() => t,
         _ => return false,
