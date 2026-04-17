@@ -139,6 +139,15 @@ impl Groups {
             .collect()
     }
 
+    /// Whether `_groups.yaml` currently has an entry for `name`.
+    /// Exists so callers (notably the ADR-124 migration) can avoid
+    /// triggering a full `save_state` rewrite when the work is
+    /// already done — narrows the read-modify-write window against
+    /// peer sessions editing the same file.
+    pub fn has_group(&self, name: &str) -> bool {
+        self.load_state().contains_key(name)
+    }
+
     /// List all active rooms with member counts and pin state.
     pub fn all_groups(&self) -> Vec<(String, usize, bool)> {
         let state = self.load_state();
@@ -268,13 +277,22 @@ fn validate_group_name(name: &str) -> Result<(), String> {
 /// `attend run` idempotently clean up lingering state on the next
 /// startup after an upgrade:
 ///
-/// - move any `*.signal` files from `@open/` to `_broadcast/`
-/// - delete `@open/` and strip the `open:` entry from `_groups.yaml`
+/// - move any `*.signal` files from `@open/` into `_broadcast/`
+/// - remove the `@open/` dir and — if present — strip the `open:`
+///   entry from `_groups.yaml`
+///
+/// **Non-signal files are destroyed.** The directory is removed
+/// wholesale after the signal files are migrated; any `.tmp`, stray
+/// lockfiles, or hand-placed notes under `@open/` go with it.
+/// That's acceptable under attend's "only attend writes to its own
+/// signal base" contract — no legitimate caller should have put
+/// anything else there — but noted explicitly so nobody is surprised
+/// later.
 ///
 /// Returns the number of signal files moved, or `None` if there was
 /// nothing to migrate (the common case after the first post-upgrade
-/// run). A returned `Some(0)` means `@open/` existed but was empty —
-/// still worth logging since we removed an empty dir.
+/// run). `Some(0)` means `@open/` existed but had no signal files
+/// to move — we still removed the dir, which is worth logging.
 pub fn migrate_legacy_open_group(signals_base: &Path, groups: &Groups) -> Option<usize> {
     let open_dir = signals_base.join("@open");
     if !open_dir.is_dir() {
@@ -303,8 +321,16 @@ pub fn migrate_legacy_open_group(signals_base: &Path, groups: &Groups) -> Option
             }
         }
     }
-    // `dissolve` handles the _groups.yaml edit + removes the dir.
-    groups.dissolve("open");
+    // Only drive `dissolve` (full `_groups.yaml` rewrite) when the
+    // yaml actually has an `open:` entry to remove — otherwise the
+    // migration pays a read-modify-write on every startup for no
+    // reason, widening a race window against peer-session edits on
+    // shared signal bases.
+    if groups.has_group("open") {
+        groups.dissolve("open");
+    } else {
+        fs::remove_dir_all(&open_dir).ok();
+    }
     Some(moved)
 }
 
@@ -449,6 +475,54 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         let mgr = Groups::new(&base, "sess-test");
         assert!(migrate_legacy_open_group(&base, &mgr).is_none());
+    }
+
+    #[test]
+    fn migrate_legacy_open_skips_yaml_rewrite_when_no_entry() {
+        // PR #66 review S3: the migration must not rewrite
+        // _groups.yaml when `open:` isn't present. A user who
+        // hand-made `@open/` without an attend scene shouldn't
+        // trigger a yaml churn that races peer sessions.
+        let base = std::env::temp_dir().join(format!(
+            "attend-migrate-noyaml-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        fs::create_dir_all(base.join("@open")).unwrap();
+        fs::write(
+            base.join("@open").join("a.signal"),
+            "from|proj|/x|hi\n",
+        )
+        .unwrap();
+        // Seed _groups.yaml with a *different* group so we can
+        // observe whether the migration rewrites it. If it rewrites
+        // without real work, the mtime will bump.
+        let yaml_path = base.join("_groups.yaml");
+        fs::write(
+            &yaml_path,
+            "infra:\n  pinned: false\n  members:\n    - sess-x\n",
+        )
+        .unwrap();
+        let before = fs::metadata(&yaml_path).unwrap().modified().unwrap();
+
+        let mgr = Groups::new(&base, "sess-test");
+        let moved = migrate_legacy_open_group(&base, &mgr).unwrap();
+        assert_eq!(moved, 1);
+        assert!(base.join("_broadcast").join("a.signal").exists());
+        assert!(!base.join("@open").exists());
+
+        // The canary yaml was not rewritten — the mtime is
+        // unchanged. (On fast filesystems the resolution may match,
+        // but the actual file-content invariant is the reliable
+        // signal, so check both.)
+        let after = fs::metadata(&yaml_path).unwrap().modified().unwrap();
+        let contents = fs::read_to_string(&yaml_path).unwrap();
+        assert_eq!(before, after, "yaml must not be rewritten");
+        assert!(contents.contains("infra:"));
+        assert!(!contents.contains("open:"));
     }
 
     #[test]

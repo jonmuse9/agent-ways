@@ -69,7 +69,10 @@ pub fn derive(input: &str) -> HelperMode {
 }
 
 fn derive_slash(input: &str) -> Option<HelperMode> {
-    if !input.starts_with('/') {
+    // Leading-whitespace tolerant, matching `slash::parse` and
+    // `slash::find_slash_partial`. " /help" is the same state as
+    // "/help" for routing purposes — see PR #66 review item S2.
+    if !input.trim_start().starts_with('/') {
         return None;
     }
     // Phase 1: still typing the command name.
@@ -212,5 +215,56 @@ mod tests {
         // ArgKind::None returns Agents(None), which tests the
         // state machine's "slash wins" invariant.
         assert_eq!(derive("/help @Tam"), HelperMode::Agents(None));
+    }
+
+    // ── Leading whitespace tolerance (PR #66 review S2) ────────
+
+    #[test]
+    fn slash_with_leading_space_enters_slash_state() {
+        // Stray leading space must not drop the buffer into mention
+        // or default mode — otherwise the Enter interceptor and the
+        // helper-row mode disagree on what the user is doing.
+        assert_eq!(derive(" /he"), HelperMode::Slash(Some("he".into())));
+        assert_eq!(derive("\t/"), HelperMode::Slash(Some("".into())));
+    }
+
+    #[test]
+    fn slash_with_leading_space_routes_arg_kind() {
+        // Past-the-name routing must also tolerate leading
+        // whitespace — otherwise `" /whois "` silently shows agents
+        // (the default) instead of agents-because-ArgKind.
+        // The observable state is the same, but the reasoning path
+        // differs; we want the state machine to take the Slash
+        // branch for consistency with Enter / Tab.
+        assert_eq!(derive(" /whois "), HelperMode::Agents(None));
+        assert_eq!(derive(" /join #dep"), HelperMode::Groups(Some("dep".into())));
+    }
+
+    // ── Extra states suggested in PR #66 review ────────────────
+
+    #[test]
+    fn agent_cmd_with_wrong_sigil_falls_back_to_default_agents() {
+        // `/whois #dep` — ArgKind::Agent but user typed `#`. The
+        // trailing-# doesn't satisfy the Agent filter, so the state
+        // is "agents waiting for @" (no partial) rather than
+        // hijacking to groups.
+        assert_eq!(derive("/whois #dep"), HelperMode::Agents(None));
+    }
+
+    #[test]
+    fn slash_agent_cmd_bare_at_yields_empty_partial() {
+        // The user committed to addressing but hasn't typed letters
+        // yet. Agents(Some("")) is the correct "everything matches
+        // trivially" state — no chip gets underlined because the
+        // underline rule requires a non-empty partial.
+        assert_eq!(derive("/whois @"), HelperMode::Agents(Some("".into())));
+    }
+
+    #[test]
+    fn leading_whitespace_no_slash_stays_on_default() {
+        // Plain leading whitespace without a slash is still default
+        // mode — the tolerance is surgical, not blanket.
+        assert_eq!(derive(" hello"), HelperMode::Agents(None));
+        assert_eq!(derive("   "), HelperMode::Agents(None));
     }
 }

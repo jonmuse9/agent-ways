@@ -112,12 +112,17 @@ pub fn lookup(name: &str) -> Option<&'static SlashCommand> {
 
 /// Parse a slash command from the input buffer.
 ///
-/// Returns `Some((name, args))` if `input` begins with `/` followed
-/// by a non-empty name; args is whatever follows the first whitespace
-/// run, trimmed of its leading spaces. Returns `None` for plain text,
-/// a bare `/`, or a `/ ` followed by whitespace.
+/// Returns `Some((name, args))` if `input` begins (optionally after
+/// leading whitespace) with `/` followed by a non-empty name; args
+/// is whatever follows the first whitespace run, trimmed of its
+/// leading spaces. Returns `None` for plain text, a bare `/`, or a
+/// `/ ` followed by whitespace.
+///
+/// Leading-whitespace tolerance means `" /help"` parses identically
+/// to `"/help"` — the user who stray-spaces their command shouldn't
+/// get silently routed onto the signal bus as a peer message.
 pub fn parse(input: &str) -> Option<(&str, &str)> {
-    let rest = input.strip_prefix('/')?;
+    let rest = input.trim_start().strip_prefix('/')?;
     let end = rest
         .char_indices()
         .find(|(_, c)| c.is_whitespace())
@@ -141,7 +146,10 @@ pub struct SlashPartial<'a> {
 }
 
 pub fn find_slash_partial(input: &str) -> Option<SlashPartial<'_>> {
-    let rest = input.strip_prefix('/')?;
+    // Mirror [`parse`]'s leading-whitespace tolerance so every caller
+    // (Enter interceptor, Tab completion, helper-row state machine)
+    // sees the same "starts with `/`" predicate.
+    let rest = input.trim_start().strip_prefix('/')?;
     if rest.contains(char::is_whitespace) {
         return None;
     }
@@ -302,6 +310,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_tolerates_leading_whitespace() {
+        // A stray space in front of `/help` should not leak onto
+        // the signal bus as a peer message — the interceptor
+        // relies on this predicate.
+        assert_eq!(parse(" /help"), Some(("help", "")));
+        assert_eq!(parse("\t/whois @Urban"), Some(("whois", "@Urban")));
+    }
+
+    #[test]
     fn slash_partial_while_typing_name() {
         let p = find_slash_partial("/hel").unwrap();
         assert_eq!(p.partial, "hel");
@@ -324,6 +341,17 @@ mod tests {
     fn slash_partial_rejects_non_slash_input() {
         assert!(find_slash_partial("hello").is_none());
         assert!(find_slash_partial("").is_none());
+    }
+
+    #[test]
+    fn slash_partial_tolerates_leading_whitespace() {
+        // Mirror of `parse_tolerates_leading_whitespace` for the
+        // completion-gate path — the helper row and Tab handler
+        // both depend on this agreeing with `parse`.
+        let p = find_slash_partial(" /he").unwrap();
+        assert_eq!(p.partial, "he");
+        let p = find_slash_partial("  /").unwrap();
+        assert_eq!(p.partial, "");
     }
 
     #[test]
