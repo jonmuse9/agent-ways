@@ -220,5 +220,8 @@ The `/ways-tests crowding` command distinguishes these cases. When it reports tw
 | `/ways-tests suggest <way> --apply` | Auto-fix vocabulary gaps |
 | `/ways-tests crowding "prompt"` | Detect vocabulary overlap across all ways |
 | `/ways-tests lint --all` | Validate all way frontmatter |
+| `ways tune` | Audit locale alias fidelity + discrimination (per-way, across all languages) |
+| `ways tune --way <path>` | Filter the audit to a single way or subtree |
+| `ways siblings <path>` | Compute vocabulary overlap (Jaccard) between sibling ways |
 
-See the [ways-tests skill](/skills/ways-tests/SKILL.md) for full documentation.
+See the [ways-tests skill](/skills/ways-tests/SKILL.md) for the testing skill and [Locale Alias Audit](../../hooks/ways/meta/knowledge/optimization/tuning/tuning.md) (the `knowledge/optimization/tuning` way) for the `ways tune` workflow in depth.

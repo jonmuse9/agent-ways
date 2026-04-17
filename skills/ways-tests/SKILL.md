@@ -143,6 +143,10 @@ embed_threshold: 0.45   # raise to require stronger match
 
 Raise `embed_threshold` to suppress weak false positives. Lower it (toward 0.25) for broader catch on niche topics.
 
+**Parent-boost in sessions (ADR-125).** At scan time (not in this skill's scoring), a child way's effective threshold is multiplied by `config.parent_threshold_multiplier` (default 0.8) when any ancestor way has fired in the session. Children within active parent domains fire on weaker signal — the session-subgraph mechanism behind progressive disclosure. See [docs/hooks-and-ways/matching.md](../../docs/hooks-and-ways/matching.md).
+
+**Locale alias audit.** For multilingual stubs, use `ways tune` to surface fidelity (do sibling translations agree?) and discrimination (is another way's alias winning against yours?) problems. Does not write thresholds — only reports. Full workflow in the [`knowledge/optimization/tuning`](../../hooks/ways/meta/knowledge/optimization/tuning/tuning.md) way.
+
 ### Embedding Cross-Way Ranking
 
 When using `embed-score` on a single way, also run the full batch and present the top results as a ranked table:

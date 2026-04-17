@@ -57,35 +57,27 @@ Only ways with both `description:` and `vocabulary:` frontmatter fields use sema
 
 ## Thresholds
 
-- **Embedding threshold** (frontmatter `embed_threshold:`): Cosine similarity, 0–1 scale. Default set per-way in corpus.
+- **Embedding threshold** (frontmatter `embed_threshold:`): Cosine similarity, 0–1 scale. One value per node (English frontmatter); default is `config.default_embed_threshold` (0.35). Locale stubs do NOT carry their own thresholds (ADR-125).
+- **Parent-boost**: once an ancestor way has fired in the session, a child's effective threshold is multiplied by `config.parent_threshold_multiplier` (default 0.8). This is how progressive disclosure amplifies in-domain children; see [hooks-and-ways/matching.md](../../../../docs/hooks-and-ways/matching.md).
 
-Lowering the threshold increases recall (more matches) but risks false positives. The test harness tracks FP rate — **0 FP is the hard constraint**.
+Lowering the base threshold increases recall but risks false positives. The test harness tracks FP rate — **0 FP is the hard constraint**.
 
-### Auto-tuning with `ways tune`
+### Locale alias audit with `ways tune`
 
-Don't hand-tune embed thresholds. The tuner computes optimal values from corpus similarity data:
+The tuner does NOT write thresholds (ADR-125). It measures per-locale embedding health so authors know which stubs to re-author:
 
-```bash
-ways tune              # preview (dry run)
-ways tune --apply      # write tuned thresholds
-ways tune --way "ea/"  # tune a subset
-ways corpus            # recompile after tuning
-```
-
-For locale stubs in `.locales.jsonl`, the tuner writes `embed_threshold` per entry. For English ways, thresholds stay in frontmatter.
-
-### Discrimination audit
-
-Two dimensions to optimize:
-- **Discrimination** (gap): how clearly the description identifies *this* way vs others. Wide gap = precise. Narrow gap = ambiguous.
-- **Sensitivity** (threshold): how much signal required before firing. Auto-computed from discrimination.
+- **Fidelity** — min cosine against peer aliases on the same way. Low fidelity means one language's stub diverges from the others.
+- **Discrimination** — `min_peer − top_confuser.score`. Negative means some other way's alias outranks this locale's own peers.
 
 ```bash
-ways tune --audit                    # flag entries with gap < 0.15
-ways tune --audit --audit-threshold 0.20  # stricter
+ways tune                                    # full audit
+ways tune --way delivery/commits             # single way
+ways tune --fidelity-threshold 0.55          # looser fidelity gate
+ways tune --discrimination-threshold 0.05    # require +0.05 margin
+ways tune --json                             # machine-readable
 ```
 
-The audit names the **confusers** — which ways the description is being confused with. Low discrimination means revising the description, not adjusting the threshold.
+The audit names the **top confuser** — which other way's alias is winning against this one in embedding space. Low discrimination means revising the stub vocabulary (or sometimes the confuser's vocabulary if it's hoovering up too much neighborhood). See `knowledge/optimization/tuning(meta)` for failure-mode categories and fix strategies.
 
 ## Health Indicators
 
