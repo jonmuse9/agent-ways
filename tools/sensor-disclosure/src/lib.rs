@@ -195,7 +195,11 @@ mod tests {
     fn component_registry_has_messaging_body() {
         let body = Component::Messaging.body();
         assert!(body.contains("attend send"));
-        assert!(body.contains("--broadcast"));
+        // Post-ADR-124: default scope is `#open` (the base channel),
+        // previously labelled `broadcast`. The assertion follows the
+        // display-layer rename so any future regression in the
+        // disclosure copy gets caught.
+        assert!(body.contains("#open"));
         assert!(!body.is_empty());
     }
 

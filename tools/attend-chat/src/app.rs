@@ -18,12 +18,14 @@ use iocraft::prelude::*;
 use crate::chip::{chip_for, color_for, known_identities, resolve_nickname, CHIP_WIDTH};
 use crate::sessions::discover as discover_sessions;
 use crate::text_layout::{render_cursor, split_at_char, visual_line_count};
-use crate::groups::{resolve_group_dir, scan as scan_groups};
+use crate::groups::{channels, resolve_group_dir};
+use crate::helper::{self, HelperMode};
 use crate::legend::{
     apply_completion, best_completion, best_group_completion, find_trailing_mention,
     group_legend_row, legend_row, parse_addressed, Addressed, Sigil,
 };
 use crate::signal::{cwd_dir, write_broadcast, write_signal, Signal};
+use crate::slash;
 
 #[derive(Default, Props)]
 pub struct AppProps {
@@ -90,6 +92,27 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                 KeyCode::Enter => {
                     let msg = input.read().trim_end().to_string();
                     if !msg.is_empty() {
+                        // Slash-command interceptor — stops `/help`,
+                        // `/whois`, etc. from leaking onto the signal
+                        // bus as plain messages. Runs before the
+                        // `@`/`#`/broadcast dispatch because slash
+                        // syntax is start-of-input only and unambiguous.
+                        if let Some((cmd, args)) = slash::parse(&msg) {
+                            match slash::dispatch(cmd, args) {
+                                slash::SlashOutcome::Ok(s) => {
+                                    status.set(s);
+                                    input.set(String::new());
+                                    cursor.set(0);
+                                }
+                                slash::SlashOutcome::Err(s) => {
+                                    // Leave the buffer intact so the
+                                    // user can edit + retry without
+                                    // retyping.
+                                    status.set(s);
+                                }
+                            }
+                            return;
+                        }
                         let caps = TermCaps::detect();
                         let seeds = discover_sessions();
                         let agents = known_identities(&signals.read(), &seeds, caps);
@@ -135,6 +158,19 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                     if pos != buf.chars().count() {
                         return;
                     }
+                    // Slash completion runs first — its grammar is
+                    // start-of-input-only, so when it matches, the
+                    // `@`/`#` logic below never applies. Silent
+                    // fall-through on no match so a stale `/` with
+                    // no registry hit doesn't trap the user.
+                    if let Some(partial) = slash::find_slash_partial(&buf) {
+                        if let Some(hit) = slash::best_slash_completion(partial.partial) {
+                            let (next, new_cursor) = slash::apply_slash_completion(hit.name);
+                            input.set(next);
+                            cursor.set(new_cursor);
+                        }
+                        return;
+                    }
                     let caps = TermCaps::detect();
                     let Some(mention) = find_trailing_mention(&buf) else { return };
                     let completed: Option<(String, usize)> = match mention.sigil {
@@ -145,7 +181,7 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                                 .map(|hit| apply_completion(&buf, &mention, &hit.nickname))
                         }
                         Sigil::Group => {
-                            let groups = scan_groups(caps);
+                            let groups = channels(caps);
                             best_group_completion(mention.partial, &groups)
                                 .map(|hit| apply_completion(&buf, &mention, &hit.group.name))
                         }
@@ -253,7 +289,11 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     //   do anyway. Simpler than caching with invalidation.
     let seed_sessions = discover_sessions();
     let known = known_identities(&signals.read(), &seed_sessions, caps);
-    let groups_known = scan_groups(caps);
+    // `channels` prepends the synthetic `#open` base and drops any
+    // lingering literal `open` group so the legend has a single
+    // commons chip (ADR-124 §1–§2). The base entry has empty
+    // membership, so it's a no-op for `session_to_groups` below.
+    let groups_known = channels(caps);
     // Pre-index session-id → groups once per render so the chip
     // loop is O(signals) instead of O(signals · groups · members).
     // At today's scale neither form matters, but the render path is
@@ -272,15 +312,21 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     // binding so `find_trailing_mention`'s `&str` doesn't outlive
     // the temporary guard.
     let input_snapshot = input.read().clone();
+    // Trailing-mention context is still consumed by the top channel
+    // bar so it can underline a matching `#partial` when the user is
+    // picking a group; the agent-side partial now flows through
+    // `helper::derive` below and doesn't need its own binding here.
     let mention_ctx = find_trailing_mention(&input_snapshot);
-    let agent_partial: Option<String> = mention_ctx
-        .as_ref()
-        .filter(|m| m.sigil == Sigil::Agent)
-        .map(|m| m.partial.to_string());
     let group_partial: Option<String> = mention_ctx
         .as_ref()
         .filter(|m| m.sigil == Sigil::Group)
         .map(|m| m.partial.to_string());
+    // Helper-row mode is a pure function of the input buffer. The
+    // state machine lives in `helper::derive` — see that module's
+    // docs + tests for the full rule table. Once a slash command
+    // is past its name, the registry's `ArgKind` routes the helper
+    // (`/whois ` → agents, `/join ` → channels).
+    let helper_mode = helper::derive(&input_snapshot);
     let rows: Vec<_> = signals
         .read()
         .iter()
@@ -408,7 +454,11 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                     )
                 }
             }
-            #(legend_row(&known, agent_partial.as_deref()))
+            #(match &helper_mode {
+                HelperMode::Agents(p) => legend_row(&known, p.as_deref()),
+                HelperMode::Groups(p) => group_legend_row(&groups_known, p.as_deref()),
+                HelperMode::Slash(p) => slash::slash_legend_row(p.as_deref()),
+            })
             View(height: 1, padding_left: 1) {
                 Text(color: Color::DarkGrey, content: status.to_string(), wrap: TextWrap::NoWrap)
             }

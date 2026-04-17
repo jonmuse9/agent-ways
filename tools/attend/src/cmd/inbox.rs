@@ -165,7 +165,7 @@ pub(crate) fn cmd_inbox() {
             .unwrap_or("?")
             .to_string();
         let scope = if dir_name == "_broadcast" {
-            "broadcast"
+            "#open"
         } else if dir_name == own_encoded {
             "project"
         } else {

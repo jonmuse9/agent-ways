@@ -165,7 +165,7 @@ pub(crate) fn cmd_send(args: &[String]) {
     } else if target_dir.is_some() {
         "directed"
     } else {
-        "broadcast"
+        "#open"
     };
 
     for dest_dir in &dest_dirs {

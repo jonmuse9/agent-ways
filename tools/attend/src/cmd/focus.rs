@@ -83,12 +83,12 @@ pub(crate) fn cmd_focus_new(args: &[String]) {
         Some("all") => {
             r.cleanup_stale();
             let all = r.all_groups();
-            if all.is_empty() {
-                println!("no active focus groups");
-                return;
-            }
             let mut t = agent_fmt::Table::new(&["Focus", "Members", "Pinned"]);
             t.align(1, agent_fmt::Align::Right);
+            // ADR-124 §I.4: base channel leads the list, mirrors the
+            // TUI's leftmost rule. `(all)` captures the fact that
+            // every peer is implicitly subscribed.
+            t.add(vec!["#open", "(all)", "(base)"]);
             for (name, count, pinned) in &all {
                 t.add(vec![
                     name.as_str(),

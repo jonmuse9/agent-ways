@@ -250,7 +250,14 @@ pub fn group_legend_row(
                 .map(|p| !p.is_empty() && k.group.name.to_ascii_lowercase().starts_with(p))
                 .unwrap_or(false);
             let color = color_for(k.group.palette, caps);
-            let weight = if k.group.style.bold || matches { Weight::Bold } else { Weight::Normal };
+            // Base channel (`#open`) always renders bold as the
+            // visual affordance for "this is the commons" —
+            // ADR-124 §4. Partial-match underline still overlays.
+            let weight = if k.is_base || k.group.style.bold || matches {
+                Weight::Bold
+            } else {
+                Weight::Normal
+            };
             let italic = k.group.style.italic;
             let decoration = if matches { TextDecoration::Underline } else { TextDecoration::None };
             let content = format!("{} #{} ", k.group.glyph, k.group.name);
