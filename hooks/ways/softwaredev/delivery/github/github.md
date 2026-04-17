@@ -1,8 +1,8 @@
 ---
 description: GitHub pull requests, issues, code review, CI checks, repository management
-vocabulary: pr pullrequest issue review checks ci label milestone fork repository upstream draft ship land merge
+vocabulary: pr pullrequest issue review checks ci label milestone fork repository upstream draft ship land merge squash rebase
 threshold: 2.0
-pattern: github|\ issue|pull.?request|\ pr\ |\ pr$|review.?(pr|comment)|merge.?request|ship.?(it|this|the)|land.?(it|this)|merge.?(it|this)
+pattern: github|\ issue|pull.?request|\ pr\ |\ pr$|review.?(pr|comment)|merge.?request|ship.?(it|this|the)|land.?(it|this)|merge.?(it|this)|squash.?merge|rebase.?merge
 commands: ^gh\ |^gh$
 curve:
   type: Exponential
@@ -25,6 +25,16 @@ We use PRs for all changes, including solo projects. A PR without reviewers stil
 ## Code Review Before Merge
 
 After creating a PR, offer to spawn a `code-reviewer` subagent to review it before merging. This is the default workflow — don't wait for the user to request it.
+
+## Merge Strategy — Prefer Regular Merge
+
+Default to a regular merge commit (`gh pr merge --merge`), not squash. When a branch has multiple meaningful commits — ADR, implementation, follow-up fixes, review responses — each carries its own narrative, and `git log` on main should preserve that story. Squashing flattens the history into one commit and loses the reasoning trail future readers would otherwise see.
+
+Ask before merging; don't choose a strategy unilaterally. If the user says "merge it" without specifying, offer: "regular merge or squash?"
+
+Squash is only the right call when the branch is single-purpose with commit noise you genuinely want to drop (typo fixes, WIP snapshots, lint autofix commits). If the commits each document a distinct step, keep them.
+
+Never rebase-merge unless the user explicitly asks — it rewrites authorship and timestamps in ways that surprise collaborators.
 
 ## Post-Merge Cleanup
 
