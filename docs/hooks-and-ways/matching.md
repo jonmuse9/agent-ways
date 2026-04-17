@@ -9,7 +9,7 @@ Each way declares a matching strategy in its YAML frontmatter. The strategy dete
 | Mode | Speed | Precision | Best For |
 |------|-------|-----------|----------|
 | **Regex** | Fast | Exact | Known keywords, command names, file patterns |
-| **Semantic (BM25)** | Fast | Fuzzy | Broad concepts that users describe many ways |
+| **Semantic (embedding)** | Fast | Fuzzy | Broad concepts that users describe many ways |
 | **State** | Fast | Conditional | Session conditions, not content matching |
 
 Matching is **additive**: a way can have both pattern and semantic triggers. Either channel firing activates the way.
@@ -43,19 +43,19 @@ For concepts that users express in varied language. "Make this faster", "optimiz
 
 ### How it works
 
-A way with `description:` and `vocabulary:` frontmatter fields is automatically eligible for semantic matching. The `description` provides natural language context; the `vocabulary` provides domain-specific keywords. These are combined and scored against the user's prompt using BM25 (Okapi BM25 with Porter2 stemming).
+A way with `description:` and `vocabulary:` frontmatter fields is automatically eligible for semantic matching. The `description` provides natural language context; the `vocabulary` provides domain-specific keywords. These are combined into a canonical alias per way and scored against the user's prompt using sentence-embedding cosine similarity (all-MiniLM-L6-v2 for English, a multilingual variant routes locale stubs).
 
 ```yaml
 description: debugging code issues, troubleshooting errors, investigating broken behavior
 vocabulary: debug breakpoint stacktrace investigate troubleshoot regression bisect crash error
-threshold: 2.0
+embed_threshold: 0.35
 ```
 
-### Degradation chain
+### Engine and setup
 
-Semantic matching uses BM25 scoring built into the `ways` binary. It scores description+vocabulary against the prompt with Porter2 stemming and IDF weighting.
+Semantic matching uses the embedding engine built into the `ways` binary (invoking `way-embed` internally against the corpus). The embedding model is a hard dependency — `make setup` fetches the binary and GGUF model.
 
-If the `ways` binary is unavailable, semantic matching is silently skipped and pattern matching still works. Run `make setup` to install.
+If the embedding model is unavailable, semantic matching is silently skipped and pattern matching still works. See ADR-125 for the rationale behind the embedding-only design.
 
 ### Vocabulary design
 
@@ -93,7 +93,7 @@ The vocabulary tuning workflow — choosing terms, measuring precision, eliminat
 
 ### The lineage
 
-The matching system is a **text retrieval** system. The user's prompt is the query; the ways are the document collection; the BM25 scorer ranks documents by relevance. This is the core problem of information retrieval, studied continuously since the 1950s.
+The matching system is a **text retrieval** system. The user's prompt is the query; the ways are the document collection; the embedding scorer ranks documents by relevance. This is the core problem of information retrieval, studied continuously since the 1950s.
 
 | What we do | Established term | Field |
 |------------|-----------------|-------|
@@ -107,13 +107,13 @@ The matching system is a **text retrieval** system. The user's prompt is the que
 
 The test harness is essentially the **Cranfield evaluation paradigm**: a fixed test collection (`test-fixtures.jsonl`) + relevance judgments (expected values) + evaluation metrics (TP/FP/TN/FN). Cyril Cleverdon developed this at Cranfield University in the early 1960s. TREC (Text REtrieval Conference) has been running standardized evaluations on the same model since 1992. Our harness is a miniature TREC track.
 
-BM25 itself — Okapi BM25 — comes from Robertson and Sparck Jones (1976), refined through the 1990s at City University London's Okapi system. It remains competitive with neural approaches for precision-critical retrieval at small scale.
+Earlier versions of this system used Okapi BM25 (Robertson and Sparck Jones, 1976; refined at City University London's Okapi system through the 1990s) as the primary scorer. With the multilingual and semantic-coverage requirements in ADR-108 and ADR-125, the system moved to sentence-embedding cosine similarity as the sole retrieval tier. The IR lineage below still frames the tuning workflow, but the numerator changed from IDF-weighted term overlap to learned embedding similarity.
 
 ### Why this matters
 
 The broader Claude Code ecosystem has developed its own vocabulary for agent steering: [Ralph Wiggum loops](https://github.com/ghuntley/how-to-ralph-wiggum), CLAUDE.md "constitutions," PROMPT.md steering files, AGENTS.md orchestration, "vibe coding." These are practical techniques — legitimate and useful — but the informal naming can obscure what's actually happening underneath.
 
-What's happening underneath is information retrieval. The vocabulary tuning loop is **relevance engineering**: the iterative process of adjusting document representations to improve retrieval quality against a test collection with known-good judgments. The matching system is a **ranked retrieval** system with a precision-first objective. The sparsity principle is a restatement of **discriminative power** — terms that distinguish one document from others contribute more than terms that appear everywhere (which is exactly what BM25's IDF component measures).
+What's happening underneath is information retrieval. The vocabulary tuning loop is **relevance engineering**: the iterative process of adjusting document representations to improve retrieval quality against a test collection with known-good judgments. The matching system is a **ranked retrieval** system with a precision-first objective. The sparsity principle is a restatement of **discriminative power** — descriptions that occupy distinct regions of embedding space produce clean matches, and descriptions that drift into neighbors produce confusion.
 
 This isn't to diminish the newer work. Ralph Wiggum loops are a genuine contribution to autonomous agent workflows. CLAUDE.md files are effective cognitive scaffolds (see [rationale.md](rationale.md) for the situated cognition framing). But the matching and evaluation layer of this system draws from a 60-year research tradition, and knowing that tradition helps when you're stuck:
 

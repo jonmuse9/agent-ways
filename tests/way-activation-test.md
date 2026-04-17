@@ -14,13 +14,13 @@ After each user prompt, check **two** signals:
 
 1. **System-reminders injected into your context** — look for any new `<system-reminder>` blocks that appeared after the user's message. These contain the actual way content. Report headings and content you see.
 
-2. **BM25 scoring via CLI** — run this from `~/.claude/`:
+2. **Embedding scoring via CLI** — run this from `~/.claude/`:
    ```bash
-   bin/ways match "the exact prompt the user typed"
+   ways embed --query "the exact prompt the user typed"
    ```
    This prints a ranked table: Way, Score, Description. Report the top 3 results.
 
-Use **both** signals: system-reminders confirm delivery; `bin/ways match` confirms scoring.
+Use **both** signals: system-reminders confirm delivery; `ways embed` confirms scoring.
 
 ### Report format
 
@@ -28,7 +28,7 @@ Use **both** signals: system-reminders confirm delivery; `bin/ways match` confir
 Step N: [description]
 Result: PASS / FAIL / UNEXPECTED
 Injected: [what system-reminder content appeared, or "none"]
-BM25 top 3:
+Embedding top 3:
   #1 way/id  score  description snippet
   #2 way/id  score  description snippet
   #3 way/id  score  description snippet
@@ -55,7 +55,7 @@ After reading this file, begin with Step 1.
 
 > **CLAUDE**: Check system-reminders for commit guidance, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "I need to commit these changes and push to origin"
+> cd ~/.claude && ways embed --query "I need to commit these changes and push to origin"
 > ```
 > Report injected content and top 3 matches.
 
@@ -63,31 +63,31 @@ After reading this file, begin with Step 1.
 
 ---
 
-### Step 3 — Semantic trigger (BM25, established way)
+### Step 3 — Semantic trigger (embedding, established way)
 
 > **USER**: Type exactly: `how should I hash passwords with bcrypt for our login system?`
 
 > **CLAUDE**: Check system-reminders for security guidance, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "how should I hash passwords with bcrypt for our login system?"
+> cd ~/.claude && ways embed --query "how should I hash passwords with bcrypt for our login system?"
 > ```
 > Report injected content and top 3 matches.
 
-**Expected**: The security way (`code/security`) should fire via BM25 semantic matching (vocabulary includes bcrypt, hash, password, authentication, login). You should see detection rules and security defaults.
+**Expected**: The security way (`code/security`) should fire via embedding semantic matching (vocabulary includes bcrypt, hash, password, authentication, login). You should see detection rules and security defaults.
 
 ---
 
-### Step 4 — Semantic trigger (BM25, newly-semantic way)
+### Step 4 — Semantic trigger (embedding, newly-semantic way)
 
 > **USER**: Type exactly: `profile the rendering loop to find the bottleneck and reduce latency`
 
 > **CLAUDE**: Check system-reminders for performance guidance, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "profile the rendering loop to find the bottleneck and reduce latency"
+> cd ~/.claude && ways embed --query "profile the rendering loop to find the bottleneck and reduce latency"
 > ```
 > Report injected content and top 3 matches.
 
-**Expected**: The performance way (`code/performance`) should fire via BM25 semantic matching. This way previously only had regex triggers — the vocabulary (optimize, profile, benchmark, latency, bottleneck, etc.) was added during the taxonomy restructure. You should see guidance about static analysis for algorithmic issues and generating before/after measurements.
+**Expected**: The performance way (`code/performance`) should fire via embedding semantic matching. This way previously only had regex triggers — the vocabulary (optimize, profile, benchmark, latency, bottleneck, etc.) was added during the taxonomy restructure. You should see guidance about static analysis for algorithmic issues and generating before/after measurements.
 
 ---
 
@@ -97,7 +97,7 @@ After reading this file, begin with Step 1.
 
 > **CLAUDE**: Check system-reminders for migration guidance, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "create a migration to alter the users table and add an index on the email column"
+> cd ~/.claude && ways embed --query "create a migration to alter the users table and add an index on the email column"
 > ```
 > Report injected content and top 3 matches.
 
@@ -111,7 +111,7 @@ After reading this file, begin with Step 1.
 
 > **CLAUDE**: Check system-reminders for any new content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "what's the weather like today?"
+> cd ~/.claude && ways embed --query "what's the weather like today?"
 > ```
 > Report whether anything scored above threshold.
 
@@ -161,8 +161,8 @@ If the subagent sees NO injected content beyond the base configuration, the inje
 > |------|------|---------|----------|--------|
 > | 1 | Session baseline | — | No domain-specific hooks | ? |
 > | 2 | Regex keyword match | delivery | Commits way fires | ? |
-> | 3 | BM25 semantic (established) | code | Security way fires | ? |
-> | 4 | BM25 semantic (new vocabulary) | code | Performance way fires | ? |
+> | 3 | Embedding semantic (established) | code | Security way fires | ? |
+> | 4 | Embedding semantic (new vocabulary) | code | Performance way fires | ? |
 > | 5 | Co-activation | delivery+architecture | Migrations fires, others may join | ? |
 > | 6 | Negative (no match) | — | Nothing fires | ? |
 > | 7 | Subagent injection | code | Testing Way received | ? |

@@ -168,4 +168,4 @@ mv ~/.claude-backup-20260323-141500 ~/.claude
 
 The `ways` binary lands in `bin/` (gitignored) and is symlinked into `~/.local/bin/` by `make install`. The repo itself stays clean and diffable.
 
-If the download fails, BM25 fallback activates automatically (91% vs 98% accuracy — still very good).
+The embedding model is a hard dependency — `ways` will not match without it. If the download fails, rerun `make setup` or fetch the model manually from GitHub Releases.

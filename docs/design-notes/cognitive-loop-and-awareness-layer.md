@@ -23,7 +23,7 @@ agent-ways has been shipping stages of a cognitive architecture for months witho
 | **Associative recall** | Optional memory projection over ledger entries — the knowledge graph in ADR-112 Tier 2 is one such projection, but the awareness layer treats this category as configurable and never required | ADR-112 |
 | **Consolidation** | Compaction distills working context; compaction-checkpoint way captures essentials before the pass | ADR-104 context-threshold triggers |
 | **Project awareness** | Project pulse surfaces upstream/inward state at session start | ADR-106 |
-| **Scoring infrastructure** | Embedding + BM25 + NCD tier for matching observations to ways | ADR-107, ADR-108 |
+| **Scoring infrastructure** | Embedding tier for matching observations to ways | ADR-108, ADR-125 |
 
 Each of these is a stage of a cognitive loop implemented in a substrate appropriate to its cost. Scoring is cheap and runs in a compiled binary. Disclosure is cheap and runs in hooks. Ledger writes are cheap and run in the Stop hook. Only the final reasoning pass — Claude's inference per turn — uses the expensive substrate.
 

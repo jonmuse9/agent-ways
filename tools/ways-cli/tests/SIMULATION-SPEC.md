@@ -187,7 +187,7 @@ tests/fixtures/ways/
 │       └── with-check.check.md
 ```
 
-Each test way has controlled vocabulary so BM25 matching is deterministic.
+Each test way has controlled vocabulary so embedding matching is deterministic.
 
 ### Corpus
 

@@ -4,7 +4,7 @@
 
 Read this file with the Read tool — do NOT have the user paste it into chat.
 
-You are running an integration test for multilingual way matching. This test verifies that locale stubs fire correctly when prompts are written in non-English languages, and that the matching engine (embedding or BM25) can route native-language queries to the right way.
+You are running an integration test for multilingual way matching. This test verifies that locale stubs fire correctly when prompts are written in non-English languages, and that the embedding matching engine can route native-language queries to the right way.
 
 **Your role**: Follow each step in order. Announce what step you are on, perform the action, then report the result against the expected outcome. Wait for the user to complete each USER step before moving on.
 
@@ -14,13 +14,13 @@ After the user types each prompt, check **two** signals:
 
 1. **System-reminders injected into your context** — look for any new `<system-reminder>` blocks that appeared after the user's message. These contain the actual way content that the hook pipeline delivered. Report what headings and content you see.
 
-2. **BM25 scoring via CLI** — run this command (from `~/.claude/`) to see how the prompt scores:
+2. **Embedding scoring via CLI** — run this command (from `~/.claude/`) to see how the prompt scores:
    ```bash
-   bin/ways match "the exact prompt the user typed"
+   ways embed --query "the exact prompt the user typed"
    ```
    This prints a ranked table: Way, Score, Description. The top-scoring way should match the expected one. Report the top 3 results with their scores.
 
-Use **both** signals: system-reminders confirm the hook pipeline delivered content; `bin/ways match` confirms the scoring engine ranked the right way highest.
+Use **both** signals: system-reminders confirm the hook pipeline delivered content; `ways embed` confirms the scoring engine ranked the right way highest.
 
 ### Report format
 
@@ -28,7 +28,7 @@ Use **both** signals: system-reminders confirm the hook pipeline delivered conte
 Step N: [description]
 Result: PASS / FAIL / UNEXPECTED
 Injected: [what system-reminder content appeared, or "none"]
-BM25 top 3:
+Embedding top 3:
   #1 way/id  score  description snippet
   #2 way/id  score  description snippet
   #3 way/id  score  description snippet
@@ -49,7 +49,7 @@ These use the same script as English but should match locale-specific vocabulary
 
 > **CLAUDE**: Check system-reminders for ADR content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "Ich muss eine Architekturentscheidung dokumentieren, ein ADR erstellen"
+> cd ~/.claude && ways embed --query "Ich muss eine Architekturentscheidung dokumentieren, ein ADR erstellen"
 > ```
 > Report the top 3 matches.
 
@@ -63,7 +63,7 @@ These use the same script as English but should match locale-specific vocabulary
 
 > **CLAUDE**: Check system-reminders for testing content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "necesito escribir pruebas unitarias para este modulo"
+> cd ~/.claude && ways embed --query "necesito escribir pruebas unitarias para este modulo"
 > ```
 > Report the top 3 matches.
 
@@ -77,7 +77,7 @@ These use the same script as English but should match locale-specific vocabulary
 
 > **CLAUDE**: Check system-reminders for deps content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "il faut installer les dependances et mettre a jour les paquets"
+> cd ~/.claude && ways embed --query "il faut installer les dependances et mettre a jour les paquets"
 > ```
 > Report the top 3 matches.
 
@@ -91,7 +91,7 @@ These use the same script as English but should match locale-specific vocabulary
 
 > **CLAUDE**: Check system-reminders for GitHub/delivery content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "preciso criar um pull request e fazer merge na branch principal"
+> cd ~/.claude && ways embed --query "preciso criar um pull request e fazer merge na branch principal"
 > ```
 > Report the top 3 matches.
 
@@ -109,11 +109,11 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for debugging content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "このバグを調査してデバッグしたい、スタックトレースを確認する"
+> cd ~/.claude && ways embed --query "このバグを調査してデバッグしたい、スタックトレースを確認する"
 > ```
 > Report the top 3 matches.
 
-**Expected**: The debugging way (`environment/debugging`) should be in top 3. Japanese locale vocabulary includes: デバッグ, 調査, バグ, スタックトレース. Note: CJK matching relies on the embedding engine; BM25 may score lower.
+**Expected**: The debugging way (`environment/debugging`) should be in top 3. Japanese locale vocabulary includes: デバッグ, 調査, バグ, スタックトレース. CJK matching is routed through the embedding engine's alias model.
 
 ---
 
@@ -123,7 +123,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for security content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "코드 보안 검토가 필요합니다, 취약점을 확인해야 합니다"
+> cd ~/.claude && ways embed --query "코드 보안 검토가 필요합니다, 취약점을 확인해야 합니다"
 > ```
 > Report the top 3 matches.
 
@@ -137,7 +137,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for performance content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "需要优化性能，分析瓶颈和延迟问题"
+> cd ~/.claude && ways embed --query "需要优化性能，分析瓶颈和延迟问题"
 > ```
 > Report the top 3 matches.
 
@@ -153,7 +153,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for commit/delivery content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "нужно сделать коммит с правильным сообщением и запушить"
+> cd ~/.claude && ways embed --query "нужно сделать коммит с правильным сообщением и запушить"
 > ```
 > Report the top 3 matches.
 
@@ -167,7 +167,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for environment content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "потрібно налаштувати середовище розробки та встановити залежності"
+> cd ~/.claude && ways embed --query "потрібно налаштувати середовище розробки та встановити залежності"
 > ```
 > Report the top 3 matches.
 
@@ -181,7 +181,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for task management content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "أحتاج إلى إدارة المهام ومتابعة بنود العمل المعلقة"
+> cd ~/.claude && ways embed --query "أحتاج إلى إدارة المهام ومتابعة بنود العمل المعلقة"
 > ```
 > Report the top 3 matches.
 
@@ -197,7 +197,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for documentation content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "ต้องเขียนเอกสารประกอบโค้ดและคู่มือเริ่มต้นใช้งาน"
+> cd ~/.claude && ways embed --query "ต้องเขียนเอกสารประกอบโค้ดและคู่มือเริ่มต้นใช้งาน"
 > ```
 > Report the top 3 matches.
 
@@ -211,7 +211,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Check system-reminders for supply chain content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "इस रिपॉजिटरी की सप्लाई चेन सुरक्षा ऑडिट करनी है"
+> cd ~/.claude && ways embed --query "इस रिपॉजिटरी की सप्लाई चेन सुरक्षा ऑडिट करनी है"
 > ```
 > Report the top 3 matches.
 
@@ -227,7 +227,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Run:
 > ```bash
-> cd ~/.claude && bin/ways match "I need to write unit tests with mocks for the database layer"
+> cd ~/.claude && ways embed --query "I need to write unit tests with mocks for the database layer"
 > ```
 > Report top 3 and note which testing/mocking ways appeared. This establishes a baseline for Step 14.
 
@@ -241,7 +241,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Run:
 > ```bash
-> cd ~/.claude && bin/ways match "devo scrivere test unitari con mock per il livello database"
+> cd ~/.claude && ways embed --query "devo scrivere test unitari con mock per il livello database"
 > ```
 > Report top 3 and compare against Step 13. Did the same testing/mocking ways appear?
 
@@ -257,7 +257,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 
 > **CLAUDE**: Run:
 > ```bash
-> cd ~/.claude && bin/ways match "Ik moet de code refactoren en de kwaliteit verbeteren"
+> cd ~/.claude && ways embed --query "Ik moet de code refactoren en de kwaliteit verbeteren"
 > ```
 > Check: did any ways match? If so, are they matching English vocabulary overlap (words like "code", "refactoren" ≈ "refactor") or Dutch locale entries? Dutch (nl) is inactive — its locale stubs were removed.
 
@@ -290,7 +290,7 @@ These use non-Latin scripts and test the embedding engine's cross-script capabil
 > | 15 | Dutch (nl) | Latin | No locale match | ? |
 >
 > Report pass/fail count and observations about:
-> - Whether system-reminders delivered way content vs just BM25 scoring
+> - Whether system-reminders delivered way content vs just embedding scoring
 > - Whether CJK and non-Latin scripts matched as reliably as Latin-script languages
 > - Whether the cross-language consistency test (Steps 13-14) produced equivalent results
 > - Whether inactive language (Dutch) correctly fell back to English-only matching

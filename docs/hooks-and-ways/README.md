@@ -136,7 +136,7 @@ flowchart LR
 |--|-----------|----------|------------|
 | **Nature** | Static preferences | Event-driven policy | Specific capabilities |
 | **Job** | "Always do X" | "Right now, remember Z" | "Here's how to do Y" |
-| **Trigger** | Startup or file-path glob | Tool use, keywords, BM25, state | User intent (Claude decides) |
+| **Trigger** | Startup or file-path glob | Tool use, keywords, embedding match, state | User intent (Claude decides) |
 | **Conditional on** | Directory tree (`paths:`) | Actions, commands, prompts, state | Semantic similarity to description |
 | **Cross-cutting** | Needs duplicate paths or broad globs | Single way, fires on semantic match | N/A (intent-based) |
 | **Dynamic content** | No | Yes (shell macros) | No |
@@ -202,7 +202,7 @@ How does this apply in practice? Write the prose doc (or add a section to an exi
 Decide how the guidance should be delivered:
 - On what user prompt keywords? → `pattern:`
 - On what tool use? → `commands:` or `files:`
-- On what concept? → `description:` + `vocabulary:` (BM25 semantic matching)
+- On what concept? → `description:` + `vocabulary:` (embedding semantic matching)
 - On what condition? → `trigger:`
 
 Add this to the reference doc if the trigger mechanism is novel.

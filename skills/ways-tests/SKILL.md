@@ -1,6 +1,6 @@
 ---
 name: ways-tests
-description: Score way matching (embedding and BM25), analyze vocabulary, and validate frontmatter. Use when testing how well a way matches prompts, checking cosine similarity or BM25 scores, inspecting the embedding engine status, or validating way files.
+description: Score way matching via embedding similarity, analyze vocabulary, and validate frontmatter. Use when testing how well a way matches prompts, checking cosine similarity scores, inspecting the embedding engine status, or validating way files.
 allowed-tools: Bash, Read, Glob, Grep, Edit
 ---
 
@@ -32,42 +32,36 @@ Test how well a way matches sample prompts, analyze vocabulary for gaps, and val
 /ways-tests embed-score-all "prompt"     # Cosine similarity ranking across all ways
 ```
 
-## Engine Hierarchy
+## Engine
 
-The matching pipeline has three tiers. Always report which tier is active before presenting scores — the numbers mean different things across tiers:
+The matching pipeline uses embedding-based semantic scoring as the sole retrieval tier. The embedding model is a hard dependency of `ways`.
 
 ```
-Tier 1 — Embedding (primary, ~20ms batch)
+Embedding (~20ms batch, all-MiniLM-L6-v2)
   ways embed: cosine similarity, 0–1 scale
   Threshold field: embed_threshold (per-way, default: 0.35)
   Fires when: cosine(query, way) >= embed_threshold
-
-Tier 2 — BM25 (fallback when embedding model missing)
-  ways match: BM25 relevance score, unbounded scale
-  Threshold field: threshold (per-way, default: 2.0)
-  Fires when: BM25_score >= threshold
-
 ```
 
-To check which tier is active: `ways status`
+To check engine health: `ways status`
 
 ## Embed-Status Mode
 
-Show the full embedding engine health dashboard:
+Show the embedding engine health dashboard:
 
 ```bash
 ways status
 ```
 
 Reports:
-- Active engine (embedding/bm25/none) and whether it was forced or auto-detected
+- Engine status (embedding healthy / degraded / missing)
 - Embedding binary path and version
 - Model path and size (`minilm-l6-v2.gguf`)
 - Corpus state: total ways, how many have pre-computed embeddings, size
 - Manifest freshness (staleness detection)
 - Per-project: inclusion marker state, staleness, embedded count
 
-**If engine reports `bm25 (auto)` or `none (auto)`**, the embedding tier is degraded. Diagnose:
+**If the engine reports degraded or missing**, diagnose:
 - Binary missing → `make setup` in `~/.claude`
 - Model missing → `make setup` downloads it to `~/.cache/claude-ways/user/`
 - Corpus missing or stale → `ways corpus` (or `make corpus`)
@@ -147,11 +141,11 @@ embed_threshold: 0.45   # raise to require stronger match
 ---
 ```
 
-Raise `embed_threshold` to suppress weak false positives. Lower it (toward 0.25) for broader catch on niche topics. The `threshold` field (BM25 scale) is still read when the engine falls back to BM25.
+Raise `embed_threshold` to suppress weak false positives. Lower it (toward 0.25) for broader catch on niche topics.
 
 ### Embedding Cross-Way Ranking
 
-When using `embed-score` on a single way, also run the full batch and present the top results as a ranked table — same pattern as BM25 score mode:
+When using `embed-score` on a single way, also run the full batch and present the top results as a ranked table:
 
 ```
 === "add a make target for linting" ===
@@ -184,27 +178,20 @@ When the user gives a short name like "security" instead of a full path:
 2. Then check `~/.claude/hooks/ways/` recursively for `*/security/security.md`
 3. If multiple matches, list them and ask the user to pick
 
-## Score Mode (BM25 Fallback)
+## Score Mode
 
-Use BM25 scoring when the embedding engine is unavailable (embedding binary or model file missing), or when you want to inspect BM25 signal independently for vocabulary tuning.
-
-**Before any scoring operation**, regenerate the corpus:
+Use the embedding engine for all scoring operations. Regenerate the corpus before scoring so changes to descriptions and vocabulary are reflected:
 
 ```bash
 ways corpus
 ```
 
-Use the `ways match` subcommand:
+Use the `ways embed` subcommand to score a prompt against the full corpus:
 
 ```bash
-# Score with BM25
-ways match \
-  --description "$description" \
-  --vocabulary "$vocabulary" \
-  --query "$prompt" \
-  --threshold "${threshold:-2.0}"
-# Exit code: 0 = match, 1 = no match
-# Stderr: "match: score=X.XXXX threshold=Y.YYYY"
+ways embed --query "$prompt"
+# Prints top-N ways with cosine similarity scores.
+# A way fires when its score meets or exceeds its per-way embed_threshold.
 ```
 
 ### Cross-Way Context (automatic)
@@ -242,16 +229,14 @@ Flag these patterns:
 
 ## Score-All Mode
 
-**With embedding active**: run `ways embed` once — it scores the query against all pre-computed corpus embeddings in a single batch call (~20ms). No per-way loop needed. Output is already ranked by cosine similarity.
-
-**With BM25 fallback**: for each way file found (project-local + global), extract description+vocabulary and run `ways match`. Display results as a ranked table:
+Run `ways embed --query "$prompt"` once — it scores the query against all pre-computed corpus embeddings in a single batch call (~20ms). No per-way loop needed. Output is already ranked by cosine similarity:
 
 ```
 Score   Threshold  Match  Way
 ------  ---------  -----  ---
-4.7570  2.0        YES    softwaredev/security
-2.3573  2.0        YES    softwaredev/api
-1.6812  2.0        no     softwaredev/debugging
+0.5421  0.35       YES    softwaredev/security
+0.4017  0.35       YES    softwaredev/api
+0.2983  0.35       no     softwaredev/debugging
 ```
 
 Include ways that have pattern matches too (mark those as "REGEX" in the Match column).
@@ -527,13 +512,13 @@ Show the shared terms for any pair above 0.15 so the author knows exactly which 
 
 ### Relationship to Other Modes
 
-- **Crowding** operates on BM25 *scores* against a prompt — it measures runtime co-activation
+- **Crowding** operates on embedding *scores* against a prompt — it measures runtime co-activation
 - **Jaccard** operates on vocabulary *sets* — it measures structural overlap regardless of any specific prompt
 - Both matter: Jaccard catches vocabulary collisions that crowding might miss if no test prompt triggers both ways
 
 ## Crowding Mode
 
-Detect vocabulary overlap and semantic crowding across the entire ways corpus. This matters as the way count grows — at 50+ ways, BM25 vocabulary space gets contested.
+Detect vocabulary overlap and semantic crowding across the entire ways corpus. This matters as the way count grows — at 50+ ways, embedding space gets contested and ways start competing for the same queries.
 
 ### What to Report
 
@@ -673,7 +658,7 @@ When presenting results, always include an **assessment** that interprets the nu
 
 The default goal is sparsity — keep ways apart so each prompt activates exactly the right one. But sometimes two ways should fire together for the same prompt. A project-scoped way and a user-scoped way might both be relevant for "create a PR." A GitHub way and a custom Jira way might both need to fire for "ship this ticket."
 
-Rather than writing a third way that combines both (more content, more maintenance, more context consumed), plant a small number of shared vocabulary terms in both ways so BM25 co-fires them naturally. Two small ways each contributing their piece is lighter than one large way covering everything.
+Rather than writing a third way that combines both (more content, more maintenance, more context consumed), plant a small number of shared vocabulary terms in both ways so the embedding scorer co-fires them naturally. Two small ways each contributing their piece is lighter than one large way covering everything.
 
 **Discipline:** The shared terms must be narrow — "pull request", "ship", "PR" — not broad terms like "code" or "deploy" that create accidental overlap elsewhere. Use `/ways-tests crowding` to verify the co-fire only happens on the intended prompts.
 
@@ -692,10 +677,10 @@ Adding vocabulary to fix a miss works locally but risks overfitting globally. Ev
 
 ## Notes
 
-- **Always report the active engine tier** before presenting scores — cosine (0–1) and BM25 (unbounded) are not comparable across tiers.
-- The `way-embed` binary lives at `~/.cache/claude-ways/user/way-embed` (downloaded via `make setup`). If missing, embedding is unavailable and BM25 fallback is used. Run `ways status` to check.
-- BM25 scoring is built into the `ways` binary. If `ways` is missing, run `make setup` in `~/.claude`.
-- The `embed_threshold` frontmatter field (float, default `0.35`) sets the per-way cosine cutoff. The `threshold` field (float, default `2.0`) sets the per-way BM25 cutoff. Both live in the same frontmatter block; the active engine reads the right one.
+- Scores are cosine similarity on the 0–1 scale.
+- The `way-embed` binary lives at `~/.cache/claude-ways/user/way-embed` (downloaded via `make setup`). If missing, semantic matching is unavailable. Run `ways status` to check.
+- Embedding scoring is built into the `ways` binary. If `ways` is missing, run `make setup` in `~/.claude`.
+- The `embed_threshold` frontmatter field (float, default `0.35`) sets the per-way cosine cutoff.
 - Corpus regeneration (`ways corpus`) bakes fresh embeddings into the JSONL. After editing any way's `description` or `vocabulary`, regen is required for embedding scores to reflect the change.
 - When displaying results, use human-readable format, not raw machine output.
 - Check scoring uses `awk` for floating-point math.

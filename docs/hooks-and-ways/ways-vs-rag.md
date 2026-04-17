@@ -39,7 +39,7 @@ Ways retrieve on multiple independent channels:
 | Keyword regex | "optimize" in user prompt | Approximate (embedding similarity) |
 | Tool invocation | `git commit` about to execute | None |
 | File pattern | Editing `.env` | None |
-| BM25 semantic | "make this query faster" | Approximate (different algorithm) |
+| Embedding semantic | "make this query faster" | Similar (shared embedding approach) |
 | State condition | Context window 75% full | None |
 | Scope | Subagent spawning | None |
 

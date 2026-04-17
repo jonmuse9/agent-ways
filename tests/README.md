@@ -21,21 +21,18 @@ make test-sim
 cargo test --manifest-path tools/ways-cli/Cargo.toml --test session_sim -- --test-threads=1
 ```
 
-**What it covers**: End-to-end scan pipeline, BM25 scoring against real frontmatter, session marker lifecycle, epoch distance calculations.
+**What it covers**: End-to-end scan pipeline, embedding scoring against real frontmatter, session marker lifecycle, epoch distance calculations.
 
 ### 2. Embedding Engine Tests
 
-Validates the embedding tier (all-MiniLM-L6-v2) against the BM25 fallback on a shared fixture set.
+Validates the embedding tier (all-MiniLM-L6-v2) on the shared fixture set.
 
 ```bash
 # Embedding-specific validation (15 tests)
 bash tools/way-embed/test-embedding.sh
-
-# Head-to-head: embedding vs BM25 on 64 fixtures
-bash tools/way-embed/compare-engines.sh
 ```
 
-**Current baseline**: Embedding 98.4% (63/64), BM25 90.6% (58/64), 0 false negatives on both.
+**Current baseline**: Embedding 98.4% (63/64), 0 false negatives.
 
 ### 3. Activation Test (live agent + subagent)
 

@@ -6,7 +6,7 @@ How we verify that ways trigger correctly — and only when they should.
 
 The ways system doesn't just deliver guidance — it instructs its own quality assurance.
 
-When Claude creates or modifies a way, the `meta/knowledge` way has already fired for that session, telling Claude how ways work — including that they use BM25 scoring with vocabulary and thresholds. The `/ways-tests` skill is listed in Claude's available tools. The memory system records "always verify new ways against sample prompts before shipping." The way-testing skill's own documentation includes scoring methodology, cross-way isolation checks, and vocabulary gap analysis.
+When Claude creates or modifies a way, the `meta/knowledge` way has already fired for that session, telling Claude how ways work — including that they use embedding-based semantic scoring with vocabulary and thresholds. The `/ways-tests` skill is listed in Claude's available tools. The memory system records "always verify new ways against sample prompts before shipping." The way-testing skill's own documentation includes scoring methodology, cross-way isolation checks, and vocabulary gap analysis.
 
 So when Claude finishes writing a way and moves to testing it, that behavior isn't a separate QA step bolted on after the fact. It's the system telling Claude to validate itself, using tools the system provides, against criteria the system defines. The loop looks like this:
 
@@ -27,7 +27,7 @@ The worked example below shows this loop in action during an actual way creation
 
 ## The Problem
 
-Ways use BM25 scoring to decide whether a user's prompt is relevant to a particular domain of guidance. Each way has a vocabulary (terms it cares about), a description, and a threshold (minimum score to fire). Getting this right matters: a way that fires too eagerly drowns the user in irrelevant guidance; a way that never fires is dead weight.
+Ways use embedding-based semantic scoring to decide whether a user's prompt is relevant to a particular domain of guidance. Each way has a vocabulary (terms it cares about), a description, and a cosine-similarity threshold (minimum score to fire). Getting this right matters: a way that fires too eagerly drowns the user in irrelevant guidance; a way that never fires is dead weight.
 
 With 50+ ways in the system, vocabulary space gets crowded. Adding terms to one way can accidentally create overlap with another. The only way to know is to test.
 
@@ -56,18 +56,15 @@ This is also why scoring is done iteratively during way creation rather than aft
 
 ## The Tool
 
-The `ways` binary includes BM25 scoring as a built-in subcommand (see [ADR-014](../architecture/legacy/ADR-014-tfidf-semantic-matcher.md) for the original design, [ADR-111](../architecture/system/ADR-111-unified-ways-cli-single-binary-tool-consolidation.md) for the consolidation). It scores a prompt against a way's description and vocabulary, returning a numeric score. If the score exceeds the way's threshold, the way would fire.
+The `ways` binary includes embedding-based semantic scoring as a built-in subcommand (see [ADR-108](../architecture/system/ADR-108-embedding-based-way-matching-with-all-minilm-l6-v2.md) for the embedding engine, [ADR-111](../architecture/system/ADR-111-unified-ways-cli-single-binary-tool-consolidation.md) for the consolidation, and [ADR-125](../architecture/system/ADR-125-authored-disclosure-graph-and-removal-of-bm25.md) for the embedding-only decision). It scores a prompt against the entire way corpus using cosine similarity and ranks the results.
 
 ```bash
-# Score a single prompt against a way
-ways match \
-  --description "Managing claude-code-config as a project..." \
-  --vocabulary "upstream changelog release version..." \
-  --query "what's new in claude code recently" \
-  --threshold 2.5
+# Score a prompt against all ways
+ways embed \
+  --query "what's new in claude code recently"
 
-# Output (stderr): match: score=7.0523 threshold=2.5000
-# Exit code: 0 (match) or 1 (no match)
+# Output: ranked list with cosine similarity scores
+# A way fires when its score exceeds its embed_threshold (default 0.35)
 ```
 
 The `/ways-tests` skill wraps this with higher-level operations: scoring all ways against a prompt, analyzing vocabulary gaps, checking for cross-way overlap, and validating frontmatter.
@@ -107,7 +104,7 @@ The second prompt — "are our ADRs current with what we've shipped" — missed.
 
 ### Step 3: Diagnose the miss
 
-BM25 scores based on term overlap weighted by rarity. The prompt uses "current" and "shipped" — neither appeared in the vocabulary. The only matching term was "adr" (from "ADRs" in the prompt), and a single term match can't carry the score past 2.5 alone.
+Historical note: this walkthrough was authored when scoring used BM25 (term-overlap weighted by rarity). Under BM25, the prompt's "current" and "shipped" didn't appear in the vocabulary, and the only matching term was "adr" — a single term can't carry the score past 2.5. The embedding engine (ADR-125) makes the same diagnosis more forgiving for paraphrase, but the underlying lesson stands: vocabulary tuned for what *users actually say* outperforms vocabulary tuned for the topic in the author's head.
 
 This is the kind of gap that's invisible when you write the vocabulary by thinking about the *topic* — you think "ADR reconciliation" and write `reconcile drift stale`. But a user says "are our ADRs current with what we've shipped" using completely different words for the same concept.
 
@@ -207,7 +204,7 @@ The test harness enforces this: it tracks false positive rate as a hard constrai
 
 Sparsity is the default — keep ways apart. But sometimes you *want* two ways to fire together. A project-scoped way and a user-scoped way might both be relevant when someone says "create a PR." A GitHub way and a custom Jira way might both need to fire when someone says "ship this ticket."
 
-Rather than writing a third way that combines both concerns (more content to maintain, more context consumed), you can plant shared vocabulary terms in both ways so that BM25 naturally co-fires them on the same prompt. Two small ways that each contribute their piece is lighter than one large way that tries to cover everything.
+Rather than writing a third way that combines both concerns (more content to maintain, more context consumed), you can plant shared vocabulary terms in both ways so that the embedding scorer naturally co-fires them on the same prompt. Two small ways that each contribute their piece is lighter than one large way that tries to cover everything.
 
 This is a deliberate vocabulary manipulation — the opposite of sharpening. You're *reducing* the distance between two ways for specific prompts where both are genuinely needed. The key discipline is that the shared terms should be narrow: "pull request", "ship", "PR" — not broad terms like "code" or "deploy" that would create accidental overlap on unrelated prompts.
 

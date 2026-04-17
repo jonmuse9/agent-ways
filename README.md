@@ -47,7 +47,7 @@ sequenceDiagram
 
 <img src="docs/images/ways-rethink.gif" alt="ways rethink replaying a session — each frame shows a way firing, guidance clusters near the attention cursor and packs like a compression pattern as context fills" width="400" />
 
-The recording above shows a session matched with **BM25** (term-frequency scoring) — the automatic fallback engine. In production, most ways fire via the **embedding engine** (all-MiniLM-L6-v2, a ~21MB GGUF model), which achieves 98% accuracy vs BM25's 91%. The embedding tier handles semantic similarity — "pin lockfile versions" matches the supply chain way even though those exact words don't appear in the way's vocabulary. BM25 takes over when the model isn't available.
+Ways fire via the **embedding engine** (all-MiniLM-L6-v2, a ~21MB GGUF model), which achieves ~98% accuracy on the match fixture set. The embedding tier handles semantic similarity — "pin lockfile versions" matches the supply chain way even though those exact words don't appear in the way's vocabulary.
 
 ---
 
@@ -73,7 +73,7 @@ Runs on **Linux** and **macOS**. The core system is a Rust binary (`ways`) plus 
 
 `make setup` acquires the `ways` binary automatically: pre-built download from GitHub Releases → build from source (requires `cargo`/Rust toolchain) → error with instructions. Standard utilities (`bash`, `awk`, `sed`, `grep`, `find`, `timeout`, `tr`, `sort`, `wc`, `date`) are assumed present via coreutils.
 
-**Semantic matching** uses a two-tier engine: **embedding** (all-MiniLM-L6-v2 via a separate `way-embed` binary, 98% accuracy) → **BM25** (built into `ways`, 91% accuracy). The embedding tier is preferred; BM25 is the automatic fallback when the embedding model is unavailable. Both are managed through the unified `ways` CLI:
+**Semantic matching** uses the **embedding engine** (all-MiniLM-L6-v2 via a separate `way-embed` binary, ~98% accuracy on the fixture set) as the sole retrieval tier. The embedding model is a hard dependency of `ways` and is fetched by `make setup`:
 
 ```bash
 make setup   # download ways binary + embedding model (~21MB), generate corpus
@@ -114,12 +114,12 @@ The built-in ways cover software development, but the framework is domain-agnost
 
 `core.md` loads at session start with behavioral guidance, operational rules, and a dynamic ways index. Then, as you work:
 
-1. **UserPromptSubmit** scans your message for keyword and semantic matches (embedding or BM25)
+1. **UserPromptSubmit** scans your message for keyword and semantic (embedding) matches
 2. **PreToolUse** intercepts commands and file edits *before they execute*
 3. **SubagentStart** injects relevant ways into subagents spawned via Task
 4. Each way fires **once per session** — marker files prevent re-triggering
 
-Matching is tiered: regex patterns for known keywords/commands/files, then semantic scoring — either [sentence embeddings](docs/architecture/system/ADR-108-embedding-based-way-matching-with-all-minilm-l6-v2.md) (all-MiniLM-L6-v2) or [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) term-frequency scoring. See [matching.md](docs/hooks-and-ways/matching.md) for the full strategy.
+Matching has two channels: regex patterns for known keywords/commands/files, and [sentence-embedding](docs/architecture/system/ADR-108-embedding-based-way-matching-with-all-minilm-l6-v2.md) semantic scoring (all-MiniLM-L6-v2). See [matching.md](docs/hooks-and-ways/matching.md) for the full strategy.
 
 `ways list` shows the live session state — which ways fired, when (epoch), how far back (distance), what triggered them, tree relationships, check decay curves, and a re-disclosure forecast showing when distant ways will re-fire as context fills:
 
@@ -133,17 +133,15 @@ Ways config lives in `~/.claude/ways.json`:
 
 ```json
 {
-  "disabled": [],
-  "semantic_engine": "auto"
+  "disabled": []
 }
 ```
 
 | Field | Purpose |
 |-------|---------|
 | `disabled` | Array of domain names to skip (e.g., `["itops", "softwaredev"]`) |
-| `semantic_engine` | `"auto"` (default), `"embedding"`, or `"bm25"` — force a specific engine |
 
-Disabled domains are completely ignored — no pattern matching, no output. The `semantic_engine` override is useful for testing or when the embedding engine causes issues — set to `"bm25"` to fall back.
+Disabled domains are completely ignored — no pattern matching, no output.
 
 ## Creating Ways
 
@@ -151,9 +149,8 @@ Each way is a `{wayname}.md` file with YAML frontmatter in `~/.claude/hooks/ways
 
 ```yaml
 ---
-description: semantic text    # embedding/BM25 matching (preferred)
-vocabulary: domain keywords   # space-separated terms for BM25 scoring
-threshold: 2.0                # BM25 score threshold
+description: semantic text    # embedding semantic matching (preferred)
+vocabulary: domain keywords   # space-separated terms augmenting the embedding
 embed_threshold: 0.35         # cosine similarity threshold (optional per-way tuning)
 pattern: commit|push          # regex on user prompts (supplementary)
 commands: git\ commit         # regex on bash commands
@@ -197,14 +194,11 @@ ways siblings softwaredev/code/supplychain/depscan/node
 # Session simulation tests (Rust integration tests)
 make test-sim
 
-# Embedding engine comparison (embedding vs BM25 on 64 fixtures)
-bash tools/way-embed/compare-engines.sh
-
 # Interactive: full hook pipeline with subagent injection
 # Start a fresh session, then: read and run tests/way-activation-test.md
 ```
 
-The embedding engine achieves 98.4% accuracy (63/64) vs BM25's 90.6% (58/64) with 0 false negatives. See `tools/way-embed/compare-engines.sh` for the full comparison.
+The embedding engine achieves 98.4% accuracy (63/64) with 0 false negatives on the fixture set.
 
 Other test tools: `scripts/doc-graph.sh --stats` checks documentation link integrity; `ways governance lint` validates provenance metadata. Full test guide: [tests/README.md](tests/README.md).
 
@@ -248,7 +242,7 @@ This matters because of how attention works in transformers. Rules loaded at fil
 | **What** | Static instructions | Action templates | Event-driven guidance |
 | **Job** | "Always do X" | "Here's how to do Y" | "Right now, remember Z" |
 | **Trigger** | File access or startup | User intent (Claude decides) | Tool use, keywords, state conditions |
-| **Conditional on** | File paths (directory tree) | Semantic similarity | Multi-channel: regex, embeddings/BM25, commands, files, state |
+| **Conditional on** | File paths (directory tree) | Semantic similarity | Multi-channel: regex, embeddings, commands, files, state |
 | **Cross-cutting concerns** | Needs duplicate `paths:` entries | N/A (intent-based) | Single way fires regardless of file location |
 | **Dynamic content** | No | No | Yes (shell macros) |
 | **Survives refactoring** | No (`src/` → `lib/` breaks paths) | Yes | Yes |
@@ -283,7 +277,7 @@ Policy-as-code for AI agents — lightweight, portable, deterministic.
 
 | Feature | Why It Matters |
 |---------|----------------|
-| **Tiered matching** | Regex for precision, embeddings for semantics, BM25 fallback — no cloud API needed |
+| **Dual-channel matching** | Regex for precision, embeddings for semantics — no cloud API needed |
 | **Shell macros** | Dynamic context from any source (APIs, files, system state) |
 | **Minimal dependencies** | `ways` binary + bash + jq — no runtime services, no cloud APIs |
 | **Domain-agnostic** | Swap software dev ways for finance, ops, research, anything |

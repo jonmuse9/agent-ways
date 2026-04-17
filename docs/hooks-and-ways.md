@@ -26,7 +26,7 @@ Claude Code hook events drive the system. Each fires shell scripts that scan for
 
 - **`clear-markers.sh`** - Clears session markers from `{SESSIONS_ROOT}/{session_id}/`. Resets session state so ways can fire fresh. Scoped to the current session only.
 - **`ways init`** - Creates `$PROJECT/.claude/ways/_template.md` if the project has a `.claude/` or `.git/` dir but no ways directory yet.
-- **`ways corpus --if-stale --quiet`** - Regenerates the BM25/embedding corpus if way files have changed since last build.
+- **`ways corpus --if-stale --quiet`** - Regenerates the embedding corpus if way files have changed since last build.
 - **`check-config-updates.sh`** - Checks if the config is behind upstream. Detects four install scenarios: direct clones, GitHub forks, renamed clones (via `.claude-upstream` marker file), and plugin installs. Network calls (`git fetch`, `gh api`, `git ls-remote`) are rate-limited to once per hour; update notices fire every session when behind. See the [Updating](#updating) section of the README for scenario details and how to control this behavior.
 
 ### Trigger Evaluation
@@ -147,14 +147,14 @@ flowchart TD
     end
 
     subgraph SM ["Semantic Matching (additive)"]
-        S[BM25 Scorer]:::semantic
-        S --> BM["ways match<br/>Porter2 stemming + IDF"]:::semantic
+        S[Embedding Scorer]:::semantic
+        S --> BM["ways embed<br/>all-MiniLM-L6-v2 cosine similarity"]:::semantic
     end
 
     RP -->|match| FIRE[Fire Way]:::result
     RC -->|match| FIRE
     RF -->|match| FIRE
-    BM -->|"score ≥ threshold"| FIRE
+    BM -->|"cosine ≥ embed_threshold"| FIRE
 ```
 
 Matching is **additive** — pattern and semantic are OR'd. A way with both `pattern:` and `description:`+`vocabulary:` can fire from either channel.
@@ -174,20 +174,18 @@ Fast and precise. Most ways use this.
 ```yaml
 description: "API design, REST endpoints, request handling"
 vocabulary: api endpoint route handler middleware
-threshold: 2.0        # BM25 threshold
 embed_threshold: 0.35 # cosine similarity threshold
 ```
 
-Two-tier engine, built into the `ways` binary:
+Embedding-only engine, built into the `ways` binary:
 
-| Tier | Engine | How it works |
-|------|--------|-------------|
-| 1 | **Embedding** | all-MiniLM-L6-v2 sentence embeddings via `way-embed` binary + GGUF model. Pre-computed 384-dim vectors in corpus. Cosine similarity against all ways (~20ms). |
-| 2 | **BM25** | Okapi BM25 with Porter2 stemming (built into `ways`). Scores description+vocabulary per-way. Fallback when embedding is unavailable. |
+| Engine | How it works |
+|--------|-------------|
+| **Embedding** | all-MiniLM-L6-v2 sentence embeddings via `way-embed` binary + GGUF model. Pre-computed 384-dim vectors in corpus. Cosine similarity against all ways (~20ms). |
 
-When embedding is available, it is the sole semantic authority — BM25 acts as fallback only. The `ways scan` command auto-detects available tiers and uses the best one.
+The embedding model is a hard dependency of `ways`. `make setup` fetches the binary and GGUF model on four supported platforms.
 
-**Embedding engine** (ADR-108): Solves BM25's stem-collision problem — "SSH agent" and "AI agent" share the same BM25 stem but have distant embedding vectors.
+**Embedding engine** (ADR-108, ADR-125): Semantic similarity captures concepts that lexical scoring would miss — "SSH agent" and "AI agent" share the same English stem but have distant embedding vectors, and the multilingual variant routes native-language queries through locale-stub aliases without per-language stemmer wiring.
 
 #### Setup
 
@@ -440,7 +438,7 @@ Three test layers verify the matching and injection pipeline. See [tests/README.
 |-------|---------|---------------|
 | **Smoke** | `make test` | Lint (0 errors), match (sample queries), graph (node/edge count) |
 | **Simulation** | `make test-sim` | 8 integration scenarios: matching, idempotency, commands, files, checks, disclosure, scope, epochs |
-| **Activation** | `read and run the activation test at tests/way-activation-test.md` | Live hook pipeline: regex, BM25, negative control, subagent injection |
+| **Activation** | `read and run the activation test at tests/way-activation-test.md` | Live hook pipeline: regex, embedding semantic match, negative control, subagent injection |
 
 The `/ways-tests` skill provides ad-hoc scoring for vocabulary tuning:
 

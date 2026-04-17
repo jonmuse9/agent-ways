@@ -10,7 +10,7 @@ You are a ways workshop. The human has invoked `/ways` to build or revise projec
 
 **Read these docs first** — you need the full landscape before your first question:
 
-1. Read `~/.claude/docs/hooks-and-ways/matching.md` — understand all matching modes (regex, BM25 semantic, state triggers), vocabulary design, the sparsity principle, and the IR grounding
+1. Read `~/.claude/docs/hooks-and-ways/matching.md` — understand all matching modes (regex, embedding semantic, state triggers), vocabulary design, the sparsity principle, and the IR grounding
 2. Read `~/.claude/docs/hooks-and-ways/extending.md` — understand creation flow, voice/framing guidance, progressive disclosure with sub-ways, project-local overrides
 
 Do NOT skip this step. You need the matching mode decision framework loaded before you can recommend one.
@@ -52,7 +52,7 @@ Ask in plain language. Do NOT lead with technical terms like "frontmatter" or "m
 
 **Recommend the matching mode** with a one-sentence reason:
 - "That sounds like it should fire on `git commit` — a command trigger is reliable and fast here."
-- "People could describe this many ways — semantic matching with BM25 will catch 'optimize', 'slow', 'performance' without listing every synonym."
+- "People could describe this many ways — embedding semantic matching will catch 'optimize', 'slow', 'performance' without listing every synonym."
 - "This should fire any time someone touches a migration file — a file pattern trigger is the right fit."
 
 ### For Revision — Diagnose the Problem
@@ -65,7 +65,7 @@ Ask what's wrong:
 
 Use the `ways` binary for live diagnostics:
 ```bash
-ways match --description "$desc" --vocabulary "$vocab" --query "$prompt" --threshold "${thresh:-2.0}"
+ways embed --query "$prompt"
 ```
 
 ## Scaffold
@@ -154,7 +154,7 @@ After creating or revising a way:
 
 2. **Score** (for semantic ways): Test against sample prompts from the conversation
    ```bash
-   ways match --description "$desc" --vocabulary "$vocab" --query "sample prompt" --threshold 2.0
+   ways embed --query "sample prompt"
    ```
 
 3. **Cross-check**: Score all project ways against the same prompt to verify no cross-firing

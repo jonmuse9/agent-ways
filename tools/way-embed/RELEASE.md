@@ -59,15 +59,6 @@ bash ~/.claude/tools/way-embed/download-model.sh --upstream
 
 Both paths verify against the same SHA-256 checksum.
 
-## Switch engines
+## Engine
 
-Set `"semantic_engine"` in `~/.claude/ways.json`:
-- `"auto"` — embedding if available, falls back to BM25 (default)
-- `"embedding"` — force embedding engine
-- `"bm25"` — force BM25 engine
-
-## Compare engines
-
-```bash
-bash ~/.claude/tools/way-embed/compare-engines.sh
-```
+Retrieval is embedding-only — the `way-embed` binary and the GGUF model are hard dependencies of `ways` after ADR-125. There is no engine toggle.

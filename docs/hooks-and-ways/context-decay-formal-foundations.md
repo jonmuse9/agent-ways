@@ -258,7 +258,7 @@ graph TB
     end
 
     subgraph "Inner Loop — Ways"
-        WAY_SENSE["BM25 semantic match<br/>(detect state transition)"]
+        WAY_SENSE["Embedding semantic match<br/>(detect state transition)"]
         WAY_CTRL["Inject guidance fragment<br/>(near attention cursor)"]
         WAY_ERR["Tactical error<br/>(convention violation, missed step)"]
     end
@@ -291,7 +291,7 @@ graph TB
 | Cascade Element | Classical Process Control | Ways Architecture |
 |---|---|---|
 | Inner controller | PID on intermediate variable | Way injection on tool-use state |
-| Inner measurement | Fast sensor (pressure, flow) | BM25 semantic match score |
+| Inner measurement | Fast sensor (pressure, flow) | Embedding semantic match score |
 | Inner disturbance | Local perturbation (valve noise) | Positional attention decay |
 | Outer controller | PID on primary variable | Human steering prompt |
 | Outer measurement | Slow sensor (temperature, level) | Observed LLM output quality |

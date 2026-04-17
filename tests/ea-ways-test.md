@@ -14,13 +14,13 @@ After each user prompt, check **two** signals:
 
 1. **System-reminders injected into your context** — look for any new `<system-reminder>` blocks that appeared after the user's message. These contain the actual way content. Report headings and content you see.
 
-2. **BM25 scoring via CLI** — run this from `~/.claude/`:
+2. **Embedding scoring via CLI** — run this from `~/.claude/`:
    ```bash
-   bin/ways match "the exact prompt the user typed"
+   ways embed --query "the exact prompt the user typed"
    ```
    This prints a ranked table: Way, Score, Description. Report the top 3 results.
 
-Use **both** signals: system-reminders confirm delivery; `bin/ways match` confirms scoring.
+Use **both** signals: system-reminders confirm delivery; `ways embed` confirms scoring.
 
 ### Report format
 
@@ -28,7 +28,7 @@ Use **both** signals: system-reminders confirm delivery; `bin/ways match` confir
 Step N: [description]
 Result: PASS / FAIL / UNEXPECTED
 Injected: [what system-reminder content appeared, or "none"]
-BM25 top 3:
+Embedding top 3:
   #1 way/id  score  description snippet
   #2 way/id  score  description snippet
   #3 way/id  score  description snippet
@@ -47,7 +47,7 @@ After reading this file, begin with Step 1.
 
 > **CLAUDE**: Check system-reminders for EA root content (safety rules table, core principles), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "I need help managing my workspace today"
+> cd ~/.claude && ways embed --query "I need help managing my workspace today"
 > ```
 > Report injected content and top 3 matches.
 
@@ -61,7 +61,7 @@ After reading this file, begin with Step 1.
 
 > **CLAUDE**: Check system-reminders for email triage content (presentation structure table, filtering rules), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "triage my email from the last 24 hours"
+> cd ~/.claude && ways embed --query "triage my email from the last 24 hours"
 > ```
 > Report injected content and top 3 matches.
 
@@ -79,7 +79,7 @@ The root EA way should NOT re-fire (marker exists from Step 1).
 
 > **CLAUDE**: Check system-reminders for calendar content (scheduling workflow, availability checking), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "schedule a meeting with the team for tomorrow afternoon"
+> cd ~/.claude && ways embed --query "schedule a meeting with the team for tomorrow afternoon"
 > ```
 > Report injected content and top 3 matches.
 
@@ -93,7 +93,7 @@ The root EA way should NOT re-fire (marker exists from Step 1).
 
 > **CLAUDE**: Check system-reminders for comms content (read-safe/send-approval distinction), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "check my teams chat for any unread messages"
+> cd ~/.claude && ways embed --query "check my teams chat for any unread messages"
 > ```
 > Report injected content and top 3 matches.
 
@@ -107,7 +107,7 @@ The root EA way should NOT re-fire (marker exists from Step 1).
 
 > **CLAUDE**: Check system-reminders for task lifecycle content (suggest-first patterns), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "what tasks are overdue and what should I prioritize"
+> cd ~/.claude && ways embed --query "what tasks are overdue and what should I prioritize"
 > ```
 > Report injected content and top 3 matches.
 
@@ -123,7 +123,7 @@ The root EA way should NOT re-fire (marker exists from Step 1).
 
 > **CLAUDE**: Check system-reminders for drafting content (style calibration, anti-patterns), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "draft a reply to that email from the client"
+> cd ~/.claude && ways embed --query "draft a reply to that email from the client"
 > ```
 > Report injected content and top 3 matches.
 
@@ -142,7 +142,7 @@ The email triage parent may or may not re-fire (depends on marker state). The dr
 
 > **CLAUDE**: Check system-reminders for recap content (available content table), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "pull the transcript from yesterday's standup meeting"
+> cd ~/.claude && ways embed --query "pull the transcript from yesterday's standup meeting"
 > ```
 > Report injected content and top 3 matches.
 
@@ -159,7 +159,7 @@ The email triage parent may or may not re-fire (depends on marker state). The dr
 
 > **CLAUDE**: Check system-reminders for time tracking content (logging workflow), then run:
 > ```bash
-> cd ~/.claude && bin/ways match "log my time for today, I'm wrapping up"
+> cd ~/.claude && ways embed --query "log my time for today, I'm wrapping up"
 > ```
 > Report injected content and top 3 matches.
 
@@ -177,7 +177,7 @@ These test that semantically close ways fire the RIGHT one, not the wrong siblin
 
 > **CLAUDE**: Check system-reminders — did you get intelligence or briefing content? Then run:
 > ```bash
-> cd ~/.claude && bin/ways match "prepare me for my 2pm meeting with the client"
+> cd ~/.claude && ways embed --query "prepare me for my 2pm meeting with the client"
 > ```
 > Report injected content and top 3 matches.
 
@@ -191,7 +191,7 @@ These test that semantically close ways fire the RIGHT one, not the wrong siblin
 
 > **CLAUDE**: Check system-reminders — did you get briefing or email triage content? Then run:
 > ```bash
-> cd ~/.claude && bin/ways match "what does my day look like, catch me up"
+> cd ~/.claude && ways embed --query "what does my day look like, catch me up"
 > ```
 > Report injected content and top 3 matches.
 
@@ -212,7 +212,7 @@ Email triage should NOT be the primary way for this prompt.
 
 > **CLAUDE**: Check system-reminders for any EA content, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "explain how the Rust borrow checker works"
+> cd ~/.claude && ways embed --query "explain how the Rust borrow checker works"
 > ```
 > Report whether any EA ways appear in the top results.
 
@@ -226,7 +226,7 @@ Email triage should NOT be the primary way for this prompt.
 
 > **CLAUDE**: Check system-reminders for what fired, then run:
 > ```bash
-> cd ~/.claude && bin/ways match "review the code quality and refactor the authentication module"
+> cd ~/.claude && ways embed --query "review the code quality and refactor the authentication module"
 > ```
 > Report top 5 matches — are any EA ways present?
 

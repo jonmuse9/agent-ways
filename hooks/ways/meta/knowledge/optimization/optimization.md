@@ -58,9 +58,8 @@ Only ways with both `description:` and `vocabulary:` frontmatter fields use sema
 ## Thresholds
 
 - **Embedding threshold** (frontmatter `embed_threshold:`): Cosine similarity, 0–1 scale. Default set per-way in corpus.
-- **BM25 threshold** (frontmatter `threshold:`): Score scale, higher = better match. Default 2.0. Range typically 1.5-5.0.
 
-Lowering BM25 threshold increases recall (more matches) but risks false positives. The test harness tracks FP rate — **0 FP is the hard constraint**.
+Lowering the threshold increases recall (more matches) but risks false positives. The test harness tracks FP rate — **0 FP is the hard constraint**.
 
 ### Auto-tuning with `ways tune`
 
