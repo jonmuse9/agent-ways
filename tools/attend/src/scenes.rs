@@ -5,7 +5,10 @@
 //!
 //! Built-in defaults:
 //!   private — leave all focus groups (project scope only)
-//!   open    — join the well-known "open" group
+//!
+//! `open` used to be a scene preset that joined an `@open/` group;
+//! ADR-124 folded it into the `#open` base channel (which everyone
+//! is always in implicitly), so the preset was removed.
 
 use std::collections::HashMap;
 use std::fs;
@@ -23,9 +26,9 @@ pub struct Scene {
 pub fn load_scenes() -> HashMap<String, Scene> {
     let mut scenes = HashMap::new();
 
-    // Built-in defaults
+    // Built-in defaults. `open` used to live here; it's now the
+    // `#open` base channel (ADR-124) — implicit for every peer.
     scenes.insert("private".to_string(), Scene { rooms: Vec::new() });
-    scenes.insert("open".to_string(), Scene { rooms: vec!["open".to_string()] });
 
     // User config overlay
     let path = scenes_config_path();
@@ -168,8 +171,9 @@ custom:
     fn test_builtins() {
         let scenes = load_scenes();
         assert!(scenes.contains_key("private"));
-        assert!(scenes.contains_key("open"));
         assert!(scenes["private"].rooms.is_empty());
-        assert_eq!(scenes["open"].rooms, vec!["open"]);
+        // `open` is no longer a built-in scene (ADR-124 §2). The
+        // equivalent — everyone in #open — is now the implicit base.
+        assert!(!scenes.contains_key("open"));
     }
 }

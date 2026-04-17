@@ -122,6 +122,16 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
     let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
     let group_mgr = groups::Groups::new(&signals_base(), &session_id);
 
+    // ADR-124 one-shot: fold any lingering `@open/` group into the
+    // `_broadcast/` base. Idempotent — a no-op once there's nothing
+    // left to move, which is the common case after the first
+    // post-upgrade startup.
+    if let Some(moved) = groups::migrate_legacy_open_group(&signals_base(), &group_mgr) {
+        emit::log(&format!(
+            "migrated legacy @open/ → _broadcast/ ({moved} signal(s) moved)"
+        ));
+    }
+
     // Self-documenting startup
     let my_groups = group_mgr.my_groups();
     let focus_desc = if my_groups.is_empty() {
@@ -240,7 +250,7 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
         println!("[attend] restarted (unchanged)");
     } else {
         println!(
-            "[attend] v{} ({}) — sensors: {} | focus: {} | send: attend send <msg> (broadcast)",
+            "[attend] v{} ({}) — sensors: {} | focus: {} | send: attend send <msg> (#open)",
             env!("CARGO_PKG_VERSION"),
             env!("ATTEND_COMMIT"),
             sensor_list,

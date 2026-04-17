@@ -136,7 +136,7 @@ fn main() {
                 ],
             );
             println!();
-            println!("  send defaults to broadcast (reaches every peer and Aaron).");
+            println!("  send defaults to #open, the base channel (reaches every peer and Aaron).");
             agent_fmt::print_commands(
                 "send flags (rarely needed)",
                 &[

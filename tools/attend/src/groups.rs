@@ -251,10 +251,61 @@ fn validate_group_name(name: &str) -> Result<(), String> {
     if name.contains('/') || name.contains(' ') {
         return Err("group name cannot contain / or spaces".to_string());
     }
-    if name == "broadcast" {
-        return Err("'broadcast' is reserved".to_string());
+    // `broadcast` backs `_broadcast/`; `open` is the display name of
+    // the base channel (ADR-124) — both would alias the commons if
+    // we let a user create an explicit group with either name.
+    if name == "broadcast" || name == "open" {
+        return Err(format!("'{name}' is reserved"));
     }
     Ok(())
+}
+
+/// One-shot migration for the legacy `@open/` focus group.
+///
+/// Pre-ADR-124 the `open` scene would create an `@open/` dir alongside
+/// `_broadcast/`; post-ADR the base channel is `_broadcast/` and the
+/// display name is `#open` (no `@open/` on disk). This helper makes
+/// `attend run` idempotently clean up lingering state on the next
+/// startup after an upgrade:
+///
+/// - move any `*.signal` files from `@open/` to `_broadcast/`
+/// - delete `@open/` and strip the `open:` entry from `_groups.yaml`
+///
+/// Returns the number of signal files moved, or `None` if there was
+/// nothing to migrate (the common case after the first post-upgrade
+/// run). A returned `Some(0)` means `@open/` existed but was empty —
+/// still worth logging since we removed an empty dir.
+pub fn migrate_legacy_open_group(signals_base: &Path, groups: &Groups) -> Option<usize> {
+    let open_dir = signals_base.join("@open");
+    if !open_dir.is_dir() {
+        return None;
+    }
+    let broadcast_dir = signals_base.join("_broadcast");
+    fs::create_dir_all(&broadcast_dir).ok();
+
+    let mut moved = 0;
+    if let Ok(entries) = fs::read_dir(&open_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let src = entry.path();
+            if src.extension().and_then(|s| s.to_str()) != Some("signal") {
+                continue;
+            }
+            let Some(name) = src.file_name() else { continue };
+            let dst = broadcast_dir.join(name);
+            // Prefer rename (atomic, intra-fs); fall back to copy+remove
+            // when rename fails (e.g. cross-device — unlikely here but
+            // defensive). Ignore errors per-file: best-effort migration.
+            if fs::rename(&src, &dst).is_ok() {
+                moved += 1;
+            } else if fs::copy(&src, &dst).is_ok() {
+                fs::remove_file(&src).ok();
+                moved += 1;
+            }
+        }
+    }
+    // `dissolve` handles the _groups.yaml edit + removes the dir.
+    groups.dissolve("open");
+    Some(moved)
 }
 
 /// Check if a Claude Code session is still alive by looking for its lock dir.
@@ -378,6 +429,67 @@ mod tests {
         assert!(validate_group_name("has/slash").is_err());
         assert!(validate_group_name("has space").is_err());
         assert!(validate_group_name("broadcast").is_err());
+        // ADR-124: `open` is the base channel display name — reserved
+        // so nobody can shadow it with a real focus group.
+        assert!(validate_group_name("open").is_err());
+    }
+
+    #[test]
+    fn migrate_legacy_open_noop_when_absent() {
+        // No `@open/` → returns None. Idempotent fast path on
+        // subsequent startups.
+        let base = std::env::temp_dir().join(format!(
+            "attend-migrate-noop-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        fs::create_dir_all(&base).unwrap();
+        let mgr = Groups::new(&base, "sess-test");
+        assert!(migrate_legacy_open_group(&base, &mgr).is_none());
+    }
+
+    #[test]
+    fn migrate_legacy_open_moves_signals_and_drops_dir() {
+        let base = std::env::temp_dir().join(format!(
+            "attend-migrate-move-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let open_dir = base.join("@open");
+        fs::create_dir_all(&open_dir).unwrap();
+        fs::write(open_dir.join("a.signal"), "from|proj|/x|hi\n").unwrap();
+        fs::write(open_dir.join("b.signal"), "from|proj|/x|bye\n").unwrap();
+        // A non-signal file — must be left alone (still in
+        // @open/, until dissolve drops the dir).
+        fs::write(open_dir.join("notes.txt"), "scratch").unwrap();
+
+        // Pre-seed the `open` group in _groups.yaml so dissolve has
+        // something to remove. Written directly because `join` now
+        // rejects `"open"` as reserved — this simulates state left
+        // by a pre-ADR-124 binary.
+        fs::write(
+            base.join("_groups.yaml"),
+            "open:\n  pinned: false\n  members:\n    - sess-test\n",
+        )
+        .unwrap();
+        let mgr = Groups::new(&base, "sess-test");
+
+        let moved = migrate_legacy_open_group(&base, &mgr).unwrap();
+        assert_eq!(moved, 2);
+
+        let broadcast_dir = base.join("_broadcast");
+        assert!(broadcast_dir.join("a.signal").exists());
+        assert!(broadcast_dir.join("b.signal").exists());
+        assert!(!open_dir.exists(), "@open/ should be gone after dissolve");
+        // _groups.yaml should no longer mention `open`.
+        let yaml = fs::read_to_string(base.join("_groups.yaml")).unwrap_or_default();
+        assert!(!yaml.contains("open:"));
     }
 
     #[test]
