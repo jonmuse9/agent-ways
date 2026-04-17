@@ -31,6 +31,14 @@ pub struct Config {
     pub language: String,
     /// Disabled domains (e.g., ["ea", "itops"])
     pub disabled_domains: Vec<String>,
+    /// Parent-boost multiplier: a child way's effective embed_threshold is
+    /// multiplied by this value when any ancestor way has fired in the
+    /// session. Values <1.0 make children fire more easily once their parent
+    /// domain is active (progressive disclosure). 1.0 disables the boost.
+    pub parent_threshold_multiplier: f64,
+    /// Default cosine-similarity threshold used when a way's frontmatter
+    /// does not specify embed_threshold.
+    pub default_embed_threshold: f64,
 }
 
 impl Default for Config {
@@ -39,6 +47,8 @@ impl Default for Config {
             default_scope: "agent".to_string(),
             language: "auto".to_string(),
             disabled_domains: Vec::new(),
+            parent_threshold_multiplier: 0.8,
+            default_embed_threshold: 0.35,
         }
     }
 }
@@ -110,6 +120,12 @@ impl Config {
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect();
         }
+        if let Some(v) = doc.get("parent_threshold_multiplier").and_then(|v| v.as_f64()) {
+            self.parent_threshold_multiplier = v;
+        }
+        if let Some(v) = doc.get("default_embed_threshold").and_then(|v| v.as_f64()) {
+            self.default_embed_threshold = v;
+        }
     }
 
     /// Initialize user config at XDG path.
@@ -161,13 +177,16 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.language, "auto");
         assert_eq!(cfg.default_scope, "agent");
+        assert_eq!(cfg.parent_threshold_multiplier, 0.8);
+        assert_eq!(cfg.default_embed_threshold, 0.35);
     }
 
     #[test]
     fn apply_yaml_overrides() {
         let mut cfg = Config::default();
-        cfg.apply_yaml("language: ja");
+        cfg.apply_yaml("language: ja\nparent_threshold_multiplier: 0.7");
         assert_eq!(cfg.language, "ja");
+        assert_eq!(cfg.parent_threshold_multiplier, 0.7);
     }
 
     #[test]

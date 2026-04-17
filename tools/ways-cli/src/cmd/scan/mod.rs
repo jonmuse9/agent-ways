@@ -24,7 +24,11 @@ pub(crate) struct WayCandidate {
     pub files: Option<String>,
     pub description: String,
     pub vocabulary: String,
+    /// Context-threshold percentage (only meaningful for trigger: context-threshold).
     pub threshold: f64,
+    /// Per-way cosine-similarity threshold. When absent, uses config default.
+    /// Parent-boost (ADR-125) multiplies this at match time if any ancestor has fired.
+    pub embed_threshold: Option<f64>,
     pub scope: String,
     pub when_project: Option<String>,
     pub when_file_exists: Option<String>,
@@ -61,6 +65,7 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
             query,
             &way.pattern,
             &way.id,
+            effective_embed_threshold(way, session_id),
             embed_matches.as_deref(),
         );
 
@@ -115,6 +120,7 @@ pub fn task(
             query,
             &way.pattern,
             &way.id,
+            effective_embed_threshold(way, session_id),
             embed_matches.as_deref(),
         );
 
@@ -234,7 +240,7 @@ pub fn command(
 
         if match_score == 0.0 && !check.description.is_empty() && !check.vocabulary.is_empty() {
             if let Some(score) = semantic_matches.iter().find(|(id, _)| *id == check.id).map(|(_, s)| *s) {
-                if score > 0.0 {
+                if score >= effective_embed_threshold(check, session_id) {
                     match_score = score;
                 }
             }
@@ -315,7 +321,7 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
 
         if match_score == 0.0 && !check.description.is_empty() && !check.vocabulary.is_empty() {
             if let Some(score) = semantic_matches.iter().find(|(id, _)| *id == check.id).map(|(_, s)| *s) {
-                if score > 0.0 {
+                if score >= effective_embed_threshold(check, session_id) {
                     match_score = score;
                 }
             }
@@ -348,23 +354,53 @@ fn match_prompt(
     query: &str,
     pattern: &Option<String>,
     way_id: &str,
+    effective_embed_threshold: f64,
     embed: Option<&[(String, f64)]>,
 ) -> Option<String> {
-    // Channel 1: Regex pattern — always checked first
+    // Channel 1: Regex pattern — always checked first, always fires on match.
     if let Some(ref pat) = pattern {
         if regex_matches(pat, query) {
             return Some("keyword".to_string());
         }
     }
 
-    // Channel 2: Embedding — sole semantic retrieval tier (ADR-125)
+    // Channel 2: Embedding — sole semantic retrieval tier (ADR-125).
+    // way-embed returns all scores; we gate on effective_embed_threshold here
+    // (which already includes any parent-boost multiplier).
     if let Some(embed_results) = embed {
-        if embed_results.iter().any(|(id, _)| id == way_id) {
+        let best_score = embed_results
+            .iter()
+            .filter_map(|(id, s)| (id == way_id).then_some(*s))
+            .fold(f64::NEG_INFINITY, f64::max);
+        if best_score.is_finite() && best_score >= effective_embed_threshold {
             return Some("semantic:embedding".to_string());
         }
     }
 
     None
+}
+
+/// Effective embedding threshold for a way, accounting for parent-boost.
+///
+/// If any ancestor of the way (by directory-path hierarchy) has fired in
+/// the session, multiply the base threshold by `parent_threshold_multiplier`
+/// (default 0.8) — lowering the bar so children fire more easily once
+/// their parent domain is active. This is the session-subgraph mechanism
+/// referenced by ADR-125: as the subgraph grows, children within fired
+/// parents become more salient.
+fn effective_embed_threshold(way: &WayCandidate, session_id: &str) -> f64 {
+    let base = way
+        .embed_threshold
+        .unwrap_or_else(|| crate::config::global().default_embed_threshold);
+
+    let mut path = way.id.as_str();
+    while let Some(idx) = path.rfind('/') {
+        path = &path[..idx];
+        if session::way_is_shown(path, session_id) {
+            return base * crate::config::global().parent_threshold_multiplier;
+        }
+    }
+    base
 }
 
 fn regex_matches(pattern: &str, text: &str) -> bool {

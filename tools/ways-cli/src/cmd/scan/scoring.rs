@@ -62,6 +62,9 @@ pub(crate) fn batch_embed_score(query: &str) -> Option<Vec<(String, f64)>> {
 }
 
 /// Run way-embed match against a single corpus/model pair.
+///
+/// Passes `--threshold 0.0` so way-embed returns every score. Per-way
+/// thresholds and parent-boost (ADR-125) are applied in Rust at match time.
 fn run_embed_match(
     bin: &std::path::Path,
     corpus: &std::path::Path,
@@ -74,6 +77,7 @@ fn run_embed_match(
             "--corpus", corpus.to_str()?,
             "--model", model.to_str()?,
             "--query", query,
+            "--threshold", "0.0",
         ])
         .output()
         .ok()?;

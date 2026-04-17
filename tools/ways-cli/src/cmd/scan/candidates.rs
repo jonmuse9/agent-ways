@@ -131,6 +131,7 @@ fn parse_candidate(id: &str, path: &Path, content: &str) -> Option<WayCandidate>
         threshold: get_fm_field(&fm, "threshold")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.0),
+        embed_threshold: get_fm_field(&fm, "embed_threshold").and_then(|s| s.parse().ok()),
         // config::global() — future migration: ctx.config.default_scope
         scope: get_fm_field(&fm, "scope")
             .unwrap_or_else(|| crate::config::global().default_scope.clone()),
