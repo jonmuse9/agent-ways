@@ -8,7 +8,7 @@ pub mod init;
 pub mod language;
 pub mod lint;
 pub mod list;
-pub mod match_bm25;
+pub mod match_cmd;
 pub mod permissions;
 pub mod provenance;
 pub mod render;

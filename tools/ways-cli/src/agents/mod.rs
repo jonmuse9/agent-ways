@@ -117,20 +117,6 @@ pub fn get_active_languages() -> Vec<String> {
     codes
 }
 
-/// Look up the BM25 stemmer algorithm name for a language code.
-/// Returns None if the language is unsupported (no word boundaries, non-concatenative morphology).
-/// Returns Some(algorithm_name) if a Snowball stemmer exists.
-pub fn bm25_stemmer_for(lang_code: &str) -> Option<String> {
-    let parsed: serde_json::Value = serde_json::from_str(LANGUAGES_JSON).ok()?;
-    let languages = parsed.get("languages")?.as_object()?;
-    let entry = languages.get(lang_code)?;
-    let stemmer = entry.get("bm25_stemmer").and_then(|v| v.as_str())?;
-    if stemmer == "impossible" {
-        return None;
-    }
-    Some(stemmer.to_string())
-}
-
 /// Best-effort language name → code lookup (e.g., "Japanese" → "ja").
 /// Returns the input unchanged if it's already a short code.
 pub fn resolve_to_lang_code(lang: &str) -> String {
@@ -151,12 +137,3 @@ pub fn resolve_to_lang_code(lang: &str) -> String {
     "en".to_string()
 }
 
-/// Whether BM25 can work for the current resolved language.
-pub fn is_bm25_available() -> bool {
-    let resolved = resolve_language();
-    let lang_code = resolve_to_lang_code(&resolved);
-    if lang_code == "en" {
-        return true;
-    }
-    bm25_stemmer_for(&lang_code).is_some()
-}

@@ -141,9 +141,6 @@ enum Commands {
         /// Vocabulary — space-separated domain keywords users would say
         #[arg(long, short = 'V')]
         vocabulary: Option<String>,
-        /// Matching threshold — higher = stricter (default: 2.0, semantic threshold auto-tuned by `ways tune`)
-        #[arg(long, default_value = "2.0")]
-        threshold: f64,
         /// Scope: agent, subagent, teammate (comma-separated)
         #[arg(long, default_value = "agent")]
         scope: String,
@@ -488,7 +485,7 @@ fn main() -> Result<()> {
         Commands::Context { project, json } => cmd::context::run(project.as_deref(), json),
         Commands::Lint { path, schema, check, fix, global } => cmd::lint::run(path, schema, check, fix, global),
         Commands::Corpus { ways_dir, quiet, if_stale } => cmd::corpus::run(ways_dir, quiet, if_stale),
-        Commands::Match { query, corpus } => cmd::match_bm25::run(query, corpus),
+        Commands::Match { query, corpus } => cmd::match_cmd::run(query, corpus),
         Commands::Embed { query, corpus, model } => cmd::embed::run(query, corpus, model),
         Commands::Siblings { id, threshold, corpus, model } => {
             cmd::siblings::run(id, threshold, corpus, model)
@@ -497,8 +494,8 @@ fn main() -> Result<()> {
         Commands::Tree { path, jaccard } => cmd::tree::run(path, jaccard),
         Commands::Provenance { ways_dir } => cmd::provenance::run(ways_dir),
         Commands::Init { project } => cmd::init::run(project.as_deref()),
-        Commands::Template { path, description, vocabulary, threshold, scope, global } => {
-            cmd::template::run(path, description, vocabulary, threshold, scope, global)
+        Commands::Template { path, description, vocabulary, scope, global } => {
+            cmd::template::run(path, description, vocabulary, scope, global)
         }
         Commands::Language { filter, audit, json } => cmd::language::run(filter.as_deref(), audit, json),
         Commands::Stats { days, project, json, global } => {

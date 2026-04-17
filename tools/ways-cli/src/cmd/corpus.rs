@@ -283,8 +283,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
     let bin = match embed_bin {
         Some(b) => b,
         None => {
-            log("Tip: install the embedding engine for 98% matching accuracy (vs 91% BM25):");
-            log("  cd ~/.claude && make setup");
+            log("ERROR: embedding engine required (ADR-125). Run: cd ~/.claude && make setup");
             return Ok(());
         }
     };

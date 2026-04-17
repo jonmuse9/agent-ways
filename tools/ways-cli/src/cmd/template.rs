@@ -14,7 +14,6 @@ pub fn run(
     path: String,
     description: String,
     vocabulary: Option<String>,
-    threshold: f64,
     scope: String,
     global: bool,
 ) -> Result<()> {
@@ -53,7 +52,6 @@ pub fn run(
         r#"---
 description: {description}
 vocabulary: {vocab}
-threshold: {threshold}
 scope: {scope}
 ---
 <!-- epistemic: convention -->
@@ -83,7 +81,6 @@ This way activates when the user or agent is working with:
 "#,
         description = description,
         vocab = vocab,
-        threshold = threshold,
         scope = scope,
         title = way_name
             .chars()

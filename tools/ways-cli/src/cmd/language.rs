@@ -127,16 +127,7 @@ pub fn run(filter_lang: Option<&str>, audit: bool, json_output: bool) -> Result<
         if resolved != "en" && !multi_model {
             println!();
             println!("⚠  Output language is {resolved} but multilingual model is not installed.");
-            println!("   Matching will use BM25 fallback only. Run: make setup");
-        }
-
-        let lang_code = resolve_to_code(&resolved);
-        if let Some(stemmer) = agents::bm25_stemmer_for(&lang_code) {
-            if stemmer == "impossible" && !multi_model {
-                println!();
-                println!("⚠  {resolved} requires the embedding engine for matching (BM25 impossible).");
-                println!("   Without it, only keyword/regex patterns will fire.");
-            }
+            println!("   Non-English prompts will not match. Run: make setup");
         }
     }
 
@@ -230,10 +221,6 @@ fn scan_way_dirs(
     }
 
     Ok(())
-}
-
-fn resolve_to_code(lang: &str) -> String {
-    agents::resolve_to_lang_code(lang)
 }
 
 fn line_count(path: &Path) -> usize {
