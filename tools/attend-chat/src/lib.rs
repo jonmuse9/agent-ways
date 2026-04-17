@@ -11,5 +11,6 @@ pub mod groups;
 pub mod legend;
 pub mod sessions;
 pub mod signal;
+pub mod slash;
 pub mod text_layout;
 pub mod watcher;

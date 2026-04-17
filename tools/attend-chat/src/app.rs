@@ -24,6 +24,7 @@ use crate::legend::{
     group_legend_row, legend_row, parse_addressed, Addressed, Sigil,
 };
 use crate::signal::{cwd_dir, write_broadcast, write_signal, Signal};
+use crate::slash;
 
 #[derive(Default, Props)]
 pub struct AppProps {
@@ -90,6 +91,27 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                 KeyCode::Enter => {
                     let msg = input.read().trim_end().to_string();
                     if !msg.is_empty() {
+                        // Slash-command interceptor — stops `/help`,
+                        // `/whois`, etc. from leaking onto the signal
+                        // bus as plain messages. Runs before the
+                        // `@`/`#`/broadcast dispatch because slash
+                        // syntax is start-of-input only and unambiguous.
+                        if let Some((cmd, args)) = slash::parse(&msg) {
+                            match slash::dispatch(cmd, args) {
+                                slash::SlashOutcome::Ok(s) => {
+                                    status.set(s);
+                                    input.set(String::new());
+                                    cursor.set(0);
+                                }
+                                slash::SlashOutcome::Err(s) => {
+                                    // Leave the buffer intact so the
+                                    // user can edit + retry without
+                                    // retyping.
+                                    status.set(s);
+                                }
+                            }
+                            return;
+                        }
                         let caps = TermCaps::detect();
                         let seeds = discover_sessions();
                         let agents = known_identities(&signals.read(), &seeds, caps);
@@ -133,6 +155,19 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                     let buf = input.read().clone();
                     let pos = cursor.get();
                     if pos != buf.chars().count() {
+                        return;
+                    }
+                    // Slash completion runs first — its grammar is
+                    // start-of-input-only, so when it matches, the
+                    // `@`/`#` logic below never applies. Silent
+                    // fall-through on no match so a stale `/` with
+                    // no registry hit doesn't trap the user.
+                    if let Some(partial) = slash::find_slash_partial(&buf) {
+                        if let Some(hit) = slash::best_slash_completion(partial.partial) {
+                            let (next, new_cursor) = slash::apply_slash_completion(hit.name);
+                            input.set(next);
+                            cursor.set(new_cursor);
+                        }
                         return;
                     }
                     let caps = TermCaps::detect();
