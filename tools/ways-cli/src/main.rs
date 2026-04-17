@@ -235,7 +235,7 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigCommand,
     },
-    /// Audit locale alias fidelity (ADR-125 — flags poor translations to re-author)
+    /// Audit locale alias fidelity + discrimination (ADR-125 — flags stubs to re-author)
     Tune {
         /// Ways root directory (default: ~/.claude/hooks/ways)
         #[arg(long)]
@@ -243,9 +243,14 @@ enum Commands {
         /// Filter to ways matching this substring (e.g., "security", "ea/")
         #[arg(long)]
         way: Option<String>,
-        /// Minimum cross-lingual cosine to accept (entries below are flagged, default: 0.60)
+        /// Minimum cross-lingual cosine to accept for fidelity (default: 0.60)
         #[arg(long, default_value = "0.60")]
         fidelity_threshold: f64,
+        /// Minimum discrimination gap (min_peer − top_confuser.score);
+        /// entries below this are flagged as being outranked by another way.
+        /// Default 0.03 — small positive margin required.
+        #[arg(long, default_value = "0.03")]
+        discrimination_threshold: f64,
         /// Machine-readable JSON output
         #[arg(long)]
         json: bool,
@@ -557,8 +562,8 @@ fn main() -> Result<()> {
             }
         },
         Commands::Suggest { file, min_freq } => cmd::suggest::run(file, min_freq),
-        Commands::Tune { ways_dir, way, fidelity_threshold, json } => {
-            cmd::tune::run(ways_dir, way, fidelity_threshold, json)
+        Commands::Tune { ways_dir, way, fidelity_threshold, discrimination_threshold, json } => {
+            cmd::tune::run(ways_dir, way, fidelity_threshold, discrimination_threshold, json)
         }
         Commands::TuneCurves { apply, min_fires, project, way } => {
             cmd::tune_curves::run(apply, min_fires, project, way)

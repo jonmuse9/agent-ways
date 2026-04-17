@@ -1,13 +1,20 @@
-//! Locale alias fidelity audit (ADR-125).
+//! Locale alias fidelity + discrimination audit (ADR-125).
 //!
-//! For each way with locale stubs, measure how well each locale alias
-//! sits in the same embedding-space neighborhood as its peer aliases.
-//! Low fidelity → stub is a poor translation of the same intent; fix
-//! by re-authoring, not by adjusting thresholds.
+//! Two measurements per locale entry, run on the same query (the locale's
+//! own description + vocabulary):
 //!
-//! Fidelity per (way, lang) = min cosine(this_alias, peer_alias) across
-//! all peer locale stubs on the same way. The minimum is the tightest
-//! cross-lingual positive: if any peer disagrees, fidelity drops.
+//! **Fidelity** — min cosine against peer aliases on the *same* way.
+//! Tightest cross-lingual positive; if a peer disagrees, fidelity drops.
+//! Low fidelity → stub is a poor translation of the same intent; fix by
+//! re-authoring.
+//!
+//! **Discrimination** — best score against any *other* way's alias,
+//! minus the stub's own self-match. If another way scores higher than
+//! this stub's peers, the stub is being outranked by a confuser (the
+//! "mocking beats commits in ru" failure mode). Fix by sharpening
+//! vocabulary or by splitting/merging neighboring ways.
+//!
+//! Neither measurement writes thresholds; both inform re-authoring.
 //!
 //! Parallelized: one way per thread, n_cores - 4 workers.
 
@@ -30,12 +37,24 @@ struct FidelityResult {
     mean_peer: f64,
     /// How many peer aliases scored
     peer_count: usize,
+    /// Best cosine against any alias on a *different* way (the top confuser)
+    top_confuser: Option<Confuser>,
+    /// Gap = min_peer - top_confuser.score. Negative means a confuser outranks
+    /// the weakest same-way peer (the locale stub is being dominated).
+    discrimination_gap: f64,
+}
+
+#[derive(Clone)]
+struct Confuser {
+    way_id: String,
+    score: f64,
 }
 
 pub fn run(
     ways_dir: Option<String>,
     way_filter: Option<String>,
     fidelity_threshold: f64,
+    discrimination_threshold: f64,
     json_output: bool,
 ) -> Result<()> {
     let global_dir = ways_dir
@@ -128,9 +147,9 @@ pub fn run(
     all_results.sort_by(|a, b| a.way_id.cmp(&b.way_id).then(a.lang.cmp(&b.lang)));
 
     if json_output {
-        emit_json(&all_results, fidelity_threshold)?;
+        emit_json(&all_results, fidelity_threshold, discrimination_threshold)?;
     } else {
-        emit_report(&all_results, fidelity_threshold);
+        emit_report(&all_results, fidelity_threshold, discrimination_threshold);
     }
 
     Ok(())
@@ -213,8 +232,11 @@ fn measure_way(
             continue;
         }
 
-        // Collect scores of peer aliases on the same way (excluding self).
+        // Collect same-way peer scores (excluding self-row at ~1.0) and
+        // best non-self score (the top confuser — another way's alias that
+        // competes with this stub in embedding space).
         let mut peer_scores: Vec<f64> = Vec::new();
+        let mut top_confuser: Option<Confuser> = None;
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let mut parts = line.split('\t');
             let id = match parts.next() {
@@ -225,15 +247,15 @@ fn measure_way(
                 Some(s) => s,
                 None => continue,
             };
-            if id != way_id {
-                continue;
+
+            if id == way_id {
+                if score > 0.999 {
+                    continue; // self-match
+                }
+                peer_scores.push(score);
+            } else if top_confuser.as_ref().is_none_or(|c| score > c.score) {
+                top_confuser = Some(Confuser { way_id: id.to_string(), score });
             }
-            // This is a peer alias entry on the same way.
-            // Skip self-match: the query embedding is ~1.0 against its own corpus row.
-            if score > 0.999 {
-                continue;
-            }
-            peer_scores.push(score);
         }
 
         let (min_peer, mean_peer) = if peer_scores.is_empty() {
@@ -244,59 +266,84 @@ fn measure_way(
             (min, mean)
         };
 
+        let discrimination_gap = match (&top_confuser, peer_scores.is_empty()) {
+            (Some(c), false) => min_peer - c.score,
+            _ => f64::NAN,
+        };
+
         out.push(FidelityResult {
             way_id: way_id.to_string(),
             lang: entry.lang.clone(),
             min_peer,
             mean_peer,
             peer_count: peer_scores.len(),
+            top_confuser,
+            discrimination_gap,
         });
     }
 
     Ok(out)
 }
 
-fn emit_report(results: &[FidelityResult], fidelity_threshold: f64) {
+fn emit_report(results: &[FidelityResult], fidelity_threshold: f64, discrimination_threshold: f64) {
     use agent_fmt::{Align, Table};
 
-    let low: Vec<&FidelityResult> = results
+    // Entries to flag: low fidelity OR low/negative discrimination.
+    let flagged: Vec<&FidelityResult> = results
         .iter()
-        .filter(|r| r.peer_count > 0 && r.min_peer < fidelity_threshold)
+        .filter(|r| {
+            r.peer_count > 0
+                && (r.min_peer < fidelity_threshold
+                    || (!r.discrimination_gap.is_nan()
+                        && r.discrimination_gap < discrimination_threshold))
+        })
         .collect();
 
-    println!("Locale Alias Fidelity");
-    println!("=====================");
+    println!("Locale Alias Fidelity + Discrimination");
+    println!("======================================");
     println!();
 
     let total = results.iter().filter(|r| r.peer_count > 0).count();
     println!(
-        "{}/{} entries below fidelity threshold {:.2}",
-        low.len(),
+        "{}/{} entries flagged (fidelity < {:.2} or discrimination gap < {:.2})",
+        flagged.len(),
         total,
-        fidelity_threshold
+        fidelity_threshold,
+        discrimination_threshold
     );
     println!();
-    println!("Fidelity = min cosine against peer aliases on the same way (multilingual embedding).");
-    println!("Low fidelity means the locale stub embeds far from its peers — re-author the stub.");
+    println!("Fidelity     = min cosine vs peer aliases on same way (how well translations agree).");
+    println!("Discrimination = min_peer − top_confuser.score (how clearly this stub outranks other ways).");
+    println!("A negative discrimination gap means another way outranks this locale's own peers.");
     println!();
 
-    if low.is_empty() {
-        println!("All aliases clear threshold. No re-authoring needed.");
+    if flagged.is_empty() {
+        println!("All aliases pass both checks. No re-authoring needed.");
         return;
     }
 
-    let mut t = Table::new(&["Way", "Lang", "Min peer", "Mean peer", "Peers"]);
+    let mut t = Table::new(&["Way", "Lang", "MinPeer", "MeanPeer", "Gap", "Top confuser"]);
     t.align(2, Align::Right);
     t.align(3, Align::Right);
     t.align(4, Align::Right);
 
-    for r in &low {
+    for r in &flagged {
+        let gap_str = if r.discrimination_gap.is_nan() {
+            "—".to_string()
+        } else {
+            format!("{:+.4}", r.discrimination_gap)
+        };
+        let confuser_str = match &r.top_confuser {
+            Some(c) => format!("{} ({:.4})", c.way_id, c.score),
+            None => "—".to_string(),
+        };
         t.add_owned(vec![
             r.way_id.clone(),
             r.lang.clone(),
             format!("{:.4}", r.min_peer),
             format!("{:.4}", r.mean_peer),
-            format!("{}", r.peer_count),
+            gap_str,
+            confuser_str,
         ]);
     }
 
@@ -304,22 +351,37 @@ fn emit_report(results: &[FidelityResult], fidelity_threshold: f64) {
     println!();
 }
 
-fn emit_json(results: &[FidelityResult], fidelity_threshold: f64) -> Result<()> {
+fn emit_json(
+    results: &[FidelityResult],
+    fidelity_threshold: f64,
+    discrimination_threshold: f64,
+) -> Result<()> {
     let rows: Vec<serde_json::Value> = results
         .iter()
         .map(|r| {
+            let below_fidelity = r.peer_count > 0 && r.min_peer < fidelity_threshold;
+            let below_discrimination = !r.discrimination_gap.is_nan()
+                && r.discrimination_gap < discrimination_threshold;
             serde_json::json!({
                 "way": r.way_id,
                 "lang": r.lang,
                 "min_peer": nan_to_null(r.min_peer),
                 "mean_peer": nan_to_null(r.mean_peer),
                 "peer_count": r.peer_count,
-                "below_threshold": r.peer_count > 0 && r.min_peer < fidelity_threshold,
+                "top_confuser": r.top_confuser.as_ref().map(|c| serde_json::json!({
+                    "way": c.way_id,
+                    "score": c.score,
+                })),
+                "discrimination_gap": nan_to_null(r.discrimination_gap),
+                "below_fidelity": below_fidelity,
+                "below_discrimination": below_discrimination,
+                "flagged": below_fidelity || below_discrimination,
             })
         })
         .collect();
     let out = serde_json::json!({
         "fidelity_threshold": fidelity_threshold,
+        "discrimination_threshold": discrimination_threshold,
         "entries": rows,
     });
     println!("{}", serde_json::to_string_pretty(&out)?);
