@@ -14,9 +14,7 @@ use std::path::PathBuf;
 use crate::session;
 
 use candidates::{check_when, collect_candidates, collect_checks};
-use scoring::{
-    batch_bm25_score, capture_show_check, capture_show_way, default_project,
-};
+use scoring::{capture_show_check, capture_show_way, default_project};
 
 pub(crate) struct WayCandidate {
     pub id: String,
@@ -49,7 +47,6 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
     let candidates = collect_candidates(&project_dir);
 
     let embed_matches = batch_embed_score(query);
-    let bm25_matches = bm25_fallback(query, embed_matches.is_some());
 
     for way in &candidates {
         if !session::scope_matches(&way.scope, &scope) {
@@ -59,16 +56,11 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
             continue;
         }
 
-        // Parent-aware threshold lowering
-        let effective_threshold = parent_threshold(&way.id, way.threshold, session_id);
-
         // Additive matching: pattern OR semantic
         let channel = match_prompt(
             query,
             &way.pattern,
             &way.id,
-            effective_threshold,
-            &bm25_matches,
             embed_matches.as_deref(),
         );
 
@@ -96,7 +88,6 @@ pub fn task(
     let candidates = collect_candidates(&project_dir);
 
     let embed_matches = batch_embed_score(query);
-    let bm25_matches = bm25_fallback(query, embed_matches.is_some());
 
     let mut matched: Vec<(String, String)> = Vec::new(); // (way_id, channel)
 
@@ -124,8 +115,6 @@ pub fn task(
             query,
             &way.pattern,
             &way.id,
-            way.threshold,
-            &bm25_matches,
             embed_matches.as_deref(),
         );
 
@@ -225,8 +214,7 @@ pub fn command(
     );
 
     let embed_check_matches = batch_embed_score(&query_for_checks);
-    let bm25_check_matches = bm25_fallback(&query_for_checks, embed_check_matches.is_some());
-    let semantic_matches = embed_check_matches.as_deref().unwrap_or(&bm25_check_matches);
+    let semantic_matches: &[(String, f64)] = embed_check_matches.as_deref().unwrap_or(&[]);
 
     for check in &checks {
         if !session::scope_matches(&check.scope, &scope) {
@@ -307,8 +295,7 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
 
     let checks = collect_checks(&project_dir);
     let embed_matches = batch_embed_score(filepath);
-    let bm25_matches = bm25_fallback(filepath, embed_matches.is_some());
-    let semantic_matches = embed_matches.as_deref().unwrap_or(&bm25_matches);
+    let semantic_matches: &[(String, f64)] = embed_matches.as_deref().unwrap_or(&[]);
 
     for check in &checks {
         if !session::scope_matches(&check.scope, &scope) {
@@ -361,8 +348,6 @@ fn match_prompt(
     query: &str,
     pattern: &Option<String>,
     way_id: &str,
-    threshold: f64,
-    bm25: &[(String, f64)],
     embed: Option<&[(String, f64)]>,
 ) -> Option<String> {
     // Channel 1: Regex pattern — always checked first
@@ -372,36 +357,14 @@ fn match_prompt(
         }
     }
 
-    // Channel 2: Embedding — exclusive when engine is available.
-    // Some(matches) means engine ran (even if empty) — BM25 is suppressed.
-    // None means engine is unavailable — fall through to BM25.
+    // Channel 2: Embedding — sole semantic retrieval tier (ADR-125)
     if let Some(embed_results) = embed {
         if embed_results.iter().any(|(id, _)| id == way_id) {
             return Some("semantic:embedding".to_string());
         }
-        return None;
-    }
-
-    // Channel 3: BM25 — only when embedding engine is unavailable
-    if let Some((_, score)) = bm25.iter().find(|(id, _)| id == way_id) {
-        if *score >= threshold {
-            return Some("semantic:bm25".to_string());
-        }
     }
 
     None
-}
-
-fn parent_threshold(way_id: &str, threshold: f64, session_id: &str) -> f64 {
-    let mut path = way_id.to_string();
-    while let Some(idx) = path.rfind('/') {
-        path = path[..idx].to_string();
-        if session::way_is_shown(&path, session_id) {
-            // config::global() — future migration: ctx.config.parent_threshold_multiplier
-            return threshold * crate::config::global().parent_threshold_multiplier;
-        }
-    }
-    threshold
 }
 
 fn regex_matches(pattern: &str, text: &str) -> bool {
@@ -611,13 +574,4 @@ fn strip_frontmatter(content: &str) -> String {
 
 fn capture_show_core(session_id: &str) -> String {
     crate::cmd::show::core(session_id).unwrap_or_default()
-}
-
-/// BM25 fallback: returns scores when embedding is unavailable and language supports BM25.
-fn bm25_fallback(query: &str, embed_available: bool) -> Vec<(String, f64)> {
-    if embed_available || !crate::agents::is_bm25_available() {
-        Vec::new()
-    } else {
-        batch_bm25_score(query)
-    }
 }

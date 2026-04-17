@@ -1,7 +1,23 @@
 use anyhow::{Context, Result};
+use rust_stemmers::{Algorithm, Stemmer};
 use std::collections::HashMap;
 
-use crate::bm25;
+// Minimal stopword list for vocabulary suggestions (authoring-time only,
+// not part of the matcher — ADR-125 made embedding the sole retrieval tier).
+const STOPWORDS: &[&str] = &[
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "this", "that",
+    "these", "those", "it", "its", "what", "how", "why", "when", "where",
+    "who", "let", "lets", "just", "to", "for", "of", "in", "on", "at",
+    "by", "and", "or", "but", "not", "with", "from", "into", "about",
+    "than", "then", "so", "if", "up", "out", "no", "yes", "all", "some",
+    "any", "each", "my", "your", "our", "me", "we", "you", "i",
+];
+
+fn tokenize(text: &str, stemmer: &Stemmer) -> Vec<String> {
+    tokenize_pairs(text, stemmer).into_iter().map(|(s, _)| s).collect()
+}
 
 pub fn run(file: String, min_freq: u32) -> Result<()> {
     let content = std::fs::read_to_string(&file)
@@ -10,7 +26,7 @@ pub fn run(file: String, min_freq: u32) -> Result<()> {
     let (description, vocabulary, body) = parse_way_file(&content)
         .with_context(|| format!("parsing {file}"))?;
 
-    let stemmer = bm25::new_stemmer();
+    let stemmer = Stemmer::create(Algorithm::English);
 
     // Tokenize body with original forms preserved
     let body_pairs = tokenize_pairs(&body, &stemmer);
@@ -29,7 +45,7 @@ pub fn run(file: String, min_freq: u32) -> Result<()> {
     // Mark body terms covered by description + vocabulary
     let covered_text = format!("{description} {vocabulary}");
     let covered_stems: std::collections::HashSet<String> =
-        bm25::tokenize(&covered_text, &stemmer).into_iter().collect();
+        tokenize(&covered_text, &stemmer).into_iter().collect();
 
     // Find vocabulary terms not appearing in body
     let vocab_words: Vec<&str> = vocabulary.split_whitespace().collect();
@@ -122,7 +138,7 @@ fn parse_way_file(content: &str) -> Option<(String, String, String)> {
 }
 
 /// Tokenize text preserving original form alongside stem.
-fn tokenize_pairs(text: &str, stemmer: &rust_stemmers::Stemmer) -> Vec<(String, String)> {
+fn tokenize_pairs(text: &str, stemmer: &Stemmer) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     let mut current = String::new();
 
@@ -130,7 +146,7 @@ fn tokenize_pairs(text: &str, stemmer: &rust_stemmers::Stemmer) -> Vec<(String, 
         if ch.is_alphabetic() {
             current.extend(ch.to_lowercase());
         } else if !current.is_empty() {
-            if current.len() >= 3 && !bm25::STOPWORDS.contains(&current.as_str()) {
+            if current.len() >= 3 && !STOPWORDS.contains(&current.as_str()) {
                 let stemmed = stemmer.stem(&current).to_string();
                 if stemmed.len() >= 3 {
                     pairs.push((stemmed, current.clone()));
@@ -139,7 +155,7 @@ fn tokenize_pairs(text: &str, stemmer: &rust_stemmers::Stemmer) -> Vec<(String, 
             current.clear();
         }
     }
-    if current.len() >= 3 && !bm25::STOPWORDS.contains(&current.as_str()) {
+    if current.len() >= 3 && !STOPWORDS.contains(&current.as_str()) {
         let stemmed = stemmer.stem(&current).to_string();
         if stemmed.len() >= 3 {
             pairs.push((stemmed, current));

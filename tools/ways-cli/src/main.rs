@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 pub mod agents;
-mod bm25;
 mod cmd;
 pub mod config;
 mod frontmatter;
@@ -57,7 +56,7 @@ enum Commands {
         #[arg(long)]
         if_stale: bool,
     },
-    /// Score a query against ways (semantic cosine similarity, BM25 fallback)
+    /// Score a query against ways (embedding cosine similarity, ADR-125)
     Match {
         /// The query string to match
         query: String,
@@ -378,7 +377,7 @@ enum ShowCommand {
         /// Session ID
         #[arg(long)]
         session: String,
-        /// Trigger channel (keyword, semantic:embedding, semantic:bm25)
+        /// Trigger channel (keyword, semantic:embedding)
         #[arg(long, default_value = "unknown")]
         trigger: String,
     },
