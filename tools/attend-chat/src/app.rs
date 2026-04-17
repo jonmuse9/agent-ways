@@ -31,6 +31,17 @@ pub struct AppProps {
     pub receiver: Option<Receiver<Signal>>,
 }
 
+/// Which registry the helper row (below the input box) is showing
+/// right now. Derived once per render from the input buffer and the
+/// trailing-mention context. The payload is the current partial —
+/// what the user has typed after the sigil — used to underline
+/// matching chips for Tab-target affordance.
+enum HelperMode {
+    Agents(Option<String>),
+    Groups(Option<String>),
+    Slash(Option<String>),
+}
+
 /// Upper bound on the in-memory message buffer. At typical chat rates
 /// this is unreachable; the cap only matters for runaway conditions
 /// (overnight runs, a misbehaving peer, a loop). When we hit it, drop
@@ -320,6 +331,22 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
         .as_ref()
         .filter(|m| m.sigil == Sigil::Group)
         .map(|m| m.partial.to_string());
+    // Helper-row mode: the row below the input switches its content
+    // based on what the user is typing. Slash wins if the buffer
+    // starts with `/` (slash grammar is start-of-input-only and
+    // unambiguous); otherwise the trailing mention's sigil decides
+    // between groups and agents; default is agents so the "who's
+    // around" glance stays available when no sigil is active.
+    let slash_partial: Option<String> = slash::find_slash_partial(&input_snapshot)
+        .map(|p| p.partial.to_string());
+    let helper_mode = if input_snapshot.starts_with('/') {
+        HelperMode::Slash(slash_partial.clone())
+    } else {
+        match mention_ctx.as_ref().map(|m| m.sigil) {
+            Some(Sigil::Group) => HelperMode::Groups(group_partial.clone()),
+            _ => HelperMode::Agents(agent_partial.clone()),
+        }
+    };
     let rows: Vec<_> = signals
         .read()
         .iter()
@@ -447,7 +474,11 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                     )
                 }
             }
-            #(legend_row(&known, agent_partial.as_deref()))
+            #(match &helper_mode {
+                HelperMode::Agents(p) => legend_row(&known, p.as_deref()),
+                HelperMode::Groups(p) => group_legend_row(&groups_known, p.as_deref()),
+                HelperMode::Slash(p) => slash::slash_legend_row(p.as_deref()),
+            })
             View(height: 1, padding_left: 1) {
                 Text(color: Color::DarkGrey, content: status.to_string(), wrap: TextWrap::NoWrap)
             }

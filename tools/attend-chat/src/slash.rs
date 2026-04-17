@@ -23,6 +23,8 @@
 //! command lands, flip its [`Status`] to [`Status::Implemented`] and
 //! add a handler arm in [`dispatch`].
 
+use iocraft::prelude::*;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     /// Wired into [`dispatch`]. Runs when invoked.
@@ -160,6 +162,57 @@ pub fn dispatch(name: &str, _args: &str) -> SlashOutcome {
             cmd.name, cmd.description
         )),
     }
+}
+
+/// Render the slash-command legend row — one chip per registered
+/// command. Implemented entries render in a full-weight foreground
+/// color; planned entries dim so the roadmap is visible without
+/// looking equally available. Matching names underline when the
+/// caller passes the current partial (Tab-target affordance, same
+/// idiom as the agent / group legends).
+pub fn slash_legend_row(current_partial: Option<&str>) -> Vec<AnyElement<'static>> {
+    let lc_partial = current_partial.map(|p| p.to_ascii_lowercase());
+    let chips: Vec<AnyElement<'static>> = REGISTRY
+        .iter()
+        .map(|cmd| {
+            let matches = lc_partial
+                .as_ref()
+                .map(|p| !p.is_empty() && cmd.name.to_ascii_lowercase().starts_with(p))
+                .unwrap_or(false);
+            // Slash commands aren't identities, so they don't carry
+            // palette hashing — a uniform Cyan for ready, DarkGrey
+            // for planned keeps the bar readable without adding new
+            // visual dimensions the user has to learn.
+            let color = match cmd.status {
+                Status::Implemented => Color::Cyan,
+                Status::Planned => Color::DarkGrey,
+            };
+            let weight = if matches { Weight::Bold } else { Weight::Normal };
+            let decoration = if matches {
+                TextDecoration::Underline
+            } else {
+                TextDecoration::None
+            };
+            let content = format!("/{} ", cmd.name);
+            element! {
+                Text(color, weight, decoration, content, wrap: TextWrap::NoWrap)
+            }
+            .into_any()
+        })
+        .collect();
+    vec![element! {
+        View(
+            flex_direction: FlexDirection::Row,
+            padding_left: 1,
+            padding_right: 1,
+            height: 1u32,
+            flex_shrink: 0.0,
+            overflow: Overflow::Hidden,
+        ) {
+            #(chips)
+        }
+    }
+    .into_any()]
 }
 
 fn help_message() -> String {
