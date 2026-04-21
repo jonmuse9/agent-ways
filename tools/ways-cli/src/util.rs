@@ -4,16 +4,38 @@ use std::path::{Path, PathBuf};
 
 /// XDG cache directory ($XDG_CACHE_HOME or ~/.cache).
 pub fn xdg_cache_dir() -> PathBuf {
-    std::env::var("XDG_CACHE_HOME")
+    let p = std::env::var("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home_dir().join(".cache"))
+        .unwrap_or_else(|_| home_dir().join(".cache"));
+    normalize_path_sep(&p)
 }
 
-/// Home directory from $HOME, falling back to /tmp.
+/// Normalize path separators to the OS-native separator.
+///
+/// On Windows, PathBuf::join stores forward slashes verbatim when the join
+/// argument contains them (e.g. join("foo/bar") stores "foo/bar" not "foo\bar").
+/// Subprocesses receiving mixed-separator paths can fail (e.g. on atomic rename).
+/// Rebuilding via components() normalizes to the OS separator on all platforms.
+pub fn normalize_path_sep(path: &Path) -> PathBuf {
+    path.components().collect()
+}
+
+/// Home directory from $HOME (or USERPROFILE on Windows), falling back to /tmp.
+///
+/// On Windows, $HOME is often set by Git Bash to a Unix-style path like /c/Users/name,
+/// which Rust's PathBuf treats as root-relative (\c\Users\name) rather than C:\Users\name.
+/// USERPROFILE is always the correct Windows absolute path, so we prefer it on Windows.
 pub fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+    let p = {
+        #[cfg(windows)]
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            return normalize_path_sep(&PathBuf::from(profile));
+        }
+        std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"))
+    };
+    normalize_path_sep(&p)
 }
 
 /// Detect the project root by walking up from cwd looking for .claude/settings.json or CLAUDE.md.

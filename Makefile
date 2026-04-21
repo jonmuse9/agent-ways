@@ -6,12 +6,29 @@
 # Update:        make update
 
 .DEFAULT_GOAL := help
-.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild lint test test-unit test-sim test-lang test-locales test-multilingual release
+.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild hooks-install lint test test-unit test-sim test-lang test-locales test-multilingual release
+
+ifeq ($(OS),Windows_NT)
+    SHELL := C:/Program Files/Git/usr/bin/bash.exe
+    .SHELLFLAGS := -c
+    LINK := cp -f
+    EXE := .exe
+    # Copy hooks/ways contents into ~/.claude/hooks/ways/ (no symlinks without Developer Mode)
+    INSTALL_HOOKS = mkdir -p "$(HOME)/.claude/hooks/ways" && cp -r "$(CURDIR)/hooks/ways/." "$(HOME)/.claude/hooks/ways/"
+else
+    SHELL := bash
+    LINK := ln -sf
+    EXE :=
+    # Symlink hooks/ways into ~/.claude/hooks/ways
+    INSTALL_HOOKS = mkdir -p "$(HOME)/.claude/hooks" && ln -sf "$(CURDIR)/hooks/ways" "$(HOME)/.claude/hooks/ways"
+endif
 
 WAYS_BIN = bin/ways
 ATTEND_BIN = bin/attend
 ATTEND_CHAT_BIN = bin/attend-chat
+WAY_EMBED_BIN = bin/way-embed
 XDG_BIN = $(or $(XDG_BIN_HOME),$(HOME)/.local/bin)
+CLAUDE_BIN = $(HOME)/.claude/bin
 
 # --- Primary targets ---
 
@@ -49,21 +66,28 @@ setup: ways attend attend-chat
 	@$(WAYS_BIN) corpus --quiet
 
 # Full install: build, setup, symlink to PATH.
-install: hooks-executable setup
-	@mkdir -p $(XDG_BIN)
-	@ln -sf $(CURDIR)/$(WAYS_BIN) $(XDG_BIN)/ways
-	@ln -sf $(CURDIR)/$(ATTEND_BIN) $(XDG_BIN)/attend
-	@ln -sf $(CURDIR)/$(ATTEND_CHAT_BIN) $(XDG_BIN)/attend-chat
+install: hooks-executable setup hooks-install
+	@mkdir -p "$(XDG_BIN)"
+	@$(LINK) "$(CURDIR)/$(WAYS_BIN)" "$(XDG_BIN)/ways"
+	@$(LINK) "$(CURDIR)/$(ATTEND_BIN)" "$(XDG_BIN)/attend"
+	@$(LINK) "$(CURDIR)/$(ATTEND_CHAT_BIN)" "$(XDG_BIN)/attend-chat"
+	@mkdir -p "$(CLAUDE_BIN)"
+	@$(LINK) "$(CURDIR)/$(WAY_EMBED_BIN)" "$(CLAUDE_BIN)/way-embed"
 	@echo ""
 	@echo "Install complete."
 	@echo "  ways binary:        $(XDG_BIN)/ways → $(CURDIR)/$(WAYS_BIN)"
 	@echo "  attend binary:      $(XDG_BIN)/attend → $(CURDIR)/$(ATTEND_BIN)"
 	@echo "  attend-chat binary: $(XDG_BIN)/attend-chat → $(CURDIR)/$(ATTEND_CHAT_BIN)"
+	@echo "  way-embed binary:   $(CLAUDE_BIN)/way-embed → $(CURDIR)/$(WAY_EMBED_BIN)"
 	@echo "  Restart Claude Code for ways to take effect."
+
+hooks-install:
+	@$(INSTALL_HOOKS)
+	@echo "Hooks installed at $(HOME)/.claude/hooks/ways"
 
 # Remove symlink from PATH.
 uninstall:
-	@rm -f $(XDG_BIN)/ways $(XDG_BIN)/attend $(XDG_BIN)/attend-chat
+	@rm -f "$(XDG_BIN)/ways" "$(XDG_BIN)/attend" "$(XDG_BIN)/attend-chat"
 	@echo "Removed $(XDG_BIN)/ways $(XDG_BIN)/attend $(XDG_BIN)/attend-chat"
 
 # Pull upstream and re-setup.
@@ -83,7 +107,7 @@ ways:
 		echo "No pre-built binary, building from source..."; \
 		cargo build --release --manifest-path tools/Cargo.toml -p ways; \
 		mkdir -p bin; \
-		ln -sf $(CURDIR)/tools/target/release/ways $(WAYS_BIN); \
+		$(LINK) "$(CURDIR)/tools/target/release/ways$(EXE)" $(WAYS_BIN); \
 		echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: No pre-built binary and cargo not found."; \
@@ -99,7 +123,7 @@ ways-rebuild:
 	fi
 	cargo build --release --manifest-path tools/Cargo.toml -p ways
 	@mkdir -p bin
-	@ln -sf $(CURDIR)/tools/target/release/ways $(WAYS_BIN)
+	@$(LINK) "$(CURDIR)/tools/target/release/ways$(EXE)" $(WAYS_BIN)
 	@echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"
 
 # Build attend binary from workspace.
@@ -110,7 +134,7 @@ attend:
 		echo "Building attend..."; \
 		cargo build --release --manifest-path tools/Cargo.toml -p attend; \
 		mkdir -p bin; \
-		ln -sf $(CURDIR)/tools/target/release/attend $(ATTEND_BIN); \
+		$(LINK) "$(CURDIR)/tools/target/release/attend$(EXE)" $(ATTEND_BIN); \
 		echo "Built: $(ATTEND_BIN) ($$(ls -lh $(ATTEND_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: cargo not found. Install Rust: https://rustup.rs/"; \
@@ -125,7 +149,7 @@ attend-rebuild:
 	fi
 	cargo build --release --manifest-path tools/Cargo.toml -p attend
 	@mkdir -p bin
-	@ln -sf $(CURDIR)/tools/target/release/attend $(ATTEND_BIN)
+	@$(LINK) "$(CURDIR)/tools/target/release/attend$(EXE)" $(ATTEND_BIN)
 	@echo "Built: $(ATTEND_BIN) ($$(ls -lh $(ATTEND_BIN) | awk '{print $$5}'))"
 
 # Build attend-chat binary from workspace.
@@ -136,7 +160,7 @@ attend-chat:
 		echo "Building attend-chat..."; \
 		cargo build --release --manifest-path tools/Cargo.toml -p attend-chat; \
 		mkdir -p bin; \
-		ln -sf $(CURDIR)/tools/target/release/attend-chat $(ATTEND_CHAT_BIN); \
+		$(LINK) "$(CURDIR)/tools/target/release/attend-chat$(EXE)" $(ATTEND_CHAT_BIN); \
 		echo "Built: $(ATTEND_CHAT_BIN) ($$(ls -lh $(ATTEND_CHAT_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: cargo not found. Install Rust: https://rustup.rs/"; \
@@ -151,7 +175,7 @@ attend-chat-rebuild:
 	fi
 	cargo build --release --manifest-path tools/Cargo.toml -p attend-chat
 	@mkdir -p bin
-	@ln -sf $(CURDIR)/tools/target/release/attend-chat $(ATTEND_CHAT_BIN)
+	@$(LINK) "$(CURDIR)/tools/target/release/attend-chat$(EXE)" $(ATTEND_CHAT_BIN)
 	@echo "Built: $(ATTEND_CHAT_BIN) ($$(ls -lh $(ATTEND_CHAT_BIN) | awk '{print $$5}'))"
 
 # --- Test ---

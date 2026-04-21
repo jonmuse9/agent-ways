@@ -12,7 +12,7 @@ pub fn run(ways_dir: Option<String>, quiet: bool, if_stale: bool) -> Result<()> 
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir().join(".claude/hooks/ways"));
 
-    let xdg_way = xdg_cache_dir().join("claude-ways/user");
+    let xdg_way = crate::util::normalize_path_sep(&xdg_cache_dir().join("claude-ways/user"));
 
     // Staleness check: skip regen if corpus is fresh
     if if_stale {
@@ -318,6 +318,13 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
         }
     }
 
+    // On Windows, Stdio::null() for the NUL device can cause MSVC C runtime
+    // to abort the child process. Use Stdio::inherit() on Windows instead.
+    #[cfg(windows)]
+    let embed_stderr = || std::process::Stdio::inherit();
+    #[cfg(not(windows))]
+    let embed_stderr = || std::process::Stdio::null();
+
     // Embed EN corpus
     if en_model.is_file() && en_count > 0 {
         log(&format!("Embedding {en_count} ways with English model..."));
@@ -326,7 +333,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
             .arg(&corpus_en)
             .args(["--model"])
             .arg(&en_model)
-            .stderr(std::process::Stdio::null())
+            .stderr(embed_stderr())
             .status();
 
         match status {
@@ -343,7 +350,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
             .arg(&corpus_multi)
             .args(["--model"])
             .arg(&multi_model)
-            .stderr(std::process::Stdio::null())
+            .stderr(embed_stderr())
             .status();
 
         match status {
@@ -364,7 +371,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
             .arg(corpus)
             .args(["--model"])
             .arg(&en_model)
-            .stderr(std::process::Stdio::null())
+            .stderr(embed_stderr())
             .status();
 
         match status {

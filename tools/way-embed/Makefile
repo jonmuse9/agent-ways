@@ -4,6 +4,11 @@
 # Per-platform native binaries. No cross-compilation — build on each target.
 # Platform detection at setup time selects the right binary.
 
+ifeq ($(OS),Windows_NT)
+    SHELL := C:/Program Files/Git/usr/bin/bash.exe
+    .SHELLFLAGS := -c
+endif
+
 BUILDDIR  = build
 BIN       = ../../bin/way-embed
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release
@@ -16,9 +21,20 @@ PLATFORM = $(OS)-$(ARCH)
 # Platform-tagged binary (e.g., way-embed-linux-x86_64)
 PLATFORM_BIN = ../../bin/way-embed-$(PLATFORM)
 
+# On Windows (MSYS/MinGW), MSVC multi-config generators put the output in
+# a config subdirectory and add .exe. Detect and handle both cases.
+IS_WINDOWS := $(if $(filter mingw% cygwin% msys%,$(OS)),yes,$(if $(findstring nt-,$(OS)),yes,))
+ifeq ($(IS_WINDOWS),yes)
+  BUILT_BIN      = $(BUILDDIR)/Release/way-embed.exe
+  CMAKE_BUILD_FLAGS = --config Release
+else
+  BUILT_BIN      = $(BUILDDIR)/way-embed
+  CMAKE_BUILD_FLAGS =
+endif
+
 # Default: build for this platform and install as way-embed
 $(BIN): cmake-build
-	cp $(BUILDDIR)/way-embed $(PLATFORM_BIN)
+	cp $(BUILT_BIN) $(PLATFORM_BIN)
 	cp $(PLATFORM_BIN) $(BIN)
 	@echo ""
 	@echo "Built: $(PLATFORM_BIN) ($$(ls -lh $(PLATFORM_BIN) | awk '{print $$5}'))"
@@ -26,7 +42,7 @@ $(BIN): cmake-build
 cmake-build: CMakeLists.txt way-embed.cpp | llama.cpp/CMakeLists.txt
 	@mkdir -p $(BUILDDIR)
 	@cd $(BUILDDIR) && cmake $(CMAKE_FLAGS) .. 2>&1 | tail -5
-	cmake --build $(BUILDDIR) --target way-embed -j$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+	cmake --build $(BUILDDIR) --target way-embed $(CMAKE_BUILD_FLAGS) -j$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # Ensure submodule is initialized
 llama.cpp/CMakeLists.txt:
@@ -46,15 +62,13 @@ verify: cmake-build
 MODEL_DIR  = $(shell echo $${XDG_CACHE_HOME:-$$HOME/.cache})/claude-ways/user
 MODEL_EN   = $(MODEL_DIR)/minilm-l6-v2.gguf
 MODEL_MULTI = $(MODEL_DIR)/multilingual-minilm-l12-v2-q8.gguf
-SRCDIR     = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+SRCDIR     = $(CURDIR)/
 
-model: $(MODEL_EN)
-$(MODEL_EN):
-	bash $(SRCDIR)download-model.sh
+model:
+	@[ -f "$(MODEL_EN)" ] || bash "$(SRCDIR)download-model.sh"
 
-model-multilingual: $(MODEL_MULTI)
-$(MODEL_MULTI):
-	bash $(SRCDIR)download-model.sh --multilingual
+model-multilingual:
+	@[ -f "$(MODEL_MULTI)" ] || bash "$(SRCDIR)download-model.sh" --multilingual
 
 # Download directly from HuggingFace (for provenance verification)
 model-upstream:
@@ -62,19 +76,21 @@ model-upstream:
 
 # Full setup: download (or build) binary + both models, regenerate corpus
 # Tries pre-built binary from GitHub Releases first, builds from source if unavailable.
-setup: setup-binary $(MODEL_EN) $(MODEL_MULTI)
+setup: setup-binary
+	@[ -f "$(MODEL_EN)" ] || bash "$(SRCDIR)download-model.sh"
+	@[ -f "$(MODEL_MULTI)" ] || bash "$(SRCDIR)download-model.sh" --multilingual
 	@echo "Regenerating corpus with embeddings..."
-	$(HOME)/.claude/bin/ways corpus --quiet
+	../../bin/ways corpus --quiet
 	@echo ""
 	@echo "Setup complete. Running verification..."
-	bash $(SRCDIR)test-embedding.sh
+	bash "$(SRCDIR)test-embedding.sh"
 	@echo ""
 	@echo "To compare against BM25: bash $(SRCDIR)compare-engines.sh"
 	@echo "To test multilingual: bash $(SRCDIR)test-multilingual.sh"
 
 # Try download, fall back to build
 setup-binary:
-	@if bash $(SRCDIR)download-binary.sh; then \
+	@if bash "$(SRCDIR)download-binary.sh"; then \
 		echo "Pre-built binary installed."; \
 	else \
 		echo "No pre-built binary available, building from source..."; \
@@ -119,4 +135,4 @@ release:
 clean:
 	rm -rf $(BUILDDIR)
 
-.PHONY: cmake-build verify test model model-multilingual model-upstream setup release-build release clean
+.PHONY: cmake-build verify test model model-multilingual model-upstream setup setup-binary release-build release clean
