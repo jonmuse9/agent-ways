@@ -35,12 +35,11 @@ Did anything unexpected happen this session? A gotcha, a pattern that broke assu
 - Patterns that worked (or didn't) for this project
 - Project-specific tool/config quirks
 - Decisions made and their rationale
-- **Which ways helped and when** — reference the way path, note the context where it was useful beyond its static triggers
 
 **Not worth recording:**
 - Generic knowledge you already have
 - One-off context that won't recur
-- Anything already captured in CLAUDE.md or project docs
+- Anything already captured in a way or project doc
 - Way content — never duplicate a way's guidance, just reference it
 
 ## Memory as Way References
@@ -59,35 +58,4 @@ This is progressive disclosure: ways hold the knowledge, memory indexes when and
 
 ## Writing Memory
 
-Spawn a subagent (`subagent_type: "general-purpose"`) with your summary and the memory file path.
-
-**Subagent prompt template:**
-
-> Update project memory with session learnings.
->
-> **Memory file:** [path from system prompt — the auto memory directory's MEMORY.md]
->
-> **Session learnings to record:**
-> [your summary or the user's explicit request]
->
-> **Your tasks:**
->
-> 1. Read the current MEMORY.md (may be empty or have prior content)
-> 2. Merge the new learnings into the existing structure — don't duplicate, don't overwrite useful existing content
-> 3. Keep MEMORY.md under 200 lines. If it's getting long, create topic files in the same directory and link from MEMORY.md
-> 4. Use this structure if starting fresh:
->
-> ```markdown
-> # Project Memory
->
-> ## Codebase Patterns
-> - ...
->
-> ## Gotchas
-> - ...
->
-> ## Useful Ways
-> - [way path] — [when and why it helped beyond its triggers]
-> ```
->
-> Write the updated file. Return a summary of what you added or changed.
+Follow the two-step save described in the harness's `# auto memory` block: write the topic file, then add a one-line pointer to `MEMORY.md`. Read the current `MEMORY.md` first so you update existing entries rather than duplicate them.
