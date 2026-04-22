@@ -52,6 +52,8 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
 
     let embed_matches = batch_embed_score(query);
 
+    let mut context = String::new();
+
     for way in &candidates {
         if !session::scope_matches(&way.scope, &scope) {
             continue;
@@ -70,8 +72,20 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
         );
 
         if let Some(trigger) = channel {
-            let _ = crate::cmd::show::way(&way.id, session_id, &trigger);
+            let out = capture_show_way(&way.id, session_id, &trigger);
+            if !out.is_empty() {
+                context.push_str(&out);
+            }
         }
+    }
+
+    if !context.is_empty() {
+        println!(
+            "{}",
+            serde_json::json!({
+                "additionalContext": context
+            })
+        );
     }
 
     Ok(())

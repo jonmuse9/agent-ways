@@ -12,15 +12,19 @@ use super::WayCandidate;
 pub(crate) fn collect_candidates(project_dir: &str) -> Vec<WayCandidate> {
     let mut candidates = Vec::new();
 
-    // Project-local first
+    // Project-local first — IDs must carry the encoded project prefix so they
+    // match corpus entries (corpus stores "C--foo-bar/adr", not bare "adr").
     let project_ways = PathBuf::from(project_dir).join(".claude/ways");
     if project_ways.is_dir() {
-        collect_from_dir(&project_ways, &mut candidates);
+        let prefix = find_project_encoded_name(project_dir)
+            .map(|n| format!("{n}/"))
+            .unwrap_or_default();
+        collect_from_dir(&project_ways, &prefix, &mut candidates);
     }
 
     // Global
     let global_ways = super::scoring::home_dir().join(".claude/hooks/ways");
-    collect_from_dir(&global_ways, &mut candidates);
+    collect_from_dir(&global_ways, "", &mut candidates);
 
     candidates
 }
@@ -30,16 +34,19 @@ pub(crate) fn collect_checks(project_dir: &str) -> Vec<WayCandidate> {
 
     let project_ways = PathBuf::from(project_dir).join(".claude/ways");
     if project_ways.is_dir() {
-        collect_checks_from_dir(&project_ways, &mut candidates);
+        let prefix = find_project_encoded_name(project_dir)
+            .map(|n| format!("{n}/"))
+            .unwrap_or_default();
+        collect_checks_from_dir(&project_ways, &prefix, &mut candidates);
     }
 
     let global_ways = super::scoring::home_dir().join(".claude/hooks/ways");
-    collect_checks_from_dir(&global_ways, &mut candidates);
+    collect_checks_from_dir(&global_ways, "", &mut candidates);
 
     candidates
 }
 
-fn collect_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
+fn collect_from_dir(dir: &Path, id_prefix: &str, out: &mut Vec<WayCandidate>) {
     for entry in WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
@@ -54,23 +61,27 @@ fn collect_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
             continue;
         }
 
-        let content = match std::fs::read_to_string(path) {
+        let raw = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
+        let content = if raw.contains('\r') { raw.replace("\r\n", "\n").replace('\r', "\n") } else { raw };
         if !content.starts_with("---\n") {
             continue;
         }
 
-        let id = way_id_from_path(path, dir);
-        if id.is_empty() {
+        let relative = way_id_from_path(path, dir);
+        if relative.is_empty() {
             continue;
         }
+        let id = format!("{id_prefix}{relative}");
 
-        // Check domain disable
-        let domain = id.split('/').next().unwrap_or(&id);
-        if session::domain_disabled(domain) {
-            continue;
+        // Check domain disable (global ways only — project prefix is not a domain)
+        if id_prefix.is_empty() {
+            let domain = id.split('/').next().unwrap_or(&id);
+            if session::domain_disabled(domain) {
+                continue;
+            }
         }
 
         if let Some(candidate) = parse_candidate(&id, path, &content) {
@@ -79,7 +90,7 @@ fn collect_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
     }
 }
 
-fn collect_checks_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
+fn collect_checks_from_dir(dir: &Path, id_prefix: &str, out: &mut Vec<WayCandidate>) {
     for entry in WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
@@ -94,23 +105,58 @@ fn collect_checks_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
             continue;
         }
 
-        let content = match std::fs::read_to_string(path) {
+        let raw = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
+        let content = if raw.contains('\r') { raw.replace("\r\n", "\n").replace('\r', "\n") } else { raw };
         if !content.starts_with("---\n") {
             continue;
         }
 
-        let id = way_id_from_path(path, dir);
-        if id.is_empty() {
+        let relative = way_id_from_path(path, dir);
+        if relative.is_empty() {
             continue;
         }
+        let id = format!("{id_prefix}{relative}");
 
         if let Some(candidate) = parse_candidate(&id, path, &content) {
             out.push(candidate);
         }
     }
+}
+
+/// Look up the encoded project directory name (as stored in `~/.claude/projects/`)
+/// for the given real project path. Returns `None` if not found.
+fn find_project_encoded_name(project_dir: &str) -> Option<String> {
+    let projects_dir = super::scoring::home_dir().join(".claude/projects");
+    if !projects_dir.is_dir() {
+        return None;
+    }
+    let canonical = std::fs::canonicalize(project_dir).ok()?;
+
+    for entry in std::fs::read_dir(&projects_dir).ok()?.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let encoded = entry.file_name().to_string_lossy().to_string();
+        let idx = projects_dir.join(&encoded).join("sessions-index.json");
+        if !idx.is_file() {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&idx) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(path_str) = parsed["entries"][0]["projectPath"].as_str() {
+                    if let Ok(canonical_indexed) = std::fs::canonicalize(path_str) {
+                        if canonical_indexed == canonical {
+                            return Some(encoded);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 // ── Parsing ────────────────────────────────────────────────────

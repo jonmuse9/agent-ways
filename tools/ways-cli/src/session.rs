@@ -425,9 +425,20 @@ pub fn domain_disabled(domain: &str) -> bool {
 /// Resolve a way ID to its file path. Project-local takes precedence.
 /// Returns (path, is_project_local).
 pub fn resolve_way_file(way_id: &str, project_dir: &str) -> Option<(PathBuf, bool)> {
+    // Direct local path: works for unmodified relative IDs
     let local_dir = PathBuf::from(project_dir).join(format!(".claude/ways/{way_id}"));
     if let Some(f) = find_way_in_dir(&local_dir) {
         return Some((f, true));
+    }
+
+    // Project-prefixed IDs (e.g., "C--foo-bar/adr"): strip the first segment and retry.
+    // The corpus stores project ways with an encoded-project-name prefix; resolve by
+    // dropping that prefix when looking up the actual file under .claude/ways/.
+    if let Some((_, relative)) = way_id.split_once('/') {
+        let stripped_dir = PathBuf::from(project_dir).join(format!(".claude/ways/{relative}"));
+        if let Some(f) = find_way_in_dir(&stripped_dir) {
+            return Some((f, true));
+        }
     }
 
     let global_dir = home_dir().join(format!(".claude/hooks/ways/{way_id}"));
@@ -443,6 +454,14 @@ pub fn resolve_check_file(way_id: &str, project_dir: &str) -> Option<(PathBuf, b
     let local_dir = PathBuf::from(project_dir).join(format!(".claude/ways/{way_id}"));
     if let Some(f) = find_check_in_dir(&local_dir) {
         return Some((f, true));
+    }
+
+    // Project-prefixed IDs: strip first segment and retry (same as resolve_way_file)
+    if let Some((_, relative)) = way_id.split_once('/') {
+        let stripped_dir = PathBuf::from(project_dir).join(format!(".claude/ways/{relative}"));
+        if let Some(f) = find_check_in_dir(&stripped_dir) {
+            return Some((f, true));
+        }
     }
 
     let global_dir = home_dir().join(format!(".claude/hooks/ways/{way_id}"));
@@ -467,7 +486,8 @@ fn find_way_in_dir(dir: &Path) -> Option<PathBuf> {
         if name.contains(".check.") {
             continue;
         }
-        if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            let content = if raw.contains('\r') { raw.replace("\r\n", "\n").replace('\r', "\n") } else { raw };
             if content.starts_with("---\n") {
                 return Some(path);
             }

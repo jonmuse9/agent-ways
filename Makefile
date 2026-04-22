@@ -6,12 +6,25 @@
 # Update:        make update
 
 .DEFAULT_GOAL := help
-.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild lint test test-unit test-sim test-lang test-locales test-multilingual release
+.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild commands-install lint test test-unit test-sim test-lang test-locales test-multilingual release
 
 WAYS_BIN = bin/ways
 ATTEND_BIN = bin/attend
 ATTEND_CHAT_BIN = bin/attend-chat
 XDG_BIN = $(or $(XDG_BIN_HOME),$(HOME)/.local/bin)
+CLAUDE_COMMANDS = $(HOME)/.claude/commands
+
+ifeq ($(OS),Windows_NT)
+    SHELL = bash
+    INSTALL_COMMANDS = mkdir -p "$(CLAUDE_COMMANDS)" && cp -f "$(CURDIR)/commands/"*.md "$(CLAUDE_COMMANDS)/"
+    # On Windows, cargo emits ways.exe; copy to ways (no extension) so Git Bash finds it
+    WAYS_RELEASE_SRC = tools/target/release/ways.exe
+    INSTALL_BINARY = cp -f "$(CURDIR)/$(WAYS_RELEASE_SRC)" "$(CURDIR)/$(WAYS_BIN)" && cp -f "$(CURDIR)/$(WAYS_BIN)" "$(XDG_BIN)/ways" && cp -f "$(CURDIR)/$(WAYS_BIN)" "$(HOME)/.claude/bin/ways"
+else
+    INSTALL_COMMANDS = mkdir -p "$(CLAUDE_COMMANDS)" && for f in "$(CURDIR)/commands/"*.md; do ln -sf "$$f" "$(CLAUDE_COMMANDS)/$$(basename $$f)"; done
+    WAYS_RELEASE_SRC = tools/target/release/ways
+    INSTALL_BINARY = ln -sf "$(CURDIR)/$(WAYS_BIN)" "$(XDG_BIN)/ways"
+endif
 
 # --- Primary targets ---
 
@@ -48,23 +61,30 @@ setup: ways attend attend-chat
 	@echo "Generating corpus..."
 	@$(WAYS_BIN) corpus --quiet
 
-# Full install: build, setup, symlink to PATH.
-install: hooks-executable setup
-	@mkdir -p $(XDG_BIN)
-	@ln -sf $(CURDIR)/$(WAYS_BIN) $(XDG_BIN)/ways
-	@ln -sf $(CURDIR)/$(ATTEND_BIN) $(XDG_BIN)/attend
-	@ln -sf $(CURDIR)/$(ATTEND_CHAT_BIN) $(XDG_BIN)/attend-chat
+# Full install: build, setup, install to PATH, install Claude commands.
+install: hooks-executable setup commands-install
+	@mkdir -p "$(XDG_BIN)" "$(HOME)/.claude/bin"
+	@$(INSTALL_BINARY)
+	@ln -sf "$(CURDIR)/$(ATTEND_BIN)" "$(XDG_BIN)/attend"
+	@ln -sf "$(CURDIR)/$(ATTEND_CHAT_BIN)" "$(XDG_BIN)/attend-chat"
 	@echo ""
 	@echo "Install complete."
-	@echo "  ways binary:        $(XDG_BIN)/ways → $(CURDIR)/$(WAYS_BIN)"
+	@echo "  ways binary:        $(XDG_BIN)/ways"
 	@echo "  attend binary:      $(XDG_BIN)/attend → $(CURDIR)/$(ATTEND_BIN)"
 	@echo "  attend-chat binary: $(XDG_BIN)/attend-chat → $(CURDIR)/$(ATTEND_CHAT_BIN)"
-	@echo "  Restart Claude Code for ways to take effect."
+	@echo "  Claude commands:    $(CLAUDE_COMMANDS)/"
+	@echo "  Restart Claude Code for ways and commands to take effect."
 
-# Remove symlink from PATH.
+# Install custom slash commands into ~/.claude/commands/.
+commands-install:
+	@$(INSTALL_COMMANDS)
+	@echo "Commands installed at $(CLAUDE_COMMANDS)"
+
+# Remove symlink from PATH and uninstall Claude commands.
 uninstall:
-	@rm -f $(XDG_BIN)/ways $(XDG_BIN)/attend $(XDG_BIN)/attend-chat
-	@echo "Removed $(XDG_BIN)/ways $(XDG_BIN)/attend $(XDG_BIN)/attend-chat"
+	@rm -f "$(XDG_BIN)/ways" "$(XDG_BIN)/attend" "$(XDG_BIN)/attend-chat"
+	@for f in commands/*.md; do rm -f "$(CLAUDE_COMMANDS)/$$(basename $$f)"; done
+	@echo "Removed binaries and Claude commands"
 
 # Pull upstream and re-setup.
 update:
@@ -83,7 +103,7 @@ ways:
 		echo "No pre-built binary, building from source..."; \
 		cargo build --release --manifest-path tools/Cargo.toml -p ways; \
 		mkdir -p bin; \
-		ln -sf $(CURDIR)/tools/target/release/ways $(WAYS_BIN); \
+		cp -f "$(CURDIR)/$(WAYS_RELEASE_SRC)" "$(CURDIR)/$(WAYS_BIN)"; \
 		echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"; \
 	else \
 		echo "error: No pre-built binary and cargo not found."; \
@@ -99,7 +119,7 @@ ways-rebuild:
 	fi
 	cargo build --release --manifest-path tools/Cargo.toml -p ways
 	@mkdir -p bin
-	@ln -sf $(CURDIR)/tools/target/release/ways $(WAYS_BIN)
+	@cp -f "$(CURDIR)/$(WAYS_RELEASE_SRC)" "$(CURDIR)/$(WAYS_BIN)"
 	@echo "Built: $(WAYS_BIN) ($$(ls -lh $(WAYS_BIN) | awk '{print $$5}'))"
 
 # Build attend binary from workspace.

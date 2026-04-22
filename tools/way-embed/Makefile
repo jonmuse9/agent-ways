@@ -16,9 +16,20 @@ PLATFORM = $(OS)-$(ARCH)
 # Platform-tagged binary (e.g., way-embed-linux-x86_64)
 PLATFORM_BIN = ../../bin/way-embed-$(PLATFORM)
 
+# On Windows (MSYS/MinGW), MSVC multi-config generators put the output in
+# a config subdirectory and add .exe. Detect and handle both cases.
+IS_WINDOWS := $(if $(filter mingw% cygwin% msys%,$(OS)),yes,$(if $(findstring nt-,$(OS)),yes,))
+ifeq ($(IS_WINDOWS),yes)
+  BUILT_BIN      = $(BUILDDIR)/Release/way-embed.exe
+  CMAKE_BUILD_FLAGS = --config Release
+else
+  BUILT_BIN      = $(BUILDDIR)/way-embed
+  CMAKE_BUILD_FLAGS =
+endif
+
 # Default: build for this platform and install as way-embed
 $(BIN): cmake-build
-	cp $(BUILDDIR)/way-embed $(PLATFORM_BIN)
+	cp $(BUILT_BIN) $(PLATFORM_BIN)
 	cp $(PLATFORM_BIN) $(BIN)
 	@echo ""
 	@echo "Built: $(PLATFORM_BIN) ($$(ls -lh $(PLATFORM_BIN) | awk '{print $$5}'))"
@@ -26,7 +37,7 @@ $(BIN): cmake-build
 cmake-build: CMakeLists.txt way-embed.cpp | llama.cpp/CMakeLists.txt
 	@mkdir -p $(BUILDDIR)
 	@cd $(BUILDDIR) && cmake $(CMAKE_FLAGS) .. 2>&1 | tail -5
-	cmake --build $(BUILDDIR) --target way-embed -j$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+	cmake --build $(BUILDDIR) --target way-embed $(CMAKE_BUILD_FLAGS) -j$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # Ensure submodule is initialized
 llama.cpp/CMakeLists.txt:
@@ -64,7 +75,7 @@ model-upstream:
 # Tries pre-built binary from GitHub Releases first, builds from source if unavailable.
 setup: setup-binary $(MODEL_EN) $(MODEL_MULTI)
 	@echo "Regenerating corpus with embeddings..."
-	$(HOME)/.claude/bin/ways corpus --quiet
+	../../bin/ways corpus --quiet
 	@echo ""
 	@echo "Setup complete. Running verification..."
 	bash $(SRCDIR)test-embedding.sh

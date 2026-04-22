@@ -37,13 +37,30 @@ fn main() {
             // (and its async runtime) out of the attend crate means
             // `attend status`, `attend send`, and the sensor loop stay
             // cheap to cold-start from hooks. See ADR-120.
-            use std::os::unix::process::CommandExt;
-            let err = std::process::Command::new("attend-chat")
-                .args(&args[1..])
-                .exec();
-            eprintln!("attend chat: failed to launch attend-chat: {}", err);
-            eprintln!("  (is `attend-chat` on PATH? run `make install` from the repo root)");
-            std::process::exit(1);
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let err = std::process::Command::new("attend-chat")
+                    .args(&args[1..])
+                    .exec();
+                eprintln!("attend chat: failed to launch attend-chat: {}", err);
+                eprintln!("  (is `attend-chat` on PATH? run `make install` from the repo root)");
+                std::process::exit(1);
+            }
+            #[cfg(not(unix))]
+            {
+                match std::process::Command::new("attend-chat")
+                    .args(&args[1..])
+                    .status()
+                {
+                    Ok(status) => std::process::exit(status.code().unwrap_or(0)),
+                    Err(err) => {
+                        eprintln!("attend chat: failed to launch attend-chat: {}", err);
+                        eprintln!("  (is `attend-chat` on PATH? run `make install` from the repo root)");
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
         Some("reply") => {
             cmd::send::cmd_reply(&args[1..]);
