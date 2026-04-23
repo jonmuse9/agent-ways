@@ -69,6 +69,7 @@ uninstall:
 # Pull upstream and re-setup.
 update:
 	git pull --ff-only
+	$(MAKE) ways-rebuild attend-rebuild attend-chat-rebuild
 	$(MAKE) install
 
 # --- Build ---
