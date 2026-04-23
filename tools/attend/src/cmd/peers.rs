@@ -27,8 +27,12 @@ pub(crate) fn cmd_peers() {
         .unwrap_or_default();
     let self_id = Identity::for_cwd(&cwd, caps);
     let self_label = render_agent_label(&self_id, caps);
+    // Self-row Focus cell: "(self)" identifies which row IS the runner of
+    // `attend peers`, without using the literal string "project" — that
+    // priming caused agents to reach for `attend send --focus project`
+    // and silently land signals in an empty `@project/` room.
     t.add_owned(vec![
-        "(project)".to_string(),
+        "(self)".to_string(),
         self_label,
         "working".to_string(),
         String::new(),
@@ -45,8 +49,14 @@ pub(crate) fn cmd_peers() {
     if !peers.is_empty() {
         t.add(vec!["", "", "", ""]);
         for (peer_cwd, _project, status, ctx) in &peers {
+            // Same-cwd peers previously rendered "(project)" in the
+            // Focus column — a string that primed agents into running
+            // `attend send --focus project`, a group nobody had
+            // joined. "(here)" pairs with the self row's "(self)"
+            // marker, preserves the same-cwd visual scan, and uses
+            // parentheses to make clear it is not a focus group name.
             let focus_label = if *peer_cwd == cwd {
-                "(project)".to_string()
+                "(here)".to_string()
             } else {
                 String::new()
             };
@@ -65,10 +75,14 @@ pub(crate) fn cmd_peers() {
 
     let focus_count = my_focus.len();
     let peer_count = peers.len();
+    // `focus_count` is now the literal number of explicit focus groups
+    // self has joined. The previous `+ 1` counted the implicit "(self)"
+    // row as if it were a focus group, which inflated the count and
+    // suggested a phantom "project" group existed.
     println!(
         "  {} agent(s), {} focus group(s)",
         peer_count + 1,
-        focus_count + 1
+        focus_count
     );
 }
 
