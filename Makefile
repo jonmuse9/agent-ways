@@ -6,7 +6,7 @@
 # Update:        make update
 
 .DEFAULT_GOAL := help
-.PHONY: setup install uninstall update clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild hooks-install lint test test-unit test-sim test-lang test-locales test-multilingual release
+.PHONY: setup install uninstall update update-binaries clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild hooks-install way-embed-rebuild lint test test-unit test-sim test-lang test-locales test-multilingual release
 
 ifeq ($(OS),Windows_NT)
     SHELL := C:/Program Files/Git/usr/bin/bash.exe
@@ -93,7 +93,15 @@ uninstall:
 # Pull upstream and re-setup.
 update:
 	git pull --ff-only
+	$(MAKE) update-binaries
 	$(MAKE) install
+
+# Rebuild every binary `update` is responsible for refreshing.
+# Indirected from `update:` so adding a new rebuild here takes effect
+# on the same `make update` run that pulls the change — sub-makes
+# re-read the Makefile, but the in-memory `update:` recipe is fixed at
+# make-process startup.
+update-binaries: ways-rebuild attend-rebuild attend-chat-rebuild way-embed-rebuild
 
 # --- Build ---
 
@@ -177,6 +185,12 @@ attend-chat-rebuild:
 	@mkdir -p bin
 	@$(LINK) "$(CURDIR)/tools/target/release/attend-chat$(EXE)" $(ATTEND_CHAT_BIN)
 	@echo "Built: $(ATTEND_CHAT_BIN) ($$(ls -lh $(ATTEND_CHAT_BIN) | awk '{print $$5}'))"
+
+# Force re-fetch (or rebuild) of the way-embed binary. Delegates to the
+# way-embed sub-Makefile's rebuild-binary target, which clears the
+# cached install before download-binary.sh would short-circuit.
+way-embed-rebuild:
+	$(MAKE) -C tools/way-embed rebuild-binary
 
 # --- Test ---
 

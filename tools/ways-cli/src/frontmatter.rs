@@ -1,7 +1,112 @@
 use anyhow::{anyhow, Context, Result};
 use sensor_trait::Curve;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
+
+/// Sensible upper bound on numeric `refire:` values. Well above any realistic
+/// cadence; catches typos like `refire: 200000` (legacy raw-tokens pasted
+/// into the new field).
+const REFIRE_NUMERIC_MAX: f64 = 10.0;
+
+/// ADR-126 refire specification: either a numeric fraction of the session
+/// context window, or a preset name resolved via the config's
+/// `refire_presets` table at fire-evaluation time.
+///
+/// Untagged deserialization: a YAML scalar parses as `Numeric` if it's a
+/// number, otherwise as `Preset`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum RefireSpec {
+    /// Explicit fraction of the context window. `0.2` means "half-life =
+    /// 20% of the current session's context window." Pinned to today's
+    /// model by the author's choice to write a number.
+    Numeric(f64),
+    /// Preset name (e.g., `rare`, `normal`). Resolved per-fire against the
+    /// `refire_presets` section of the config file, so operators can re-tune
+    /// the whole tree with a single config edit.
+    Preset(String),
+}
+
+impl RefireSpec {
+    /// Resolve preset names against the supplied table. Unknown names
+    /// fail-soft — fall back to the built-in `normal` value and log a
+    /// stderr warning. This is the runtime safety net; `ways lint` and
+    /// `ways corpus` both reject unknown preset names upstream so fire-time
+    /// typos shouldn't happen in practice.
+    pub fn fraction_with(&self, presets: &HashMap<String, f64>) -> f64 {
+        match self {
+            Self::Numeric(v) => *v,
+            Self::Preset(name) => match presets.get(name) {
+                Some(v) => *v,
+                None => {
+                    eprintln!(
+                        "[ways] unknown refire preset `{}`; falling back to `normal` (0.15). \
+                        Run `ways lint` to locate the source.",
+                        name
+                    );
+                    0.15
+                }
+            },
+        }
+    }
+
+    /// Resolve to a concrete `Curve::Exponential` given the session's
+    /// context window. Half-life = `fraction × window` (clamped to at least 1
+    /// to avoid a zero-half-life degenerate that would cause immediate
+    /// re-fire on every check).
+    pub fn to_curve(&self, window: u64) -> Curve {
+        self.to_curve_with(window, &crate::config::global().refire_presets)
+    }
+
+    /// Same as [`to_curve`] but resolves preset names against the supplied
+    /// table.
+    pub fn to_curve_with(&self, window: u64, presets: &HashMap<String, f64>) -> Curve {
+        let half_life = (self.fraction_with(presets) * window as f64).round() as u64;
+        Curve::Exponential {
+            half_life: half_life.max(1),
+        }
+    }
+
+    /// Strict validation for lint and corpus-generation paths. Returns an
+    /// error string (ready for a `ways lint` ERROR line) when the spec is
+    /// malformed — numeric out of sane range, or preset name not in the
+    /// supplied table. Fail-closed at these upstream gates so fire-time
+    /// always sees a spec that resolves cleanly.
+    pub fn validate(&self, presets: &HashMap<String, f64>) -> Result<(), String> {
+        match self {
+            Self::Numeric(v) => {
+                if !v.is_finite() {
+                    return Err(format!("refire numeric {v} is not a finite number"));
+                }
+                if *v < 0.0 {
+                    return Err(format!(
+                        "refire numeric {v} is negative (fractions must be ≥ 0)"
+                    ));
+                }
+                if *v > REFIRE_NUMERIC_MAX {
+                    return Err(format!(
+                        "refire numeric {v} exceeds the sane upper bound {REFIRE_NUMERIC_MAX} — \
+                        values > 1.0 are valid but rare; {v} is almost certainly a raw token \
+                        count accidentally pasted into the new field"
+                    ));
+                }
+                Ok(())
+            }
+            Self::Preset(name) => {
+                if presets.contains_key(name) {
+                    Ok(())
+                } else {
+                    let mut valid: Vec<&String> = presets.keys().collect();
+                    valid.sort();
+                    Err(format!(
+                        "refire preset `{name}` is not defined in config.refire_presets (valid: {valid:?})"
+                    ))
+                }
+            }
+        }
+    }
+}
 
 /// Parsed YAML frontmatter from a way file.
 #[derive(Debug, Deserialize, Default)]
@@ -20,6 +125,56 @@ pub struct Frontmatter {
     /// consumers (tune/corpus/graph) that don't invoke the engine.
     #[serde(default)]
     pub curve: Option<Curve>,
+    /// ADR-126 window-relative refire. When present, takes precedence over
+    /// `curve:` at fire-evaluation time (via `resolved_curve`). Holds the
+    /// unresolved spec so config edits take effect mid-session — resolution
+    /// happens per fire against the then-current window and preset table.
+    #[serde(default)]
+    pub refire: Option<RefireSpec>,
+}
+
+impl Frontmatter {
+    /// Resolve the effective curve for fire evaluation, given the session's
+    /// current context window. Precedence (ADR-126): `refire:` wins over
+    /// `curve:` when both are present (lint warns about the duplication).
+    ///
+    /// Returns `None` when neither field is set — static consumers like
+    /// `ways tune` and `ways corpus` that don't invoke the engine can still
+    /// parse a way file without requiring either.
+    pub fn resolved_curve(&self, window: u64) -> Option<Curve> {
+        if let Some(spec) = &self.refire {
+            return Some(spec.to_curve(window));
+        }
+        self.curve.clone()
+    }
+}
+
+/// Frontmatter fields that wire a way into a runtime dispatch channel.
+/// A way carrying any of these participates in firing and therefore needs
+/// a `refire:` field (ADR-126). The semantic channel (description +
+/// vocabulary) is checked separately by [`fires_on_something`] because it
+/// requires both fields together.
+///
+/// **Adding a channel:** extending this list picks the new field up in
+/// `ways lint`'s fire-eligibility check automatically. The corresponding
+/// dispatch entry point in `cmd/scan/` still needs wiring separately — this
+/// const is the advisory declaration, not the dispatcher.
+pub const FIRE_BEARING_FIELDS: &[&str] = &["pattern", "files", "commands", "trigger"];
+
+/// Does this frontmatter wire the way into any firing channel?
+/// Used by `ways lint` to flag fire-bearing ways that lack a `refire:` field.
+///
+/// Operates on the raw YAML string rather than the parsed [`Frontmatter`]
+/// struct because several channel fields (`pattern`, `files`, `commands`,
+/// `trigger`) aren't modeled on the serde type. Keeping the predicate
+/// string-based lets it run against partially-valid frontmatter during lint.
+pub fn fires_on_something(fm_str: &str) -> bool {
+    fn has(fm: &str, name: &str) -> bool {
+        let prefix = format!("{name}:");
+        fm.lines().any(|l| l.starts_with(&prefix))
+    }
+    let has_desc_vocab = has(fm_str, "description") && has(fm_str, "vocabulary");
+    has_desc_vocab || FIRE_BEARING_FIELDS.iter().any(|f| has(fm_str, f))
 }
 
 /// Extract YAML frontmatter from a way file.
@@ -256,6 +411,173 @@ curve:
         // session.rs enforces presence at the fire site.
         let fm = parse_yaml("description: no curve\n");
         assert!(fm.curve.is_none());
+        assert!(fm.refire.is_none());
+    }
+
+    #[test]
+    fn parses_refire_numeric() {
+        let fm = parse_yaml("description: test\nrefire: 0.2\n");
+        match fm.refire {
+            Some(RefireSpec::Numeric(v)) => assert!((v - 0.2).abs() < 1e-9),
+            other => panic!("expected Numeric(0.2), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_refire_preset_name() {
+        let fm = parse_yaml("description: test\nrefire: rare\n");
+        match fm.refire {
+            Some(RefireSpec::Preset(name)) => assert_eq!(name, "rare"),
+            other => panic!("expected Preset(\"rare\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn refire_numeric_resolves_to_exponential_at_window() {
+        // 0.2 of a 1M window = 200k half-life.
+        let fm = parse_yaml("description: test\nrefire: 0.2\n");
+        let curve = fm.resolved_curve(1_000_000).expect("should resolve");
+        match curve {
+            Curve::Exponential { half_life } => assert_eq!(half_life, 200_000),
+            other => panic!("expected Exponential, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn refire_numeric_scales_with_window() {
+        // Same fraction on a 200k window = 40k half-life.
+        let fm = parse_yaml("description: test\nrefire: 0.2\n");
+        let curve = fm.resolved_curve(200_000).expect("should resolve");
+        match curve {
+            Curve::Exponential { half_life } => assert_eq!(half_life, 40_000),
+            other => panic!("expected Exponential, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn refire_wins_over_curve_when_both_present() {
+        // ADR-126: `refire:` takes precedence over `curve:`.
+        let fm = parse_yaml(
+            "description: test\n\
+             refire: 0.3\n\
+             curve:\n  \
+             type: Exponential\n  \
+             half_life: 99999\n",
+        );
+        let curve = fm.resolved_curve(1_000_000).expect("should resolve");
+        match curve {
+            Curve::Exponential { half_life } => {
+                // 0.3 × 1M = 300k, not the 99_999 from the `curve:` block.
+                assert_eq!(half_life, 300_000);
+            }
+            other => panic!("expected Exponential, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn curve_fallback_when_no_refire() {
+        // Non-Exponential shapes still live in `curve:`. If `refire:` is
+        // absent, `resolved_curve` returns the raw curve untouched.
+        let fm = parse_yaml(
+            "description: test\n\
+             curve:\n  \
+             type: Flat\n  \
+             suppression: 15000\n",
+        );
+        let curve = fm.resolved_curve(1_000_000).expect("should resolve");
+        assert!(matches!(curve, Curve::Flat { suppression: 15_000 }));
+    }
+
+    #[test]
+    fn resolved_curve_is_none_when_neither_field_set() {
+        let fm = parse_yaml("description: static consumer only\n");
+        assert!(fm.resolved_curve(1_000_000).is_none());
+    }
+
+    #[test]
+    fn refire_half_life_clamped_to_one() {
+        // Defensive: zero fraction → zero half_life would degenerate
+        // Curve::salience_at to 0.0 at delta=0, causing immediate re-fire.
+        // Clamp to 1 so the curve is well-defined even on pathological input.
+        let spec = RefireSpec::Numeric(0.0);
+        let curve = spec.to_curve(1_000_000);
+        match curve {
+            Curve::Exponential { half_life } => assert_eq!(half_life, 1),
+            other => panic!("expected Exponential, got {:?}", other),
+        }
+    }
+
+    fn preset_table() -> HashMap<String, f64> {
+        let mut m = HashMap::new();
+        m.insert("once".to_string(), 1.0);
+        m.insert("rare".to_string(), 0.4);
+        m.insert("normal".to_string(), 0.15);
+        m.insert("frequent".to_string(), 0.05);
+        m
+    }
+
+    #[test]
+    fn refire_preset_resolves_via_table() {
+        let presets = preset_table();
+        let spec = RefireSpec::Preset("rare".to_string());
+        assert!((spec.fraction_with(&presets) - 0.4).abs() < 1e-9);
+
+        // to_curve_with uses the same resolution
+        let curve = spec.to_curve_with(1_000_000, &presets);
+        match curve {
+            Curve::Exponential { half_life } => assert_eq!(half_life, 400_000),
+            other => panic!("expected Exponential, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn refire_preset_unknown_falls_back_to_normal() {
+        // Fire-time path: unknown preset shouldn't panic. Falls back to 0.15
+        // (normal-equivalent) so the session keeps working. Stderr warning
+        // is emitted but not asserted on here.
+        let presets = preset_table();
+        let spec = RefireSpec::Preset("nonexistent".to_string());
+        assert!((spec.fraction_with(&presets) - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn validate_accepts_known_preset() {
+        let presets = preset_table();
+        let spec = RefireSpec::Preset("normal".to_string());
+        assert!(spec.validate(&presets).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_preset() {
+        let presets = preset_table();
+        let spec = RefireSpec::Preset("nonexistent".to_string());
+        let err = spec.validate(&presets).unwrap_err();
+        assert!(err.contains("nonexistent"));
+        assert!(err.contains("valid:"));
+    }
+
+    #[test]
+    fn validate_accepts_numeric_in_range() {
+        let presets = preset_table();
+        for v in [0.0_f64, 0.05, 0.15, 0.4, 1.0, 2.0] {
+            let spec = RefireSpec::Numeric(v);
+            assert!(
+                spec.validate(&presets).is_ok(),
+                "expected {v} to validate"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_numeric_out_of_range() {
+        let presets = preset_table();
+        // Negative
+        assert!(RefireSpec::Numeric(-0.1).validate(&presets).is_err());
+        // Way above the cap (e.g., raw tokens pasted into new field)
+        assert!(RefireSpec::Numeric(30_000.0).validate(&presets).is_err());
+        // Non-finite
+        assert!(RefireSpec::Numeric(f64::NAN).validate(&presets).is_err());
+        assert!(RefireSpec::Numeric(f64::INFINITY).validate(&presets).is_err());
     }
 
     #[test]
@@ -276,6 +598,54 @@ curve:
   half_life: 50000
 "#;
         detect_legacy_redisclose(yaml).expect("clean yaml should pass");
+    }
+
+    #[test]
+    fn fires_on_semantic_channel() {
+        assert!(fires_on_something("description: x\nvocabulary: y\n"));
+    }
+
+    #[test]
+    fn does_not_fire_on_description_alone() {
+        // Semantic channel needs both — description without vocabulary is
+        // flagged by a separate lint rule, not by fire-eligibility.
+        assert!(!fires_on_something("description: x\n"));
+    }
+
+    #[test]
+    fn does_not_fire_on_vocabulary_alone() {
+        assert!(!fires_on_something("vocabulary: x\n"));
+    }
+
+    #[test]
+    fn fires_on_each_declared_channel() {
+        // Every field in FIRE_BEARING_FIELDS must flip the predicate on its
+        // own — this test catches a new channel being added to the const but
+        // the iteration logic drifting away from it.
+        for field in FIRE_BEARING_FIELDS {
+            let fm = format!("{field}: something\n");
+            assert!(
+                fires_on_something(&fm),
+                "expected fire on {field}-only frontmatter"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_fire_on_empty_or_non_channel_fields() {
+        assert!(!fires_on_something(""));
+        assert!(!fires_on_something("scope: user\n"));
+        assert!(!fires_on_something("embed_threshold: 0.5\n"));
+        // curve: and refire: are cadence fields, not firing channels
+        assert!(!fires_on_something("curve:\n  type: Flat\n"));
+        assert!(!fires_on_something("refire: 0.2\n"));
+    }
+
+    #[test]
+    fn fires_on_combined_channels() {
+        // A typical way with semantic + pattern — both channels wired.
+        let fm = "description: x\nvocabulary: y\npattern: '^foo'\n";
+        assert!(fires_on_something(fm));
     }
 
     #[test]

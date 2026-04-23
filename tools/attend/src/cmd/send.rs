@@ -118,13 +118,72 @@ pub(crate) fn cmd_send(args: &[String]) {
         }
     }
 
+    let r = get_groups();
+
+    // Validate --focus name against live `_groups.yaml` membership. A
+    // signal written to a group nobody is *currently* listening on sits
+    // unread in `@<name>/` until cleanup sweeps it; the sender only sees
+    // "signal written" and assumes delivery. Mirror --to's liveness
+    // discipline: `_groups.yaml` membership is intersected with
+    // `PeerSensor::live_session_ids` so a peer that joined-and-died
+    // does not let the validation pass on a phantom member.
+    if let Some(ref name) = target_focus {
+        let members = r.members(name);
+        let self_id = own_session_id();
+        #[cfg(feature = "sensor-peers")]
+        let live_ids: std::collections::HashSet<String> = {
+            let sensor = crate::sensors::PeerSensor::new();
+            sensor.live_session_ids()
+        };
+        #[cfg(not(feature = "sensor-peers"))]
+        let live_ids: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let live_peer_count: usize = match &members {
+            Some(ids) => ids
+                .iter()
+                .filter(|sid| {
+                    live_ids.contains(*sid)
+                        && self_id.as_ref().map(|s| s != *sid).unwrap_or(true)
+                })
+                .count(),
+            None => 0,
+        };
+        if live_peer_count == 0 {
+            let self_in_group = members
+                .as_ref()
+                .zip(self_id.as_ref())
+                .map(|(ids, sid)| ids.iter().any(|m| m == sid))
+                .unwrap_or(false);
+            if members.is_none() {
+                eprintln!("error: no focus group named '{}'", name);
+            } else if self_in_group {
+                eprintln!("error: no live peers in focus group '{}' (you are the only listener)", name);
+            } else {
+                eprintln!("error: no live peers in focus group '{}'", name);
+            }
+            let groups = r.all_groups();
+            if groups.is_empty() {
+                eprintln!("\nno active focus groups");
+            } else {
+                eprintln!("\nactive focus groups (yaml count, live peers may be fewer):");
+                for (gname, count, pinned) in &groups {
+                    let pin = if *pinned { " (pinned)" } else { "" };
+                    let suffix = if *count == 1 { "" } else { "s" };
+                    eprintln!("  {} — {} member{}{}", gname, count, suffix, pin);
+                }
+            }
+            eprintln!("\ndrop --focus to broadcast (reaches every peer):");
+            eprintln!("  attend send <message>");
+            std::process::exit(1);
+        }
+    }
+
     // Determine target directories.
     // Default is broadcast — simplest possible routing: every send reaches
     // every peer. Escape hatches remain for humans and scripts:
     //   --to <path>: specific project only
     //   --focus <name>: specific focus group only
     //   --broadcast: explicit (same as default)
-    let r = get_groups();
     let dest_dirs: Vec<std::path::PathBuf> = if let Some(ref focus_name) = target_focus {
         vec![r.group_dir(focus_name)]
     } else if let Some(ref path) = target_dir {

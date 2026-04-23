@@ -137,6 +137,56 @@ pub(super) fn lint_file(
         }
     }
 
+    // ADR-126: fire-bearing ways should carry a `refire:` field. Fire
+    // eligibility (which frontmatter fields count as firing channels) is
+    // declared in `frontmatter::FIRE_BEARING_FIELDS` so adding a new channel
+    // flows through automatically. Check files and attend signal handlers
+    // are exempt — checks ride on their parent way's firing, and attend
+    // handlers are triggered by signal name rather than the refire engine.
+    let has_refire = has_field(&fm_str, "refire");
+    let has_curve = has_field(&fm_str, "curve");
+    let is_fire_bearing =
+        !is_check && !is_attend && crate::frontmatter::fires_on_something(&fm_str);
+    if is_fire_bearing && !has_refire {
+        eprintln!(
+            "  WARNING: {rel} — no `refire:` field (ADR-126). \
+             Fire-bearing way will never re-disclose after first fire. \
+             Add `refire: <fraction|preset>` (e.g., `refire: 0.15` or `refire: normal`)."
+        );
+        *warnings += 1;
+    }
+
+    // ADR-126: refire: and curve: should not coexist. refire: wins at
+    // runtime (via Frontmatter::resolved_curve), but the duplication is
+    // almost always a migration mistake. Emit a specific warning distinct
+    // from the generic UNKNOWN-field warning for curve: alone.
+    if has_refire && has_curve {
+        eprintln!(
+            "  WARNING: {rel} — both `refire:` and legacy `curve:` present. \
+             `refire:` wins at runtime; remove the `curve:` block."
+        );
+        *warnings += 1;
+    }
+
+    // ADR-126: fail-closed preset/numeric validation. Lint is the primary
+    // gate for typo detection; corpus-generation echoes this check. Fire
+    // time has a soft fallback (see RefireSpec::fraction) so a bypassed
+    // lint doesn't crash a live session, but that path logs to stderr.
+    if has_refire {
+        if let Some(raw) = get_field_value(&fm_str, "refire") {
+            let spec = if let Ok(n) = raw.trim().parse::<f64>() {
+                crate::frontmatter::RefireSpec::Numeric(n)
+            } else {
+                crate::frontmatter::RefireSpec::Preset(raw.trim().to_string())
+            };
+            let presets = &crate::config::global().refire_presets;
+            if let Err(msg) = spec.validate(presets) {
+                eprintln!("  ERROR: {rel} — {msg}");
+                *errors += 1;
+            }
+        }
+    }
+
     // Threshold is numeric
     if let Some(val) = get_field_value(&fm_str, "threshold") {
         if val.parse::<f64>().is_err() {
