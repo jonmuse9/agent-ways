@@ -18,10 +18,10 @@ use iocraft::prelude::*;
 use crate::chip::{chip_for, color_for, known_identities, resolve_nickname, CHIP_WIDTH};
 use crate::sessions::discover as discover_sessions;
 use crate::text_layout::{render_cursor, split_at_char, visual_line_count};
-use crate::groups::{channels, resolve_group_dir};
+use crate::groups::{channels, live_peer_count, resolve_group_dir};
 use crate::helper::{self, HelperMode};
 use crate::legend::{
-    apply_completion, best_completion, best_group_completion, find_trailing_mention,
+    all_completions, all_group_completions, apply_completion, find_trailing_mention,
     group_legend_row, legend_row, parse_addressed, Addressed, Sigil,
 };
 use crate::signal::{cwd_dir, write_broadcast, write_signal, Signal};
@@ -30,6 +30,25 @@ use crate::slash;
 #[derive(Default, Props)]
 pub struct AppProps {
     pub receiver: Option<Receiver<Signal>>,
+}
+
+/// Tab-completion cycle state.
+///
+/// First Tab on `@T<Tab>` inserts the first prefix-matching candidate
+/// and stores the candidate list + sigil here. Each subsequent Tab
+/// (with the buffer still ending in the previously-inserted token)
+/// advances the index, wrapping at the end. Any other keystroke
+/// implicitly resets the cycle: the Tab handler checks that the
+/// buffer's tail still matches `candidates[index]`, and if it
+/// doesn't, treats the press as a fresh completion start.
+///
+/// Same model applies to `#group<Tab>` cycling — the sigil
+/// discriminates which pool to draw candidates from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TabCycle {
+    sigil: Sigil,
+    candidates: Vec<String>,
+    index: usize,
 }
 
 /// Upper bound on the in-memory message buffer. At typical chat rates
@@ -50,6 +69,27 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     let mut cursor = hooks.use_state(|| 0usize);
     let mut should_exit = hooks.use_state(|| false);
     let mut status = hooks.use_state(String::new);
+    let mut tab_cycle = hooks.use_state::<Option<TabCycle>, _>(|| None);
+
+    // Time-based refresh tick (ADR-129). Bumped every 5 seconds so the
+    // render path re-runs `discover_sessions` + `known_identities` on a
+    // human-scale clock rather than only on signal/keypress events. A
+    // peer that boots up without sending anything appears in the legend
+    // within one tick; a peer whose attend stops shows up as stale once
+    // its heartbeat ages past grace, also within one tick. The chat is
+    // a turn-blind surface — wall-clock time is the right axis here.
+    //
+    // 5s is a balance: short enough that "I just launched another
+    // claude" feels live, long enough that we are not re-walking
+    // ~/.claude/sessions/*.json several times per second on idle.
+    let mut tick = hooks.use_state(|| 0u64);
+    hooks.use_future(async move {
+        loop {
+            smol::Timer::after(std::time::Duration::from_secs(5)).await;
+            let next = tick.get().wrapping_add(1);
+            tick.set(next);
+        }
+    });
 
     // Drain the watcher into state.
     if let Some(rx) = props.receiver.clone() {
@@ -115,7 +155,19 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                         }
                         let caps = TermCaps::detect();
                         let seeds = discover_sessions();
-                        let agents = known_identities(&signals.read(), &seeds, caps);
+                        // Local instance cache for this Enter-handler
+                        // invocation. Distinct from the per-render
+                        // cache because key handlers are not on the
+                        // render path — they fire on demand and
+                        // resolve against the current registry state.
+                        let instance_cache =
+                            attend_instances::SnapshotCache::new();
+                        let agents = known_identities(
+                            &signals.read(),
+                            &seeds,
+                            caps,
+                            &instance_cache,
+                        );
                         let result = match parse_addressed(&msg) {
                             Some(Addressed::Agent(name)) => {
                                 match resolve_nickname(name, &agents) {
@@ -128,8 +180,30 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                                 }
                             }
                             Some(Addressed::Group(name)) => match resolve_group_dir(name) {
-                                Some(dir) => write_signal(&dir, &msg)
-                                    .map(|n| format!("sent → #{name}: {n}")),
+                                // Empty-group rejection (ADR-129
+                                // follow-up). Mirrors PR #75's
+                                // `attend send --focus` discipline:
+                                // a `#groupname` send to a group
+                                // with zero live members would land
+                                // in `@<name>/` and sit unread until
+                                // cleanup, with the chat reporting
+                                // "sent" so the user assumes
+                                // delivery. The base channel
+                                // (`#open`) bypasses the check —
+                                // it rides `_broadcast/`, where
+                                // every attend scans regardless
+                                // of group membership.
+                                Some(dir) if live_peer_count(name) > 0 => {
+                                    write_signal(&dir, &msg)
+                                        .map(|n| format!("sent → #{name}: {n}"))
+                                }
+                                Some(_) => Err(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    format!(
+                                        "#{name}: no live peers — message would not be read. \
+                                         Try #open to broadcast."
+                                    ),
+                                )),
                                 None => Err(std::io::Error::new(
                                     std::io::ErrorKind::NotFound,
                                     format!("#{name}: unknown group"),
@@ -148,14 +222,24 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                     }
                 }
                 KeyCode::Tab => {
-                    // Autocomplete a trailing mention. Dispatches by
-                    // sigil: `@partial` → agent pool, `#partial` →
-                    // group pool. No-op if the caret isn't at the end
-                    // of the buffer or there's no mention context —
-                    // avoids surprising edits mid-sentence.
+                    // Autocomplete a trailing mention. First Tab on
+                    // `@partial` inserts the first matching candidate
+                    // and remembers the cycle (candidates +
+                    // index + sigil). Subsequent Tabs advance through
+                    // the cycle, wrapping at the end. A keystroke
+                    // that breaks the tail (typing a letter, moving
+                    // the cursor, etc.) silently invalidates the
+                    // cycle on the next Tab — the buffer's trailing
+                    // `@<name> ` no longer matches `candidates[index]`,
+                    // so we restart fresh from whatever partial is
+                    // currently typed.
+                    //
+                    // No-op if the caret isn't at the end of the
+                    // buffer — avoids surprising edits mid-sentence.
                     let buf = input.read().clone();
                     let pos = cursor.get();
                     if pos != buf.chars().count() {
+                        tab_cycle.set(None);
                         return;
                     }
                     // Slash completion runs first — its grammar is
@@ -169,27 +253,93 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                             input.set(next);
                             cursor.set(new_cursor);
                         }
+                        // Slash and `@`/`#` share the cycle slot;
+                        // resetting prevents a stale agent cycle
+                        // from carrying across a slash insertion.
+                        tab_cycle.set(None);
                         return;
                     }
                     let caps = TermCaps::detect();
-                    let Some(mention) = find_trailing_mention(&buf) else { return };
-                    let completed: Option<(String, usize)> = match mention.sigil {
+
+                    // Cycling: if we have a stored cycle and the
+                    // buffer still ends with the candidate we
+                    // just inserted (sigil + name + trailing
+                    // space, the exact form `apply_completion`
+                    // produces), advance to the next candidate.
+                    let cycle_now = tab_cycle.read().clone();
+                    if let Some(c) = cycle_now {
+                        let sigil_char = match c.sigil {
+                            Sigil::Agent => '@',
+                            Sigil::Group => '#',
+                        };
+                        let expected_tail =
+                            format!("{}{} ", sigil_char, c.candidates[c.index]);
+                        if buf.ends_with(&expected_tail) && !c.candidates.is_empty() {
+                            let next_idx =
+                                (c.index + 1) % c.candidates.len();
+                            let next = &c.candidates[next_idx];
+                            // Splice the old tail off and append
+                            // the new one. We work in chars rather
+                            // than bytes so multi-byte names stay
+                            // intact.
+                            let total_chars = buf.chars().count();
+                            let tail_chars =
+                                expected_tail.chars().count();
+                            let head: String = buf
+                                .chars()
+                                .take(total_chars - tail_chars)
+                                .collect();
+                            let new_buf =
+                                format!("{}{}{} ", head, sigil_char, next);
+                            let new_cursor = new_buf.chars().count();
+                            input.set(new_buf);
+                            cursor.set(new_cursor);
+                            tab_cycle.set(Some(TabCycle {
+                                index: next_idx,
+                                ..c
+                            }));
+                            return;
+                        }
+                    }
+
+                    // Fresh cycle: derive candidates from the current
+                    // trailing mention.
+                    let Some(mention) = find_trailing_mention(&buf) else {
+                        tab_cycle.set(None);
+                        return;
+                    };
+                    let candidates: Vec<String> = match mention.sigil {
                         Sigil::Agent => {
                             let seeds = discover_sessions();
-                            let agents = known_identities(&signals.read(), &seeds, caps);
-                            best_completion(mention.partial, &agents)
-                                .map(|hit| apply_completion(&buf, &mention, &hit.nickname))
+                            let instance_cache =
+                                attend_instances::SnapshotCache::new();
+                            let agents = known_identities(
+                                &signals.read(),
+                                &seeds,
+                                caps,
+                                &instance_cache,
+                            );
+                            all_completions(mention.partial, &agents)
                         }
                         Sigil::Group => {
                             let groups = channels(caps);
-                            best_group_completion(mention.partial, &groups)
-                                .map(|hit| apply_completion(&buf, &mention, &hit.group.name))
+                            all_group_completions(mention.partial, &groups)
                         }
                     };
-                    if let Some((next, new_cursor)) = completed {
-                        input.set(next);
-                        cursor.set(new_cursor);
+                    if candidates.is_empty() {
+                        tab_cycle.set(None);
+                        return;
                     }
+                    let first = candidates[0].clone();
+                    let (next_buf, new_cursor) =
+                        apply_completion(&buf, &mention, &first);
+                    input.set(next_buf);
+                    cursor.set(new_cursor);
+                    tab_cycle.set(Some(TabCycle {
+                        sigil: mention.sigil,
+                        candidates,
+                        index: 0,
+                    }));
                 }
                 KeyCode::Backspace => {
                     let v = input.read().clone();
@@ -279,6 +429,19 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     // every chip. Cheap env reads, but doing it in the per-signal map
     // would still be pointless repetition.
     let caps = TermCaps::detect();
+    // Subscribe to the wall-clock refresh tick so iocraft re-renders
+    // when the timer future bumps it. The value itself is not used —
+    // we only need the read to register the dependency in the
+    // reactive graph. Drives time-based discovery (new peers
+    // appear, stale peers disappear) without requiring a key event.
+    let _refresh = tick.get();
+    // Per-render instance-registry cache (ADR-129; PR #77 review).
+    // Built once at the top of each render and passed down to every
+    // chip / known_identities call so the registry yaml is read at
+    // most once per distinct cwd per render. Deliberately scoped to
+    // this function — never share across renders, since the
+    // registry can change between renders (peer registers, GC).
+    let instance_cache = attend_instances::SnapshotCache::new();
     // Registries and trailing-partial for the legend + completion
     // highlight. Re-derived each render:
     // - `known_identities`: dedupes in O(n) over the capped signal
@@ -288,7 +451,7 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     //   history), so the cost is negligible next to the render we'd
     //   do anyway. Simpler than caching with invalidation.
     let seed_sessions = discover_sessions();
-    let known = known_identities(&signals.read(), &seed_sessions, caps);
+    let known = known_identities(&signals.read(), &seed_sessions, caps, &instance_cache);
     // `channels` prepends the synthetic `#open` base and drops any
     // lingering literal `open` group so the legend has a single
     // commons chip (ADR-124 §1–§2). The base entry has empty
@@ -331,7 +494,7 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
         .read()
         .iter()
         .map(|s| {
-            let chip = chip_for(&s.from, &s.project, &s.cwd, caps);
+            let chip = chip_for(&s.from, &s.project, &s.cwd, caps, &instance_cache);
             let weight = if chip.style.bold { Weight::Bold } else { Weight::Normal };
             let color = color_for(chip.palette, caps);
             // Group glyphs for this chip: cross-reference the

@@ -12,6 +12,7 @@
 //! than a growing `app.rs`.
 
 use agent_identity::{Identity, PaletteEntry, Style, TermCaps};
+use attend_instances::SnapshotCache;
 use iocraft::prelude::Color;
 
 use crate::sessions::DiscoveredSession;
@@ -40,14 +41,26 @@ pub struct ChipInfo {
 /// Derive the chip from the wire `from`/`project`/`cwd` triple.
 ///
 /// Claudes get a stable nickname keyed on their full cwd path (see
-/// `agent_identity::Identity::for_cwd`). Humans keep their username
-/// but still pick up a color + style from the identity table so the
-/// avatar is visually consistent everywhere the same user shows up.
+/// `agent_identity::Identity::for_cwd`) plus an instance suffix
+/// resolved through `instances` (ADR-129). Humans keep their
+/// username but still pick up a color + style from the identity
+/// table so the avatar is visually consistent everywhere the same
+/// user shows up.
+///
+/// `instances` is a per-render cache that collapses repeat lookups
+/// for the same cwd into a single registry read. Build it once at
+/// the top of a render pass and pass it through to every chip.
 ///
 /// This function never touches the wire format — identity is pure
 /// receiver-side rendering. If the signal's `from` doesn't match a
 /// known prefix, we fall through to showing the raw value.
-pub fn chip_for(from: &str, project: &str, cwd: &str, caps: TermCaps) -> ChipInfo {
+pub fn chip_for(
+    from: &str,
+    project: &str,
+    cwd: &str,
+    caps: TermCaps,
+    instances: &SnapshotCache,
+) -> ChipInfo {
     let interior = (CHIP_WIDTH as usize).saturating_sub(4);
     let scope_src = if cwd.is_empty() { project } else { cwd };
     let scope_segment = scope_src.rsplit('/').next().unwrap_or(scope_src);
@@ -60,13 +73,12 @@ pub fn chip_for(from: &str, project: &str, cwd: &str, caps: TermCaps) -> ChipInf
     if let Some(uuid) = from.strip_prefix("claude:") {
         // For claude senders the cwd is the stable identity key. We
         // don't hash the session UUID — two sequential claudes in the
-        // same dir should wear the same name, matching the user's
-        // mental model of "the agent that lives here". The UUID
-        // flows to ChipInfo.session_id so the chip can look up
-        // group membership against _groups.yaml.
+        // same dir wear the same nickname stem, with a per-session
+        // instance suffix (ADR-129) appended to disambiguate.
         let id = Identity::for_cwd(cwd, caps);
+        let display = with_instance(id.nickname, cwd, uuid, instances);
         ChipInfo {
-            primary: truncate(id.nickname, interior),
+            primary: truncate(&display, interior),
             secondary: truncate(&scope, interior),
             palette: id.palette,
             style: id.style,
@@ -143,17 +155,52 @@ pub fn known_identities(
     signals: &[Signal],
     seeds: &[DiscoveredSession],
     caps: TermCaps,
+    instances: &SnapshotCache,
 ) -> Vec<KnownIdentity> {
+    // Production wrapper: gate on heartbeat freshness (ADR-129).
+    known_identities_with_liveness(signals, seeds, caps, claude_is_live, instances)
+}
+
+/// Same as [`known_identities`] but with an injectable claude-liveness
+/// predicate. Production calls the wrapper above (which uses the
+/// heartbeat sidecar); tests pass `|_| true` so they can drive the
+/// dedup / ordering invariants without standing up a heartbeat
+/// fixture for every synthetic session id.
+pub fn known_identities_with_liveness<F>(
+    signals: &[Signal],
+    seeds: &[DiscoveredSession],
+    caps: TermCaps,
+    is_live: F,
+    instances: &SnapshotCache,
+) -> Vec<KnownIdentity>
+where
+    F: Fn(&str) -> bool,
+{
     // Walk from newest to oldest so the first time we see a cwd we
     // also capture its most-recent-seen position. A HashSet of cwd
     // strings keeps dedup O(n) without depending on a hasher.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<KnownIdentity> = Vec::new();
     for sig in signals.iter().rev() {
-        let (primary_label, is_claude, id) = if sig.from.strip_prefix("claude:").is_some() {
+        let (primary_label, is_claude, id) = if let Some(sid) = sig.from.strip_prefix("claude:") {
+            // Liveness gate (ADR-129): a claude whose attend has not
+            // touched its heartbeat within grace is dropped from the
+            // legend. The signal stays in history (with its dim chip),
+            // but `@`-completion and the agent legend should not point
+            // at peers nobody can reach.
+            if !is_live(sid) {
+                continue;
+            }
             let id = Identity::for_cwd(&sig.cwd, caps);
-            (id.nickname.to_string(), true, id)
+            // Instance suffix: `@Tamsin-alpha` is the addressable name
+            // — same-cwd siblings differ on the suffix and dedupe as
+            // distinct entries in the legend.
+            let display = with_instance(id.nickname, &sig.cwd, sid, instances);
+            (display, true, id)
         } else if let Some(rest) = sig.from.strip_prefix("external:") {
+            // Humans are not liveness-filtered — they have no heartbeat
+            // and an `@<user>` mention does not route to a session
+            // inbox. Their legend entry is informational only.
             let username = rest.split('@').next().unwrap_or(rest).to_string();
             let scope = agent_identity::cwd_basename(&sig.cwd);
             let id = Identity::for_user(&username, &scope, caps);
@@ -190,12 +237,18 @@ pub fn known_identities(
     // Seed from discovered sessions — any claude cwd we haven't
     // already registered from a signal. Keys match the signal-
     // branch format so the same cwd doesn't double-register.
+    // Same liveness gate applies: a session.json on disk is not
+    // sufficient evidence that attend is running for that session.
     for seed in seeds {
+        if !is_live(&seed.session_id) {
+            continue;
+        }
         let id = Identity::for_cwd(&seed.cwd, caps);
-        let key = format!("{}\x1f1\x1f{}", id.nickname, seed.cwd);
+        let display = with_instance(id.nickname, &seed.cwd, &seed.session_id, instances);
+        let key = format!("{}\x1f1\x1f{}", display, seed.cwd);
         if seen.insert(key) {
             out.push(KnownIdentity {
-                nickname: id.nickname.to_string(),
+                nickname: display,
                 cwd: seed.cwd.clone(),
                 is_claude: true,
                 palette: id.palette,
@@ -206,21 +259,125 @@ pub fn known_identities(
     out
 }
 
+/// Heartbeat-based liveness check (ADR-129). Wrapped here so the
+/// known_identities filter has a single name for the gate; the
+/// underlying `attend_heartbeat::is_fresh` is the source of truth.
+fn claude_is_live(session_id: &str) -> bool {
+    attend_heartbeat::is_fresh(session_id, attend_heartbeat::DEFAULT_GRACE)
+}
+
+/// Compose `<nickname>-<instance>` for a claude session (ADR-129).
+/// Falls back to the bare nickname when the registry has no entry —
+/// only happens in the moments before a session has registered, or
+/// when the registry file is unreadable.
+///
+/// Reads through `instances`, which caches per-cwd snapshots for
+/// the lifetime of one render pass. Without this cache the render
+/// path read + parsed the registry yaml once per chip; with it,
+/// the read is amortized to once per distinct cwd per render.
+fn with_instance(nickname: &str, cwd: &str, session_id: &str, instances: &SnapshotCache) -> String {
+    match instances.lookup(cwd, session_id) {
+        Some(inst) => format!("{nickname}-{inst}"),
+        None => nickname.to_string(),
+    }
+}
+
 /// Resolve an `@Nickname` token to a routable cwd.
 ///
 /// Returns `Some(cwd)` only for claude identities — humans don't have
-/// a signal inbox we can post into. Case-insensitive match to be
-/// gentle on typos (the nickname pool is case-distinct, but a user
-/// typing `@tamsin` should still hit `Tamsin`).
+/// a signal inbox we can post into.
+///
+/// Matching is forgiving:
+/// 1. **Exact** (case-insensitive). `@tamsin` hits `Tamsin`. If two
+///    distinct cwds happen to share the exact same nickname stem
+///    (rare cross-cwd hash collision in `agent_identity::names` —
+///    pre-existing but visible now that suffixes can coincide), the
+///    resolver refuses rather than silently routing to whichever
+///    appeared first in the legend.
+/// 2. **Fuzzy** (Levenshtein ≤ 2) when no exact match exists. Catches
+///    typos and transpositions: `@Tasmin-alpha` → `Tamsin-alpha`,
+///    `@Cleo` → `Cleo`. The Levenshtein cap of 2 allows two character
+///    edits (a transposition is two edits in plain Levenshtein) while
+///    still distinguishing genuinely different names.
+/// 3. **Ambiguity is failure.** If two candidates tie for the same
+///    minimum distance, return `None` — silently routing to the
+///    wrong agent is worse than an unknown-nickname error. The
+///    caller can re-ask with disambiguation when needed.
 pub fn resolve_nickname(
     name: &str,
     known: &[KnownIdentity],
 ) -> Option<String> {
     let lc = name.to_ascii_lowercase();
-    known
+
+    // Pass 1: exact match (case-insensitive). Refuse on ambiguity —
+    // if two claudes from different cwds collide on the same
+    // nickname (their cwd hashes both landed on the same name pool
+    // index, then both registered the same per-cwd `alpha`), we
+    // must not route to whichever was discovered first.
+    let exact: Vec<&KnownIdentity> = known
         .iter()
-        .find(|k| k.is_claude && k.nickname.to_ascii_lowercase() == lc)
-        .map(|k| k.cwd.clone())
+        .filter(|k| k.is_claude && k.nickname.to_ascii_lowercase() == lc)
+        .collect();
+    match exact.as_slice() {
+        [single] => return Some(single.cwd.clone()),
+        [] => {}
+        _ => return None, // ambiguous — refuse to misroute
+    }
+
+    // Pass 2: fuzzy match. Walk all claude nicknames once, tracking
+    // (best_distance, best_cwd, tie_count). Tie at min distance means
+    // we cannot pick safely.
+    const MAX_DIST: usize = 2;
+    let mut best: Option<(usize, &str, usize)> = None; // (dist, cwd, tie_count)
+    for k in known.iter().filter(|k| k.is_claude) {
+        let cand = k.nickname.to_ascii_lowercase();
+        let dist = levenshtein(&lc, &cand);
+        if dist > MAX_DIST {
+            continue;
+        }
+        match best {
+            None => best = Some((dist, &k.cwd, 1)),
+            Some((bd, _, _)) if dist < bd => best = Some((dist, &k.cwd, 1)),
+            Some((bd, bcwd, n)) if dist == bd => best = Some((bd, bcwd, n + 1)),
+            _ => {}
+        }
+    }
+    match best {
+        Some((_, cwd, 1)) => Some(cwd.to_string()),
+        _ => None,
+    }
+}
+
+/// Levenshtein distance with a small early-exit. Iterative O(n*m)
+/// space-optimised to two rows. The nickname pool is small and
+/// names are short (≤ ~16 chars with suffix), so the cost is
+/// negligible per render.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (n, m) = (a.len(), b.len());
+    if n == 0 {
+        return m;
+    }
+    if m == 0 {
+        return n;
+    }
+    // Cheap early-exit: if the length difference alone exceeds any
+    // threshold a caller cares about, the distance is at least that.
+    // We don't take a threshold here, but trivially bound it.
+    let mut prev: Vec<usize> = (0..=m).collect();
+    let mut curr: Vec<usize> = vec![0; m + 1];
+    for i in 1..=n {
+        curr[0] = i;
+        for j in 1..=m {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1)
+                .min(curr[j - 1] + 1)
+                .min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[m]
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -239,6 +396,15 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    /// Synthetic test session_ids never have registry entries, so a
+    /// fresh cache always returns `None` from `lookup` and the suffix
+    /// path falls back to bare nicknames. Tests that already worked
+    /// against the un-cached `with_instance` continue to pass; the
+    /// per-render cache is purely a performance addition.
+    fn empty_cache() -> SnapshotCache {
+        SnapshotCache::new()
+    }
+
     #[test]
     fn claude_sender_uses_derived_nickname() {
         // A claude in /home/aaron/.claude gets a nickname from the
@@ -248,6 +414,7 @@ mod tests {
             "claude",
             "/home/aaron/.claude",
             TermCaps::Rich,
+            &empty_cache(),
         );
         let expected = Identity::for_cwd("/home/aaron/.claude", TermCaps::Rich);
         assert_eq!(chip.primary, expected.nickname);
@@ -259,20 +426,20 @@ mod tests {
         // Two sequential claudes in the same cwd should show the same
         // name — the session UUID changes but identity is keyed on
         // cwd, not session.
-        let a = chip_for("claude:aaaa-1", "p", "/home/x", TermCaps::Rich);
-        let b = chip_for("claude:bbbb-2", "p", "/home/x", TermCaps::Rich);
+        let a = chip_for("claude:aaaa-1", "p", "/home/x", TermCaps::Rich, &empty_cache());
+        let b = chip_for("claude:bbbb-2", "p", "/home/x", TermCaps::Rich, &empty_cache());
         assert_eq!(a.primary, b.primary);
     }
 
     #[test]
     fn scope_prefers_cwd_basename_over_project() {
-        let chip = chip_for("external:aaron", "ignored", "/home/aaron/temp", TermCaps::Rich);
+        let chip = chip_for("external:aaron", "ignored", "/home/aaron/temp", TermCaps::Rich, &empty_cache());
         assert_eq!(chip.secondary, "temp");
     }
 
     #[test]
     fn external_strips_terminal_suffix() {
-        let chip = chip_for("external:aaron@kitty", "proj", "/home/aaron", TermCaps::Rich);
+        let chip = chip_for("external:aaron@kitty", "proj", "/home/aaron", TermCaps::Rich, &empty_cache());
         assert_eq!(chip.primary, "aaron");
     }
 
@@ -284,6 +451,7 @@ mod tests {
             "x",
             "/tmp/some-very-long-directory-name",
             TermCaps::Rich,
+            &empty_cache(),
         );
         assert!(chip.secondary.chars().count() <= 16);
         assert!(chip.secondary.ends_with('…'));
@@ -293,8 +461,8 @@ mod tests {
     fn unknown_sender_still_colored() {
         // Something that isn't claude: or external: — we don't crash,
         // we show the raw value and pick a color off it.
-        let a = chip_for("mystery:abc", "", "/tmp", TermCaps::Rich);
-        let b = chip_for("mystery:xyz", "", "/tmp", TermCaps::Rich);
+        let a = chip_for("mystery:abc", "", "/tmp", TermCaps::Rich, &empty_cache());
+        let b = chip_for("mystery:xyz", "", "/tmp", TermCaps::Rich, &empty_cache());
         // Different senders → different colors most of the time. We
         // don't assert inequality (palette is finite), just that the
         // code path doesn't panic and produces valid output.
@@ -339,7 +507,7 @@ mod tests {
             sig("claude:a", "/home/x"), // same cwd, should dedup
             sig("claude:b", "/home/y"),
         ];
-        let reg = known_identities(&buf, &[], TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &[], TermCaps::Rich, |_| true, &empty_cache());
         assert_eq!(reg.len(), 2, "expected 2 unique identities, got {}", reg.len());
     }
 
@@ -349,7 +517,7 @@ mod tests {
             sig("claude:a", "/home/x"),
             sig("claude:b", "/home/y"),
         ];
-        let reg = known_identities(&buf, &[], TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &[], TermCaps::Rich, |_| true, &empty_cache());
         // Buffer order is oldest→newest; registry should surface the
         // most-recent cwd first so active peers lead the legend.
         let y_id = Identity::for_cwd("/home/y", TermCaps::Rich);
@@ -359,7 +527,7 @@ mod tests {
     #[test]
     fn registry_includes_humans() {
         let buf = vec![sig("external:aaron@kitty", "/home/aaron/Projects")];
-        let reg = known_identities(&buf, &[], TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &[], TermCaps::Rich, |_| true, &empty_cache());
         assert_eq!(reg.len(), 1);
         assert_eq!(reg[0].nickname, "aaron");
         assert!(!reg[0].is_claude);
@@ -375,7 +543,7 @@ mod tests {
             sig("external:aaron@kitty", "/home/aaron/Projects"),
             sig("external:aaron@kitty", "/home/aaron/.claude"),
         ];
-        let reg = known_identities(&buf, &[], TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &[], TermCaps::Rich, |_| true, &empty_cache());
         let aarons: Vec<_> = reg.iter().filter(|k| k.nickname == "aaron").collect();
         assert_eq!(aarons.len(), 1, "expected a single aaron entry, got {}", aarons.len());
     }
@@ -388,14 +556,14 @@ mod tests {
             sig("claude:a", "/home/me/proj-a"),
             sig("claude:b", "/home/me/proj-b"),
         ];
-        let reg = known_identities(&buf, &[], TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &[], TermCaps::Rich, |_| true, &empty_cache());
         assert_eq!(reg.len(), 2);
     }
 
     #[test]
     fn registry_skips_unknown_prefix() {
         let buf = vec![sig("mystery:abc", "/tmp")];
-        let reg = known_identities(&buf, &[], TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &[], TermCaps::Rich, |_| true, &empty_cache());
         assert!(reg.is_empty(), "unknown prefix should be ignored, got {reg:?}");
     }
 
@@ -407,7 +575,7 @@ mod tests {
             DiscoveredSession { cwd: "/home/x".to_string(), session_id: "sx".into() },
             DiscoveredSession { cwd: "/home/y".to_string(), session_id: "sy".into() },
         ];
-        let reg = known_identities(&[], &seeds, TermCaps::Rich);
+        let reg = known_identities_with_liveness(&[], &seeds, TermCaps::Rich, |_| true, &empty_cache());
         assert_eq!(reg.len(), 2);
         assert!(reg.iter().all(|k| k.is_claude));
     }
@@ -424,7 +592,7 @@ mod tests {
             cwd: "/Y".to_string(),
             session_id: "sy".into(),
         }];
-        let reg = known_identities(&buf, &seeds, TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &seeds, TermCaps::Rich, |_| true, &empty_cache());
         assert_eq!(reg.len(), 2);
         assert_eq!(reg[0].cwd, "/X", "signal-derived entry must lead");
         assert_eq!(reg[1].cwd, "/Y", "seed-only entry falls in after");
@@ -439,7 +607,7 @@ mod tests {
             cwd: "/home/x".to_string(),
             session_id: "sx".into(),
         }];
-        let reg = known_identities(&buf, &seeds, TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &seeds, TermCaps::Rich, |_| true, &empty_cache());
         assert_eq!(reg.len(), 1);
     }
 
@@ -449,7 +617,7 @@ mod tests {
             sig("claude:a", "/home/repo"),
             sig("external:aaron@kitty", "/home/aaron/Projects"),
         ];
-        let reg = known_identities(&buf, &[], TermCaps::Rich);
+        let reg = known_identities_with_liveness(&buf, &[], TermCaps::Rich, |_| true, &empty_cache());
         let claude_nick = &reg.iter().find(|k| k.is_claude).unwrap().nickname;
         // Case-insensitive match hits the claude cwd.
         let lowered = claude_nick.to_ascii_lowercase();
@@ -459,5 +627,134 @@ mod tests {
         assert_eq!(resolve_nickname("aaron", &reg), None);
         // Unknown nickname → None.
         assert_eq!(resolve_nickname("NotReal", &reg), None);
+    }
+
+    fn known(nick: &str, cwd: &str) -> KnownIdentity {
+        // Bypass the file-touching identity derivation — tests for
+        // resolve_nickname only care about the nickname/cwd shape.
+        let id = Identity::for_cwd(cwd, TermCaps::Rich);
+        KnownIdentity {
+            nickname: nick.to_string(),
+            cwd: cwd.to_string(),
+            is_claude: true,
+            palette: id.palette,
+            style: id.style,
+        }
+    }
+
+    #[test]
+    fn resolve_nickname_fuzzy_matches_single_typo() {
+        // Live regression: user typed `@Tasmin-alpha` (transposed
+        // m/s) and got "unknown nickname". With distance ≤ 2 we
+        // recover the intended target.
+        let reg = vec![known("Tamsin-alpha", "/home/aaron/.claude")];
+        assert_eq!(
+            resolve_nickname("Tasmin-alpha", &reg),
+            Some("/home/aaron/.claude".into())
+        );
+    }
+
+    #[test]
+    fn resolve_nickname_fuzzy_picks_clear_winner() {
+        // Two candidates, one obviously closer. The closer one wins.
+        let reg = vec![
+            known("Tamsin-alpha", "/cwd-a"),
+            known("Tamsin-beta", "/cwd-a"),
+        ];
+        // `Tamsin-alpa` (missing `h`) → distance 1 to alpha, 4 to beta.
+        assert_eq!(
+            resolve_nickname("Tamsin-alpa", &reg),
+            Some("/cwd-a".into())
+        );
+    }
+
+    #[test]
+    fn resolve_nickname_returns_none_when_ambiguous_at_min_distance() {
+        // If two nicknames tie for the same minimum distance, refuse
+        // — silent routing to the wrong agent is worse than a
+        // typed-error message the user can correct.
+        let reg = vec![
+            known("Cleo-alpha", "/cwd-a"),
+            known("Cleo-beta", "/cwd-b"),
+        ];
+        // `Cleo` is exactly 5 edits from each suffix; both 5 > 2 so
+        // neither matches and we get None. Use a more targeted case:
+        // `Tamsin-alphz` and `Tamsin-betaa` would tie at distance 1
+        // — but our pool is symmetric. Construct a real tie:
+        let reg2 = vec![
+            known("Foo", "/x"),
+            known("Bar", "/y"),
+        ];
+        // `Fop` is distance 1 from both? No — `Fop` vs Foo = 1 (sub
+        // p→o), vs Bar = 3. Bad example. Use:
+        let reg3 = vec![
+            known("aab", "/x"),
+            known("aac", "/y"),
+        ];
+        // `aad` is distance 1 from both. Tie → None.
+        assert_eq!(resolve_nickname("aad", &reg3), None);
+        // Sanity: the helpers used above don't trip the tie path.
+        let _ = (reg, reg2);
+    }
+
+    #[test]
+    fn resolve_nickname_rejects_beyond_threshold() {
+        // Distance > 2 must not match. Prevents wild misroutes when
+        // a user types something genuinely different.
+        let reg = vec![known("Tamsin-alpha", "/cwd-a")];
+        // 4 edits — well past the 2-edit cap.
+        assert_eq!(resolve_nickname("Wild-omega", &reg), None);
+    }
+
+    #[test]
+    fn resolve_nickname_exact_match_wins_over_fuzzy() {
+        // When an exact match exists, never substitute. Fuzzy is a
+        // fallback, not a "best-of" comparator.
+        let reg = vec![
+            known("Foo", "/exact"),
+            known("Foa", "/close"), // distance 1
+        ];
+        assert_eq!(resolve_nickname("foo", &reg), Some("/exact".into()));
+    }
+
+    #[test]
+    fn resolve_nickname_refuses_cross_cwd_exact_collision() {
+        // PR #77 review concern. Two distinct cwds whose hashes happen
+        // to land on the same name pool index (rare but real — pool
+        // is finite, ~200 entries) AND both registered as `alpha` in
+        // their respective per-cwd registries collide on the same
+        // displayed nickname. Pre-fix, `find` returned whichever
+        // appeared first in the legend; the message would silently
+        // misroute. Now we count and refuse.
+        let reg = vec![
+            known("Tamsin-alpha", "/cwd-1"),
+            known("Tamsin-alpha", "/cwd-2"),
+        ];
+        assert_eq!(resolve_nickname("Tamsin-alpha", &reg), None);
+    }
+
+    #[test]
+    fn resolve_nickname_exact_still_routes_when_unique() {
+        // Sanity counterpart: a single exact match resolves. The
+        // ambiguity check should not introduce a false-negative for
+        // the common case.
+        let reg = vec![
+            known("Tamsin-alpha", "/cwd-1"),
+            known("Cleo-alpha", "/cwd-2"),
+        ];
+        assert_eq!(
+            resolve_nickname("Tamsin-alpha", &reg),
+            Some("/cwd-1".into())
+        );
+    }
+
+    #[test]
+    fn levenshtein_canonical_cases() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("a", ""), 1);
+        assert_eq!(levenshtein("", "abc"), 3);
+        assert_eq!(levenshtein("kitten", "sitting"), 3); // textbook
+        assert_eq!(levenshtein("tasmin", "tamsin"), 2);  // transposition
+        assert_eq!(levenshtein("foo", "foo"), 0);
     }
 }

@@ -120,6 +120,81 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
 
     // Initialize rooms for signal routing (ADR-118)
     let session_id = own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
+
+    // Duplicate-attend guard (ADR-129). Acquire an exclusive flock on
+    // our heartbeat file so a second attend process cannot start for
+    // the same session. The lock is released by the kernel on process
+    // exit, so a panicking or killed attend does not need a janitor.
+    //
+    // Self-reload exec() keeps file descriptors and their flocks open,
+    // so the post-exec process *should* already hold the lock through
+    // FD inheritance. Re-acquiring with a fresh FD on that path will
+    // therefore return EWOULDBLOCK — we treat that as success on the
+    // reload path (gated on `ATTEND_RELOADED_FROM`).
+    //
+    // We still attempt the acquire on the reload path so the
+    // bootstrap migration works: when an older binary that did not
+    // take a lock execs into a new binary that does, the new process
+    // has no inherited lock, and the attempt below cleanly grabs one.
+    //
+    // The lock value lives on the stack until `cmd_run` returns; the
+    // sensor loop never returns under normal operation, so the lock
+    // effectively lives for the life of the process.
+    let reloaded = std::env::var("ATTEND_RELOADED_FROM").is_ok();
+    let _session_lock = match attend_heartbeat::try_acquire_session_lock(&session_id) {
+        Ok(Some(lock)) => Some(lock),
+        Ok(None) if reloaded => {
+            // The old binary's lock is still held through the inherited
+            // FD — that is the running attend, which is now us. No new
+            // lock object to track; the pre-exec FD continues to hold
+            // the kernel state until process exit.
+            None
+        }
+        Ok(None) => {
+            eprintln!(
+                "[attend] another attend is already running for session {session_id}; exiting cleanly"
+            );
+            return;
+        }
+        Err(e) => {
+            // Best-effort: log and proceed without a lock. A failed
+            // open is rare (permissions, missing dir), and exiting
+            // attend over a transient FS error would be a worse
+            // failure mode than running without the duplicate guard
+            // for one session.
+            emit::log(&format!(
+                "session lock unavailable ({e}); proceeding without duplicate-attend guard"
+            ));
+            None
+        }
+    };
+
+    // Instance registry (ADR-129). Register or reclaim our slot in
+    // this cwd. Logged at startup so the operator can correlate a
+    // running attend with its discriminator suffix without reading
+    // the on-disk yaml. Registration is read-modify-write under
+    // flock — if another attend is racing for the same slot, CAS
+    // resolves it; we always end up with a deterministic instance.
+    //
+    // Failure here is non-fatal — the registry file is on the same
+    // ~/.cache path as everything else; if writes fail the rest of
+    // attend will fail similarly. Log and continue with no
+    // discriminator so renders fall back to the bare nickname.
+    let instance_registry = attend_instances::Registry::new();
+    let my_instance = match instance_registry.register(&focus.working_dir, &session_id) {
+        Ok(s) => {
+            emit::log(&format!("instance: {s} (cwd: {})", focus.working_dir));
+            Some(s)
+        }
+        Err(e) => {
+            emit::log(&format!(
+                "instance registry unavailable ({e}); rendering without suffix"
+            ));
+            None
+        }
+    };
+    let _ = &my_instance; // consumed by render layer once the suffix is wired in
+
     let group_mgr = groups::Groups::new(&signals_base(), &session_id);
 
     // ADR-124 one-shot: fold any lingering `@open/` group into the
@@ -277,6 +352,14 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
     let mut last_checkpoint = Instant::now();
     let checkpoint_interval = Duration::from_secs(30);
 
+    // Instance registry refresh (ADR-129). Touches our row's
+    // `last_seen` so the 7-day GC clock cannot expire an active
+    // session. Touch is a small flock-protected read-modify-write,
+    // and last_seen is only used for GC, so once-per-minute is more
+    // than enough headroom against the day-scale grace window.
+    let mut last_instance_touch = Instant::now();
+    let instance_touch_interval = Duration::from_secs(60);
+
     // Auto-cleanup timer — prune stale signal files and empty project dirs.
     // Default 30-day retention + 10-minute sweep interval (see CleanupConfig).
     // Fire a first sweep on startup so long-running instances don't wait
@@ -309,7 +392,22 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
     let mut last_reload_check = Instant::now();
     let reload_check_interval = Duration::from_secs(10);
 
+    // Heartbeat identifier (ADR-129). Real session id when resolvable,
+    // otherwise a pid-based fallback so a heartbeat exists even when
+    // session resolution is racing claude's startup. Re-derived here
+    // because the canonical `session_id` was shadowed by `state_store`'s
+    // Option<String> form.
+    let heartbeat_id =
+        own_session_id().unwrap_or_else(|| format!("pid-{}", std::process::id()));
+
     loop {
+        // Heartbeat — touched at the top of every tick so a single
+        // skipped poll cannot evict this session from peer liveness
+        // checks (groups::session_alive, attend-chat known_identities
+        // filter). Best-effort: a missing write is recoverable on the
+        // next iteration.
+        attend_heartbeat::touch(&heartbeat_id).ok();
+
         // Check for binary change
         if last_reload_check.elapsed() >= reload_check_interval {
             if let (Some(ref exe), Some(ref orig_mtime)) = (&self_exe, &initial_mtime) {
@@ -472,6 +570,19 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
             let snapshot = collect_snapshot(&slots);
             state_store.checkpoint(&snapshot);
             last_checkpoint = Instant::now();
+        }
+
+        // Periodic instance-registry touch — refresh last_seen so the
+        // GC clock cannot expire an active session. Cheap when we
+        // already know we have an entry; no-op when registration
+        // failed at startup. Use heartbeat_id (the String form
+        // resolved at startup, before `session_id` was shadowed by
+        // the state_store's Option<String> form).
+        if last_instance_touch.elapsed() >= instance_touch_interval {
+            instance_registry
+                .touch(&focus.working_dir, &heartbeat_id)
+                .ok();
+            last_instance_touch = Instant::now();
         }
 
         // Periodic cleanup sweep — remove stale signal files and empty
