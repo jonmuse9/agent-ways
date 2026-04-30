@@ -39,6 +39,13 @@ pub(crate) struct WayCandidate {
 
 // ── Prompt scan ─────────────────────────────────────────────────
 
+/// Match user prompt against ways and emit matched bodies for the agent.
+///
+/// Wired only from the `UserPromptSubmit` hook (`check-prompt.sh`), so the
+/// envelope is hardcoded. If this is ever reused from another hook event,
+/// take a `hook_event` parameter and route through `emit_hook_context` —
+/// `SessionStart` and `PreToolUse` accept the simpler `additionalContext`
+/// shape, while `UserPromptSubmit` requires `hookSpecificOutput`.
 pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()> {
     let project_dir = project
         .map(|s| s.to_string())
