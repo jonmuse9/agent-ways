@@ -1,10 +1,24 @@
 //! Reset session state — clear markers, epochs, and check fire counts.
 //!
 //! Unjams stale session state without restarting Claude Code.
+//!
+//! Clears both the per-session directory under `sessions_root()` and any
+//! known side files written by hooks to fixed `/tmp` paths (e.g. the
+//! response-topics file written by the Stop hook and consumed by
+//! `check-prompt.sh` to enrich prompt matching).
 
 use anyhow::Result;
+use std::path::PathBuf;
 
 use crate::session;
+
+/// Return paths to off-root, per-session state files that hooks write
+/// outside `sessions_root()`. Reset must clear these alongside the main
+/// session directory or matching can be biased by stale topic context
+/// after a reset.
+fn session_side_files(sid: &str) -> Vec<PathBuf> {
+    vec![PathBuf::from(format!("/tmp/claude-response-topics-{sid}"))]
+}
 
 
 pub fn run(session: Option<&str>, all: bool, confirm: bool) -> Result<()> {
@@ -44,26 +58,42 @@ pub fn run(session: Option<&str>, all: bool, confirm: bool) -> Result<()> {
     for sid in &sessions {
         let dir = format!("{}/{sid}", session::sessions_root());
         let path = std::path::Path::new(&dir);
-        if !path.is_dir() {
+        let side_files: Vec<PathBuf> = session_side_files(sid)
+            .into_iter()
+            .filter(|p| p.exists())
+            .collect();
+
+        let has_main = path.is_dir();
+        if !has_main && side_files.is_empty() {
             continue;
         }
 
-        let count = count_files(path);
+        let main_count = if has_main { count_files(path) } else { 0 };
+        let count = main_count + side_files.len();
         let short_id = &sid[..sid.len().min(12)];
 
         if dry_run {
             println!("Session {short_id}... ({count} state files)");
-            // Show summary of what's in the directory
-            let ways = session::list_fired_ways(sid);
-            if !ways.is_empty() {
-                println!("  ways: {}", ways.len());
+            if has_main {
+                let ways = session::list_fired_ways(sid);
+                if !ways.is_empty() {
+                    println!("  ways: {}", ways.len());
+                }
+                let epoch = session::get_epoch(sid);
+                if epoch > 0 {
+                    println!("  epoch: {epoch}");
+                }
             }
-            let epoch = session::get_epoch(sid);
-            if epoch > 0 {
-                println!("  epoch: {epoch}");
+            if !side_files.is_empty() {
+                println!("  side files: {}", side_files.len());
             }
         } else {
-            let _ = std::fs::remove_dir_all(path);
+            if has_main {
+                let _ = std::fs::remove_dir_all(path);
+            }
+            for f in &side_files {
+                let _ = std::fs::remove_file(f);
+            }
             println!("Session {short_id}...: cleared ({count} state files)");
             total += count;
         }

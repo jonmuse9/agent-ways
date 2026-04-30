@@ -358,6 +358,11 @@ enum ScanCommand {
         /// Transcript path (for context-threshold)
         #[arg(long)]
         transcript: Option<String>,
+        /// Hook event that invoked this scan (drives output envelope shape).
+        /// UserPromptSubmit needs `hookSpecificOutput`; other events use the
+        /// simpler `additionalContext` shape. Defaults to SessionStart.
+        #[arg(long, default_value = "SessionStart")]
+        hook_event: String,
     },
 }
 
@@ -515,8 +520,8 @@ fn main() -> Result<()> {
             ScanCommand::Task { query, session, project, team } => {
                 cmd::scan::task(&query, &session, project.as_deref(), team.as_deref())
             }
-            ScanCommand::State { session, project, transcript } => {
-                cmd::scan::state(&session, project.as_deref(), transcript.as_deref())
+            ScanCommand::State { session, project, transcript, hook_event } => {
+                cmd::scan::state(&session, project.as_deref(), transcript.as_deref(), &hook_event)
             }
         },
         Commands::Show { what } => match what {

@@ -39,6 +39,13 @@ pub(crate) struct WayCandidate {
 
 // ── Prompt scan ─────────────────────────────────────────────────
 
+/// Match user prompt against ways and emit matched bodies for the agent.
+///
+/// Wired only from the `UserPromptSubmit` hook (`check-prompt.sh`), so the
+/// envelope is hardcoded. If this is ever reused from another hook event,
+/// take a `hook_event` parameter and route through `emit_hook_context` —
+/// `SessionStart` and `PreToolUse` accept the simpler `additionalContext`
+/// shape, while `UserPromptSubmit` requires `hookSpecificOutput`.
 pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()> {
     let project_dir = project
         .map(|s| s.to_string())
@@ -51,6 +58,8 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
     let candidates = collect_candidates(&project_dir);
 
     let embed_matches = batch_embed_score(query);
+
+    let mut context = String::new();
 
     for way in &candidates {
         if !session::scope_matches(&way.scope, &scope) {
@@ -70,8 +79,16 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
         );
 
         if let Some(trigger) = channel {
-            let _ = crate::cmd::show::way(&way.id, session_id, &trigger);
+            let out = capture_show_way(&way.id, session_id, &trigger);
+            if !out.is_empty() {
+                context.push_str(&out);
+                context.push_str("\n\n");
+            }
         }
+    }
+
+    if !context.is_empty() {
+        emit_hook_context("UserPromptSubmit", context.trim_end());
     }
 
     Ok(())
@@ -441,12 +458,32 @@ fn regex_matches(pattern: &str, text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Emit accumulated context using the envelope shape required by the
+/// invoking hook event. UserPromptSubmit needs `hookSpecificOutput`
+/// per the Claude Code hook contract; SessionStart and PreToolUse use
+/// the simpler top-level `additionalContext` and continue to surface
+/// as visible attachments.
+fn emit_hook_context(hook_event: &str, context: &str) {
+    let payload = if hook_event == "UserPromptSubmit" {
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": context,
+            }
+        })
+    } else {
+        serde_json::json!({ "additionalContext": context })
+    };
+    println!("{payload}");
+}
+
 // ── State scan ──────────────────────────────────────────────────
 
 pub fn state(
     session_id: &str,
     project: Option<&str>,
     transcript: Option<&str>,
+    hook_event: &str,
 ) -> Result<()> {
     let project_dir = project
         .map(|s| s.to_string())
@@ -547,12 +584,7 @@ pub fn state(
     }
 
     if !context.is_empty() {
-        // Trim trailing newlines
-        let trimmed = context.trim_end();
-        println!(
-            "{}",
-            serde_json::json!({ "additionalContext": trimmed })
-        );
+        emit_hook_context(hook_event, context.trim_end());
     }
 
     Ok(())

@@ -245,17 +245,30 @@ fn scenario_1_basic_prompt_matching() {
     let s = Session::new("s1");
 
     // Turn 1: query with "test" vocabulary → should match child (testing)
-    s.scan_prompt("how do I write a unit test for this module");
+    let output = s.scan_prompt("how do I write a unit test for this module");
     assert_epoch(&s.id, 1);
     assert_marker_exists("testdomain/parent/child", &s.id);
+    // Regression guard: scan::prompt must emit the UserPromptSubmit envelope
+    // when a way matches. Before this guard, the function silently discarded
+    // show::way output (`let _ = ...`), and after the first envelope fix it
+    // briefly emitted the wrong shape (`additionalContext` at top-level
+    // instead of `hookSpecificOutput`). Both regressions pass marker-only
+    // assertions because show::way still stamps state for its side effects.
+    assert!(
+        output.contains("hookSpecificOutput"),
+        "scan_prompt must emit hookSpecificOutput envelope when a way matches; got: {output:?}"
+    );
 
     // Turn 2: same query again → should NOT re-fire (idempotency)
-    let _output = s.scan_prompt("how do I write a unit test for this module");
+    let output_repeat = s.scan_prompt("how do I write a unit test for this module");
     assert_epoch(&s.id, 2);
-    // Marker still exists from turn 1 — no new content expected
-    // (we can't easily assert "no new output" beyond marker check,
-    //  but the marker being present means show::way returned early)
     assert_marker_exists("testdomain/parent/child", &s.id);
+    // Idempotency: marker stops show::way before body is emitted, so output
+    // should be empty on the repeat.
+    assert!(
+        output_repeat.is_empty(),
+        "scan_prompt must be idempotent within a session; got: {output_repeat:?}"
+    );
 
     // Turn 3: different vocabulary → should match child2 (refactoring)
     s.scan_prompt("refactor extract method decompose this function");
