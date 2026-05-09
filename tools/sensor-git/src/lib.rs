@@ -95,6 +95,8 @@ impl Sensor for GitSensor {
         "git"
     }
 
+    sensor_trait::sensor_metadata!();
+
     fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let current = match self.snapshot(focus) {
             Some(s) => s,

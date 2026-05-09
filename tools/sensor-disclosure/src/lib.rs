@@ -154,6 +154,8 @@ impl Sensor for DisclosureSensor {
         "disclosure"
     }
 
+    sensor_trait::sensor_metadata!();
+
     fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let (tokens_used, tokens_total) = match self.read_tokens_used(focus) {
             Some(pair) => pair,

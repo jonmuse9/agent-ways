@@ -107,6 +107,8 @@ impl Sensor for ContextSensor {
         "context"
     }
 
+    sensor_trait::sensor_metadata!();
+
     fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let current = match self.read_context(focus) {
             Some(r) => r,

@@ -570,6 +570,8 @@ impl Sensor for PeerSensor {
         "peers"
     }
 
+    sensor_trait::sensor_metadata!();
+
     fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let current = self.discover_peers();
 
