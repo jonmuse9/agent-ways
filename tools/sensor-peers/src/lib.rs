@@ -743,17 +743,23 @@ fn parse_session_file(content: &str) -> Option<SessionFile> {
 }
 
 /// Check if a PID is alive and running a claude process.
+///
+/// Inspects the full command line rather than `comm`. The `comm` field is
+/// the executable basename, which for background sessions is the version
+/// number (e.g. `2.1.139`) because they exec the versioned binary at
+/// `~/.local/share/claude/versions/<ver>` directly. The full argv keeps
+/// the binary's path, which contains `claude` for both foreground and
+/// background sessions.
 fn pid_is_claude(pid: u32) -> bool {
     let output = Command::new("ps")
-        .args(["--no-headers", "-p", &pid.to_string(), "-o", "comm"])
+        .args(["--no-headers", "-p", &pid.to_string(), "-o", "args"])
         .output()
         .ok();
 
     match output {
         Some(out) if out.status.success() => {
-            let comm = String::from_utf8_lossy(&out.stdout);
-            let comm = comm.trim();
-            comm == "claude" || comm.contains("claude")
+            let args = String::from_utf8_lossy(&out.stdout);
+            args.contains("claude")
         }
         _ => false,
     }
@@ -799,37 +805,57 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// Find our own session ID by walking up the process tree to the claude parent,
-/// then matching against ~/.claude/sessions/*.json.
-/// Find the Claude session ID for the current process by walking up the
-/// process tree to find the claude parent, then matching against session files.
+/// Find the Claude session ID for the current process.
+///
+/// Walks up the process tree and matches each ancestor pid against the pids
+/// recorded in `~/.claude/sessions/*.json`. The first ancestor that matches a
+/// session file wins, and its `sessionId` is returned.
+///
+/// We deliberately do not rely on the process `comm` string. Foreground
+/// sessions show `comm=claude` because they run the user-launched
+/// `~/.local/bin/claude` wrapper, but background sessions are forked directly
+/// from the versioned binary at `~/.local/share/claude/versions/<ver>` and
+/// show `comm=<ver>` (e.g. `2.1.139`). Filtering on the comm string skips
+/// past bg-session inner pids and lands on the daemon, which is not in
+/// `sessions/*.json`, so resolution silently falls back to `pid-<self>` for
+/// every subcommand invocation. Probing the pid index directly avoids that
+/// trap and works for both kinds of session.
 pub fn find_own_session_id(own_pid: u32) -> Option<String> {
+    let sessions_dir = home_dir().join(".claude").join("sessions");
+    let mut pid_to_session: std::collections::HashMap<u32, String> =
+        std::collections::HashMap::new();
+    if let Ok(entries) = fs::read_dir(&sessions_dir) {
+        for entry in entries.flatten() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                if let (Some(pid), Some(sid)) = (
+                    extract_json_u64(&content, "pid"),
+                    extract_json_string(&content, "sessionId"),
+                ) {
+                    pid_to_session.insert(pid as u32, sid);
+                }
+            }
+        }
+    }
+    if pid_to_session.is_empty() {
+        return None;
+    }
+
     let mut pid = own_pid;
-    let mut claude_pid = None;
-    for _ in 0..10 {
-        if pid <= 1 { break; }
+    for _ in 0..15 {
+        if let Some(sid) = pid_to_session.get(&pid) {
+            return Some(sid.clone());
+        }
+        if pid <= 1 {
+            break;
+        }
         let output = Command::new("ps")
-            .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid,comm"])
+            .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid"])
             .output()
             .ok()?;
         let line = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 && parts[1].contains("claude") {
-            claude_pid = Some(pid);
-            break;
-        }
-        pid = parts.first()?.parse().ok()?;
-    }
-
-    let claude_pid = claude_pid?;
-    let home = home_dir();
-    let sessions_dir = home.join(".claude").join("sessions");
-    for entry in fs::read_dir(&sessions_dir).ok()?.flatten() {
-        if let Ok(content) = fs::read_to_string(entry.path()) {
-            let pid_pattern = format!("\"pid\":{}", claude_pid);
-            if content.contains(&pid_pattern) {
-                return extract_json_string(&content, "sessionId");
-            }
+        match line.trim().parse::<u32>() {
+            Ok(ppid) if ppid > 0 && ppid != pid => pid = ppid,
+            _ => break,
         }
     }
     None
