@@ -101,7 +101,7 @@ setup-binary:
 # cached install so download-binary.sh's "already installed" early-
 # return does not skip a refresh after an upstream update.
 rebuild-binary:
-	@rm -f $(MODEL_DIR)/way-embed
+	@rm -f "$(MODEL_DIR)/way-embed"
 	@$(MAKE) setup-binary
 
 # Run basic smoke test
