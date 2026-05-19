@@ -26,6 +26,8 @@ use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 
 /// Default grace window. A session whose heartbeat is older than this
 /// is considered stale. Sized to 3× attend's base sensor interval so a
@@ -104,18 +106,30 @@ pub fn clear(session_id: &str) -> io::Result<()> {
     }
 }
 
-/// Holder for an exclusive process-level lock on a session's heartbeat
-/// file. While the value is alive the kernel guarantees no other
-/// process holds the lock for the same path. Drop the value (or the
-/// process exits) and the kernel releases automatically.
+/// Holder for an exclusive process-level lock on a session. While the
+/// value is alive the OS guarantees no other process holds the lock
+/// for the same session id. Drop the value (or the process exits) and
+/// the OS releases automatically.
 ///
-/// Implementation: non-blocking `flock(LOCK_EX | LOCK_NB)` on the
-/// heartbeat file's fd. We keep the `File` open for the lock's
-/// lifetime. Lock state is OS-managed — even a panicking attend
-/// releases on process exit, so recovery does not need a janitor.
-#[cfg(unix)]
+/// Implementation differs by platform:
+/// - Unix: non-blocking `flock(LOCK_EX | LOCK_NB)` on the heartbeat
+///   file's fd.
+/// - Windows: exclusive `share_mode(0)` on a sibling `<id>.lock` file,
+///   so the heartbeat file itself remains freely openable by `touch`.
+/// In both cases we keep the `File` open for the lock's lifetime, and
+/// even a panicking attend releases on process exit.
 pub struct SessionLock {
     _file: fs::File,
+}
+
+/// Path to the lock sidecar file (Windows). Kept separate from the
+/// heartbeat file because Windows exclusive sharing applies across
+/// every handle to the path — including the lock-holder's own
+/// future `touch()` opens — so locking the heartbeat directly would
+/// break the regular mtime bump.
+#[cfg(windows)]
+fn lock_path(session_id: &str) -> PathBuf {
+    heartbeat_dir().join(format!("{session_id}.lock"))
 }
 
 /// Try to acquire the exclusive process lock for a session. Returns
@@ -125,16 +139,21 @@ pub struct SessionLock {
 ///
 /// This is the duplicate-attend guard. The orphan / re-launched
 /// attend case (parent shell killed, child reparented to init,
-/// then a new attend started) is exactly what `flock` is designed
-/// for: the orphan still holds the kernel lock, so the new attend's
-/// `LOCK_NB` attempt fails fast instead of silently double-running.
+/// then a new attend started) is exactly what file locking is
+/// designed for: the orphan still holds the OS lock, so the new
+/// attend's non-blocking attempt fails fast instead of silently
+/// double-running.
 ///
-/// Self-reload via `exec()` keeps the same PID, but file
+/// Self-reload via `exec()` (Unix) keeps the same PID, but file
 /// descriptors are normally inherited (no `O_CLOEXEC`), and the
 /// kernel's flock state is keyed on the open-file-description. The
 /// new code path inherits the lock automatically — it does not have
 /// to re-acquire. Callers in the reload path should skip the lock
 /// attempt entirely (e.g., gated on `ATTEND_RELOADED_FROM`).
+///
+/// On Windows self-reload spawns a new process rather than exec()ing,
+/// so the lock IS released before the child starts; the new process
+/// re-acquires cleanly.
 #[cfg(unix)]
 pub fn try_acquire_session_lock(session_id: &str) -> io::Result<Option<SessionLock>> {
     fs::create_dir_all(heartbeat_dir())?;
@@ -153,6 +172,26 @@ pub fn try_acquire_session_lock(session_id: &str) -> io::Result<Option<SessionLo
         Ok(None)
     } else {
         Err(err)
+    }
+}
+
+#[cfg(windows)]
+pub fn try_acquire_session_lock(session_id: &str) -> io::Result<Option<SessionLock>> {
+    fs::create_dir_all(heartbeat_dir())?;
+    let path = lock_path(session_id);
+    // share_mode(0): exclusive access. A second process attempting
+    // to open the same path gets ERROR_SHARING_VIOLATION (raw 32) —
+    // which is exactly the duplicate-attend signal we want.
+    match fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .share_mode(0)
+        .open(&path)
+    {
+        Ok(file) => Ok(Some(SessionLock { _file: file })),
+        Err(e) if e.raw_os_error() == Some(32) => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
