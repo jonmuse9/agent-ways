@@ -10,22 +10,31 @@
 //!
 //! No sidebar, no focus filter, no threading render — those land in
 //! follow-up PRs on ADR-120.
+//!
+//! The keyboard handler bodies live in [`keys`] so each branch is a
+//! free function that can be unit-tested without standing up an
+//! iocraft `App`. The closure here is a thin dispatcher: read state,
+//! call the handler, write state back.
+
+mod keys;
 
 use agent_identity::TermCaps;
 use async_channel::Receiver;
 use iocraft::prelude::*;
 
-use crate::chip::{chip_for, color_for, known_identities, resolve_nickname, CHIP_WIDTH};
-use crate::sessions::discover as discover_sessions;
-use crate::text_layout::{render_cursor, split_at_char, visual_line_count};
-use crate::groups::{channels, resolve_group_dir};
+use crate::chip::{chip_for, color_for, known_identities, CHIP_WIDTH};
+use crate::groups::channels;
 use crate::helper::{self, HelperMode};
-use crate::legend::{
-    apply_completion, best_completion, best_group_completion, find_trailing_mention,
-    group_legend_row, legend_row, parse_addressed, Addressed, Sigil,
-};
-use crate::signal::{cwd_dir, write_broadcast, write_signal, Signal};
+use crate::legend::{find_trailing_mention, group_legend_row, legend_row, Sigil};
+use crate::sessions::discover as discover_sessions;
+use crate::signal::Signal;
 use crate::slash;
+use crate::text_layout::{render_cursor, visual_line_count};
+
+use keys::{
+    handle_backspace, handle_char_insert, handle_delete, handle_end, handle_enter, handle_home,
+    handle_newline_insert, handle_tab, EnterAction, TabCycle,
+};
 
 #[derive(Default, Props)]
 pub struct AppProps {
@@ -50,6 +59,27 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     let mut cursor = hooks.use_state(|| 0usize);
     let mut should_exit = hooks.use_state(|| false);
     let mut status = hooks.use_state(String::new);
+    let mut tab_cycle = hooks.use_state::<Option<TabCycle>, _>(|| None);
+
+    // Time-based refresh tick (ADR-129). Bumped every 5 seconds so the
+    // render path re-runs `discover_sessions` + `known_identities` on a
+    // human-scale clock rather than only on signal/keypress events. A
+    // peer that boots up without sending anything appears in the legend
+    // within one tick; a peer whose attend stops shows up as stale once
+    // its heartbeat ages past grace, also within one tick. The chat is
+    // a turn-blind surface — wall-clock time is the right axis here.
+    //
+    // 5s is a balance: short enough that "I just launched another
+    // claude" feels live, long enough that we are not re-walking
+    // ~/.claude/sessions/*.json several times per second on idle.
+    let mut tick = hooks.use_state(|| 0u64);
+    hooks.use_future(async move {
+        loop {
+            smol::Timer::after(std::time::Duration::from_secs(5)).await;
+            let next = tick.get().wrapping_add(1);
+            tick.set(next);
+        }
+    });
 
     // Drain the watcher into state.
     if let Some(rx) = props.receiver.clone() {
@@ -84,139 +114,52 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                     // protocol; Alt-Enter is a cross-terminal
                     // fallback.
                     let v = input.read().clone();
-                    let (before, after) = split_at_char(&v, cursor.get());
-                    let next = format!("{}\n{}", before, after);
+                    let (next, new_cursor) = handle_newline_insert(&v, cursor.get());
                     input.set(next);
-                    cursor.set(cursor.get() + 1);
+                    cursor.set(new_cursor);
                 }
                 KeyCode::Enter => {
-                    let msg = input.read().trim_end().to_string();
-                    if !msg.is_empty() {
-                        // Slash-command interceptor — stops `/help`,
-                        // `/whois`, etc. from leaking onto the signal
-                        // bus as plain messages. Runs before the
-                        // `@`/`#`/broadcast dispatch because slash
-                        // syntax is start-of-input only and unambiguous.
-                        if let Some((cmd, args)) = slash::parse(&msg) {
-                            match slash::dispatch(cmd, args) {
-                                slash::SlashOutcome::Ok(s) => {
-                                    status.set(s);
-                                    input.set(String::new());
-                                    cursor.set(0);
-                                }
-                                slash::SlashOutcome::Err(s) => {
-                                    // Leave the buffer intact so the
-                                    // user can edit + retry without
-                                    // retyping.
-                                    status.set(s);
-                                }
-                            }
-                            return;
+                    let v = input.read().clone();
+                    // Hold the read guard rather than clone — Rust
+                    // deref-coerces `&Ref<Vec<Signal>>` to `&[Signal]`,
+                    // so the handler sees a borrowed slice without
+                    // copying the (capped, but potentially 5000-entry)
+                    // signal buffer on every keypress.
+                    let sigs_guard = signals.read();
+                    match handle_enter(&v, &sigs_guard) {
+                        EnterAction::None => {}
+                        EnterAction::ClearWithStatus(s) => {
+                            status.set(s);
+                            input.set(String::new());
+                            cursor.set(0);
                         }
-                        let caps = TermCaps::detect();
-                        let seeds = discover_sessions();
-                        let agents = known_identities(&signals.read(), &seeds, caps);
-                        let result = match parse_addressed(&msg) {
-                            Some(Addressed::Agent(name)) => {
-                                match resolve_nickname(name, &agents) {
-                                    Some(target_cwd) => write_signal(&cwd_dir(&target_cwd), &msg)
-                                        .map(|n| format!("sent → @{name}: {n}")),
-                                    None => Err(std::io::Error::new(
-                                        std::io::ErrorKind::NotFound,
-                                        format!("@{name}: unknown nickname"),
-                                    )),
-                                }
-                            }
-                            Some(Addressed::Group(name)) => match resolve_group_dir(name) {
-                                Some(dir) => write_signal(&dir, &msg)
-                                    .map(|n| format!("sent → #{name}: {n}")),
-                                None => Err(std::io::Error::new(
-                                    std::io::ErrorKind::NotFound,
-                                    format!("#{name}: unknown group"),
-                                )),
-                            },
-                            None => write_broadcast(&msg).map(|n| format!("sent: {n}")),
-                        };
-                        match result {
-                            Ok(s) => {
-                                status.set(s);
-                                input.set(String::new());
-                                cursor.set(0);
-                            }
-                            Err(e) => status.set(format!("send failed: {}", e)),
-                        }
+                        EnterAction::StatusOnly(s) => status.set(s),
                     }
                 }
                 KeyCode::Tab => {
-                    // Autocomplete a trailing mention. Dispatches by
-                    // sigil: `@partial` → agent pool, `#partial` →
-                    // group pool. No-op if the caret isn't at the end
-                    // of the buffer or there's no mention context —
-                    // avoids surprising edits mid-sentence.
                     let buf = input.read().clone();
-                    let pos = cursor.get();
-                    if pos != buf.chars().count() {
-                        return;
-                    }
-                    // Slash completion runs first — its grammar is
-                    // start-of-input-only, so when it matches, the
-                    // `@`/`#` logic below never applies. Silent
-                    // fall-through on no match so a stale `/` with
-                    // no registry hit doesn't trap the user.
-                    if let Some(partial) = slash::find_slash_partial(&buf) {
-                        if let Some(hit) = slash::best_slash_completion(partial.partial) {
-                            let (next, new_cursor) = slash::apply_slash_completion(hit.name);
-                            input.set(next);
-                            cursor.set(new_cursor);
-                        }
-                        return;
-                    }
-                    let caps = TermCaps::detect();
-                    let Some(mention) = find_trailing_mention(&buf) else { return };
-                    let completed: Option<(String, usize)> = match mention.sigil {
-                        Sigil::Agent => {
-                            let seeds = discover_sessions();
-                            let agents = known_identities(&signals.read(), &seeds, caps);
-                            best_completion(mention.partial, &agents)
-                                .map(|hit| apply_completion(&buf, &mention, &hit.nickname))
-                        }
-                        Sigil::Group => {
-                            let groups = channels(caps);
-                            best_group_completion(mention.partial, &groups)
-                                .map(|hit| apply_completion(&buf, &mention, &hit.group.name))
-                        }
-                    };
-                    if let Some((next, new_cursor)) = completed {
-                        input.set(next);
-                        cursor.set(new_cursor);
-                    }
+                    let cur = cursor.get();
+                    let cycle = tab_cycle.read().clone();
+                    // Same borrow-not-clone discipline as Enter — Tab
+                    // fires more often (every keystroke when cycling
+                    // completions), so the per-press cost matters.
+                    let sigs_guard = signals.read();
+                    let res = handle_tab(&buf, cur, cycle, &sigs_guard);
+                    input.set(res.new_buf);
+                    cursor.set(res.new_cursor);
+                    tab_cycle.set(res.new_cycle);
                 }
                 KeyCode::Backspace => {
                     let v = input.read().clone();
-                    let pos = cursor.get();
-                    if pos == 0 {
-                        return;
-                    }
-                    let (before, after) = split_at_char(&v, pos);
-                    // Drop one char off the end of `before`.
-                    let trimmed: String = before
-                        .chars()
-                        .take(pos.saturating_sub(1))
-                        .collect();
-                    input.set(format!("{}{}", trimmed, after));
-                    cursor.set(pos - 1);
+                    let (next, new_cursor) = handle_backspace(&v, cursor.get());
+                    input.set(next);
+                    cursor.set(new_cursor);
                 }
                 KeyCode::Delete => {
                     let v = input.read().clone();
-                    let pos = cursor.get();
-                    let total = v.chars().count();
-                    if pos >= total {
-                        return;
-                    }
-                    let (before, after) = split_at_char(&v, pos);
-                    // Drop the first char of `after`.
-                    let trimmed: String = after.chars().skip(1).collect();
-                    input.set(format!("{}{}", before, trimmed));
+                    let (next, new_cursor) = handle_delete(&v, cursor.get());
+                    input.set(next);
+                    cursor.set(new_cursor);
                 }
                 KeyCode::Left => {
                     let p = cursor.get();
@@ -232,38 +175,21 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
                     }
                 }
                 KeyCode::Home => {
-                    // Jump to the start of the current logical line.
                     let v = input.read().clone();
-                    let p = cursor.get();
-                    let (before, _) = split_at_char(&v, p);
-                    let line_start = before.rfind('\n').map(|i| {
-                        // chars-before count = char count of
-                        // `before[..=i]`.
-                        before[..=i].chars().count()
-                    });
-                    cursor.set(line_start.unwrap_or(0));
+                    cursor.set(handle_home(&v, cursor.get()));
                 }
                 KeyCode::End => {
-                    // Jump to the end of the current logical line.
                     let v = input.read().clone();
-                    let p = cursor.get();
-                    let (_, after) = split_at_char(&v, p);
-                    let line_end_in_after = after.find('\n');
-                    let add = match line_end_in_after {
-                        Some(byte) => after[..byte].chars().count(),
-                        None => after.chars().count(),
-                    };
-                    cursor.set(p + add);
+                    cursor.set(handle_end(&v, cursor.get()));
                 }
                 KeyCode::Char(c)
                     if !modifiers
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
                     let v = input.read().clone();
-                    let pos = cursor.get();
-                    let (before, after) = split_at_char(&v, pos);
-                    input.set(format!("{}{}{}", before, c, after));
-                    cursor.set(pos + 1);
+                    let (next, new_cursor) = handle_char_insert(&v, cursor.get(), c);
+                    input.set(next);
+                    cursor.set(new_cursor);
                 }
                 _ => {}
             },
@@ -279,6 +205,19 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     // every chip. Cheap env reads, but doing it in the per-signal map
     // would still be pointless repetition.
     let caps = TermCaps::detect();
+    // Subscribe to the wall-clock refresh tick so iocraft re-renders
+    // when the timer future bumps it. The value itself is not used —
+    // we only need the read to register the dependency in the
+    // reactive graph. Drives time-based discovery (new peers
+    // appear, stale peers disappear) without requiring a key event.
+    let _refresh = tick.get();
+    // Per-render instance-registry cache (ADR-129; PR #77 review).
+    // Built once at the top of each render and passed down to every
+    // chip / known_identities call so the registry yaml is read at
+    // most once per distinct cwd per render. Deliberately scoped to
+    // this function — never share across renders, since the
+    // registry can change between renders (peer registers, GC).
+    let instance_cache = attend_instances::SnapshotCache::new();
     // Registries and trailing-partial for the legend + completion
     // highlight. Re-derived each render:
     // - `known_identities`: dedupes in O(n) over the capped signal
@@ -288,7 +227,7 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
     //   history), so the cost is negligible next to the render we'd
     //   do anyway. Simpler than caching with invalidation.
     let seed_sessions = discover_sessions();
-    let known = known_identities(&signals.read(), &seed_sessions, caps);
+    let known = known_identities(&signals.read(), &seed_sessions, caps, &instance_cache);
     // `channels` prepends the synthetic `#open` base and drops any
     // lingering literal `open` group so the legend has a single
     // commons chip (ADR-124 §1–§2). The base entry has empty
@@ -331,7 +270,7 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
         .read()
         .iter()
         .map(|s| {
-            let chip = chip_for(&s.from, &s.project, &s.cwd, caps);
+            let chip = chip_for(&s.from, &s.project, &s.cwd, caps, &instance_cache);
             let weight = if chip.style.bold { Weight::Bold } else { Weight::Normal };
             let color = color_for(chip.palette, caps);
             // Group glyphs for this chip: cross-reference the
@@ -465,5 +404,3 @@ pub fn App(props: &AppProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>>
         }
     }
 }
-
-

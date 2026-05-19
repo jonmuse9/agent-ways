@@ -158,18 +158,33 @@ impl Session {
     }
 
     fn scan_state(&self) -> String {
+        self.scan_state_full(None).0
+    }
+
+    /// Run `ways scan state`, optionally passing `--hook-event`, and return
+    /// `(stdout, stderr)`. Lets tests assert both content delivery and the
+    /// misroute warning channel.
+    fn scan_state_full(&self, hook_event: Option<&str>) -> (String, String) {
+        let mut args: Vec<&str> = vec![
+            "scan", "state",
+            "--session", &self.id,
+            "--project", "/tmp/nonexistent-project",
+        ];
+        if let Some(ev) = hook_event {
+            args.push("--hook-event");
+            args.push(ev);
+        }
         let output = Command::new(ways_bin())
-            .args([
-                "scan", "state",
-                "--session", &self.id,
-                "--project", "/tmp/nonexistent-project",
-            ])
+            .args(&args)
             .env("HOME", fixture_home())
             .env("XDG_CACHE_HOME", self.corpus.parent().unwrap().parent().unwrap().parent().unwrap())
             .output()
             .expect("Failed to run ways scan state");
 
-        String::from_utf8_lossy(&output.stdout).to_string()
+        (
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        )
     }
 }
 
@@ -245,17 +260,30 @@ fn scenario_1_basic_prompt_matching() {
     let s = Session::new("s1");
 
     // Turn 1: query with "test" vocabulary → should match child (testing)
-    s.scan_prompt("how do I write a unit test for this module");
+    let output = s.scan_prompt("how do I write a unit test for this module");
     assert_epoch(&s.id, 1);
     assert_marker_exists("testdomain/parent/child", &s.id);
+    // Regression guard: scan::prompt must emit the UserPromptSubmit envelope
+    // when a way matches. Before this guard, the function silently discarded
+    // show::way output (`let _ = ...`), and after the first envelope fix it
+    // briefly emitted the wrong shape (`additionalContext` at top-level
+    // instead of `hookSpecificOutput`). Both regressions pass marker-only
+    // assertions because show::way still stamps state for its side effects.
+    assert!(
+        output.contains("hookSpecificOutput"),
+        "scan_prompt must emit hookSpecificOutput envelope when a way matches; got: {output:?}"
+    );
 
     // Turn 2: same query again → should NOT re-fire (idempotency)
-    let _output = s.scan_prompt("how do I write a unit test for this module");
+    let output_repeat = s.scan_prompt("how do I write a unit test for this module");
     assert_epoch(&s.id, 2);
-    // Marker still exists from turn 1 — no new content expected
-    // (we can't easily assert "no new output" beyond marker check,
-    //  but the marker being present means show::way returned early)
     assert_marker_exists("testdomain/parent/child", &s.id);
+    // Idempotency: marker stops show::way before body is emitted, so output
+    // should be empty on the repeat.
+    assert!(
+        output_repeat.is_empty(),
+        "scan_prompt must be idempotent within a session; got: {output_repeat:?}"
+    );
 
     // Turn 3: different vocabulary → should match child2 (refactoring)
     s.scan_prompt("refactor extract method decompose this function");
@@ -482,11 +510,50 @@ fn scenario_10_state_triggers() {
         output.contains("State Trigger Test Way"),
         "Expected state trigger content in output"
     );
+    // Envelope guard: SessionStart is the explicit legacy branch in
+    // emit_hook_context — it must emit `{"additionalContext": "..."}` at
+    // top level, not the canonical `hookSpecificOutput` wrapper. Locks in
+    // the legacy tolerance after the canonical-by-default discriminator
+    // flip; the inverse guard for the canonical default lives in
+    // scenario_1's scan_prompt assertion.
+    assert!(
+        output.contains("additionalContext"),
+        "scan_state on SessionStart must emit legacy additionalContext envelope; got: {output:?}"
+    );
+    assert!(
+        !output.contains("hookSpecificOutput"),
+        "scan_state on SessionStart must NOT use canonical hookSpecificOutput envelope; got: {output:?}"
+    );
 
     // Turn 2: second state scan — idempotent, marker prevents re-fire
     let output2 = s.scan_state();
     assert!(
         !output2.contains("State Trigger Test Way"),
         "State trigger should not re-fire (marker exists)"
+    );
+}
+
+// ── Scenario 11: Hook-event misroute trace ─────────────────────
+
+#[test]
+fn scenario_11_hook_event_misroute_warning() {
+    // `ways scan state` invoked without `--hook-event` falls back to
+    // SessionStart, which is also the shell's jq fallback in
+    // `check-state.sh` — two layers of the same default mean a misrouted
+    // hook would silently emit the wrong envelope shape. The fallback
+    // itself is preserved (behavior unchanged) but a defensive stderr
+    // trace surfaces the misroute in hook-execution logs.
+    let s = Session::new("s11");
+
+    // Without --hook-event: stderr trace must surface, stdout must still
+    // carry content (the SessionStart fallback still runs).
+    let (stdout, stderr) = s.scan_state_full(None);
+    assert!(
+        stderr.contains("[ways]") && stderr.contains("--hook-event"),
+        "scan state without --hook-event must emit a [ways] stderr trace mentioning the missing flag; got stderr: {stderr:?}"
+    );
+    assert!(
+        stdout.contains("State Trigger Test Way"),
+        "scan state without --hook-event must still default-fire SessionStart; got stdout: {stdout:?}"
     );
 }

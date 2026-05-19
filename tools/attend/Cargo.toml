@@ -1,6 +1,6 @@
 [package]
 name = "attend"
-version = "0.6.1"
+version = "0.7.1"
 edition = "2021"
 description = "Active awareness module — adaptive sensing and disclosure for Claude Code sessions"
 license = "MIT"
@@ -20,7 +20,14 @@ sensor-disclosure = ["dep:sensor-disclosure"]
 [dependencies]
 agent-fmt = { path = "../agent-fmt" }
 agent-identity = { path = "../agent-identity" }
+attend-heartbeat = { path = "../attend-heartbeat" }
+attend-instances = { path = "../attend-instances" }
 sensor-trait = { path = "../sensor-trait" }
+# CLI parsing — matches ADR-111's choice for `ways-cli`. Doc comments on
+# the `Cli`/`Commands` types in `cli.rs` are the single source of truth
+# for runtime help and the markdown reference (see `bin/gen-docs.rs`).
+clap = { version = "4", features = ["derive"] }
+clap-markdown = "0.1"
 sensor-git = { path = "../sensor-git", optional = true }
 sensor-context = { path = "../sensor-context", optional = true }
 sensor-peers = { path = "../sensor-peers", optional = true }

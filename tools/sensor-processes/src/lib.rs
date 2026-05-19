@@ -267,6 +267,8 @@ impl Sensor for ProcessSensor {
         "processes"
     }
 
+    sensor_trait::sensor_metadata!();
+
     fn poll(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let current = self.snapshot(focus);
         self.refresh_marker();

@@ -230,6 +230,13 @@ enum Commands {
         #[arg(long)]
         confirm: bool,
     },
+    /// Print the per-session response-topics state file path (single source
+    /// of truth for the Stop hook writer, the UserPromptSubmit consumer, and
+    /// `ways reset`'s side-file cleanup).
+    ResponseTopicsPath {
+        /// Session ID
+        session: String,
+    },
     /// Manage configuration (init/show/path)
     Config {
         #[command(subcommand)]
@@ -358,6 +365,16 @@ enum ScanCommand {
         /// Transcript path (for context-threshold)
         #[arg(long)]
         transcript: Option<String>,
+        /// Hook event that invoked this scan (drives output envelope shape).
+        /// `hookSpecificOutput` is canonical for all events; `SessionStart`
+        /// and `PreToolUse` are the only events that take the legacy
+        /// top-level `additionalContext` shape. When omitted, falls back to
+        /// `SessionStart` and emits a stderr trace — `check-state.sh` already
+        /// applies the same fallback via jq, so a missing value here means
+        /// neither layer received `hook_event_name` and the envelope shape
+        /// may be wrong for the actual invoking event.
+        #[arg(long)]
+        hook_event: Option<String>,
     },
 }
 
@@ -515,8 +532,16 @@ fn main() -> Result<()> {
             ScanCommand::Task { query, session, project, team } => {
                 cmd::scan::task(&query, &session, project.as_deref(), team.as_deref())
             }
-            ScanCommand::State { session, project, transcript } => {
-                cmd::scan::state(&session, project.as_deref(), transcript.as_deref())
+            ScanCommand::State { session, project, transcript, hook_event } => {
+                let event = hook_event.unwrap_or_else(|| {
+                    eprintln!(
+                        "[ways] scan state invoked without --hook-event; defaulting to SessionStart. \
+                         If the invoking hook is not SessionStart/PreToolUse, the output envelope \
+                         shape will be wrong and the agent will silently receive nothing."
+                    );
+                    "SessionStart".to_string()
+                });
+                cmd::scan::state(&session, project.as_deref(), transcript.as_deref(), &event)
             }
         },
         Commands::Show { what } => match what {
@@ -570,6 +595,10 @@ fn main() -> Result<()> {
         }
         Commands::Reset { session, all, confirm } => {
             cmd::reset::run(session.as_deref(), all, confirm)
+        }
+        Commands::ResponseTopicsPath { session } => {
+            println!("{}", session::response_topics_path(&session).display());
+            Ok(())
         }
         Commands::Permissions { action, global } => {
             match action {
