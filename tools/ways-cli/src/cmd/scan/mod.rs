@@ -4,6 +4,7 @@
 //! scope/precondition gating, parent-threshold lowering, and show (display).
 
 mod candidates;
+mod reduce;
 mod scoring;
 mod state;
 pub(crate) use scoring::batch_embed_score;
