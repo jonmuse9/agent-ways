@@ -77,13 +77,39 @@ pub fn reduce_for_embed(input: &str, budget_tokens: usize) -> String {
 }
 
 fn approx_tokens(s: &str) -> usize {
-    // Cheap upper bound: count whitespace-separated runs, but also clamp
-    // against char-budget for inputs without spaces (e.g. concatenated
-    // identifiers). Choose the larger of the two estimates so we never
-    // under-budget.
+    // Cheap upper bound. Three estimators, take the max so we never
+    // under-budget:
+    //
+    //   by_words  — whitespace-separated runs. Tight on English prose.
+    //   by_chars  — chars / CHARS_PER_TOKEN. Catches space-less identifier
+    //               soup (concatenated symbols, URLs, code).
+    //   by_cjk    — CJK ideographs and kana count ~1 WordPiece token per
+    //               char in the MiniLM tokenizer, so for CJK input
+    //               by_words and by_chars/4 both *severely* under-count.
+    //               Without this term, a 400-char Japanese input would
+    //               estimate at ~100 tokens but produce ~400 real tokens,
+    //               past the 128-position-embedding window → SIGABRT.
+    //
+    // The reducer's job is to never lie to the embedder about how big
+    // the embed input is. Conservative estimation here is mandatory.
     let by_words = s.split_whitespace().count();
     let by_chars = s.chars().count() / CHARS_PER_TOKEN;
-    by_words.max(by_chars)
+    let by_cjk = s.chars().filter(|c| is_cjk(*c)).count();
+    by_words.max(by_chars).max(by_cjk)
+}
+
+/// True for code points the MiniLM tokenizer treats as one-token-per-
+/// character: CJK Unified Ideographs and extensions, Hiragana, Katakana,
+/// Hangul. Conservative (matches more than strictly necessary) by design.
+fn is_cjk(c: char) -> bool {
+    let cp = c as u32;
+    (0x3040..=0x309F).contains(&cp)   // Hiragana
+        || (0x30A0..=0x30FF).contains(&cp) // Katakana
+        || (0x3400..=0x4DBF).contains(&cp) // CJK Unified Ideographs Extension A
+        || (0x4E00..=0x9FFF).contains(&cp) // CJK Unified Ideographs
+        || (0xAC00..=0xD7AF).contains(&cp) // Hangul Syllables
+        || (0xF900..=0xFAFF).contains(&cp) // CJK Compatibility Ideographs
+        || (0x20000..=0x2A6DF).contains(&cp) // CJK Unified Ideographs Extension B
 }
 
 fn tokenize(s: &str) -> Vec<String> {
@@ -198,6 +224,10 @@ fn reduce_by_sentences(input: &str, sentences: &[&str], budget_tokens: usize) ->
     for (i, s, _) in &scored {
         let s_tokens = approx_tokens(s);
         if accumulated + s_tokens > budget_tokens {
+            // `continue` not `break`: a sentence further down the
+            // salience-sorted list might be short enough to still fit
+            // even if this one didn't. Skipping preserves total budget
+            // utilization at the cost of one extra comparison per skip.
             continue;
         }
         keep.push((*i, *s));
@@ -220,6 +250,12 @@ fn reduce_by_sentences(input: &str, sentences: &[&str], budget_tokens: usize) ->
 }
 
 fn reduce_by_tokens(input: &str, budget_tokens: usize) -> String {
+    // Defensive: caller contract says budget should be ≥1, but a 0 budget
+    // would silently produce empty output and break the "non-empty input
+    // never returns empty" invariant. Treat as "no reduction needed."
+    if budget_tokens == 0 {
+        return input.to_string();
+    }
     let tokens = tokenize(input);
     if tokens.is_empty() {
         // Pathological: nothing tokenizable left after stopwords. Fall
@@ -401,6 +437,52 @@ mod tests {
     }
 
     #[test]
+    fn cjk_input_estimates_one_token_per_char() {
+        // Japanese: each kanji/kana is ~1 WordPiece token in MiniLM.
+        // ~50 chars of Japanese should NOT estimate as ~12 tokens
+        // (chars/4) — it must estimate at least ~50.
+        let jp = "成果物の鮮度について何かを記述または派生しているが、それに遅れをとっているファイルを浮かび上がらせる。";
+        let est = approx_tokens(jp);
+        assert!(est >= jp.chars().count() / 2,
+                "Japanese should estimate near char-count, got {est} for {} chars",
+                jp.chars().count());
+
+        // Chinese: same property.
+        let zh = "制品新鲜度发现那些描述或派生自其他事物但已落后于它的文件";
+        let est_zh = approx_tokens(zh);
+        assert!(est_zh >= zh.chars().count() / 2,
+                "Chinese should estimate near char-count, got {est_zh}");
+
+        // English: estimate stays close to the word-count (no CJK
+        // inflation). Exact value is max(words, chars/4) — for this
+        // sentence that's max(9, 10) = 10, well under the 35× inflation
+        // CJK would have caused if treated naively.
+        let en = "the quick brown fox jumps over the lazy dog";
+        let en_est = approx_tokens(en);
+        assert!(en_est <= 11, "English estimate should stay near word count, got {en_est}");
+    }
+
+    #[test]
+    fn cjk_long_input_triggers_reduction() {
+        // ~400 chars of Japanese. Pre-fix, this would estimate as ~100
+        // tokens via chars/4 and bypass the reducer at budget=110, then
+        // explode the embedder. Post-fix, it estimates near 400 and
+        // properly triggers reduction.
+        let jp = "成果物の鮮度について何かを記述または派生しているが、それに遅れをとっているファイルを浮かび上がらせる。".repeat(4);
+        assert!(approx_tokens(&jp) > 110, "must exceed budget to trigger reduction");
+        let out = reduce_for_embed(&jp, 110);
+        assert!(out.chars().count() < jp.chars().count(), "must actually reduce");
+    }
+
+    #[test]
+    fn budget_zero_does_not_return_empty() {
+        // Defensive contract: never produce empty output from non-empty
+        // input, even at the pathological budget = 0.
+        let out = reduce_by_tokens("nonempty input here", 0);
+        assert!(!out.is_empty());
+    }
+
+    #[test]
     fn softmax_distribution_sums_to_one() {
         let mut counts = HashMap::new();
         counts.insert("a".to_string(), 3.0);
@@ -540,7 +622,6 @@ EOF
     /// None when nothing clears — which is the *correct* outcome when
     /// the corpus has no good match for the query.
     fn top1_fires(query: &str) -> Option<String> {
-        use std::process::Command;
         let home = std::env::var("HOME").ok()?;
         let bin = format!("{home}/.claude/bin/way-embed");
 
