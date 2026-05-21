@@ -8,6 +8,15 @@ mod reduce;
 mod scoring;
 mod state;
 pub(crate) use scoring::batch_embed_score;
+
+// Per-hook embed-query budgets (approximate tokens, sized for ~75% of
+// MiniLM's 128-token position-embedding window). The reducer passes
+// inputs through unchanged when they already fit; long inputs collapse
+// to top-salience sentences within budget. See ADR-130.
+const BUDGET_PROMPT: usize = 95;
+const BUDGET_TASK: usize = 95;
+const BUDGET_COMMAND: usize = 60;
+const BUDGET_FILE: usize = 30;
 pub use state::state;
 
 use anyhow::Result;
@@ -61,7 +70,12 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
     let scope = session::detect_scope(session_id);
     let candidates = collect_candidates(&project_dir);
 
-    let embed_matches = batch_embed_score(query);
+    // ADR-130: cap embed input to the model's working window via the
+    // sentence-salience reducer. Pattern/keyword matching downstream
+    // still operates on `query` (the full prompt) — only the embed
+    // signal sees the reduced form.
+    let reduced = reduce::reduce_for_embed(query, BUDGET_PROMPT);
+    let embed_matches = batch_embed_score(&reduced);
 
     let mut context = String::new();
 
@@ -113,7 +127,10 @@ pub fn task(
     let is_teammate = team.is_some();
     let candidates = collect_candidates(&project_dir);
 
-    let embed_matches = batch_embed_score(query);
+    // ADR-130: agent delegation prompts are the largest input class in
+    // practice. Reduce to the model's window before embedding.
+    let reduced = reduce::reduce_for_embed(query, BUDGET_TASK);
+    let embed_matches = batch_embed_score(&reduced);
 
     let mut matched: Vec<(String, String)> = Vec::new(); // (way_id, channel)
 
@@ -232,15 +249,19 @@ pub fn command(
         }
     }
 
-    // Check matching: commands regex + semantic scoring
+    // Check matching: commands regex + semantic scoring.
+    // ADR-130: cap embed input. Heredoc bodies (gh pr create --body
+    // "$(cat <<EOF…)"), curl -d JSON payloads, and similar argument-
+    // body bash commands can run kilobytes long. The regex matcher
+    // above already saw the full cmd; only the embed query is reduced.
     let checks = collect_checks(&project_dir);
     let query_for_checks = format!(
         "{} {}",
         cmd,
         description.unwrap_or("")
     );
-
-    let embed_check_matches = batch_embed_score(&query_for_checks);
+    let reduced_for_checks = reduce::reduce_for_embed(&query_for_checks, BUDGET_COMMAND);
+    let embed_check_matches = batch_embed_score(&reduced_for_checks);
 
     for check in &checks {
         if !session::scope_matches(&check.scope, &scope) {
@@ -316,7 +337,10 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
     }
 
     let checks = collect_checks(&project_dir);
-    let embed_matches = batch_embed_score(filepath);
+    // ADR-130: filepaths are short by nature, but enforce the budget
+    // uniformly across all hook surfaces for consistency.
+    let reduced = reduce::reduce_for_embed(filepath, BUDGET_FILE);
+    let embed_matches = batch_embed_score(&reduced);
 
     for check in &checks {
         if !session::scope_matches(&check.scope, &scope) {
