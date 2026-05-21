@@ -9,13 +9,16 @@ mod scoring;
 mod state;
 pub(crate) use scoring::batch_embed_score;
 
-// Per-hook embed-query budgets (approximate tokens, sized for ~75% of
-// MiniLM's 128-token position-embedding window). The reducer passes
-// inputs through unchanged when they already fit; long inputs collapse
-// to top-salience sentences within budget. See ADR-130.
-const BUDGET_PROMPT: usize = 95;
-const BUDGET_TASK: usize = 95;
-const BUDGET_COMMAND: usize = 60;
+// Per-hook embed-query budgets (approximate tokens). MiniLM's window
+// is 128 position embeddings; we budget ~85% of that. The reducer
+// passes inputs through unchanged when they already fit; long inputs
+// collapse to top-salience sentences within budget. The approximate
+// tokenizer here (whitespace + char-budget max) over-counts vs
+// MiniLM's WordPiece, so real tokens land safely under 128 even at
+// the higher budgets. See ADR-130.
+const BUDGET_PROMPT: usize = 110;
+const BUDGET_TASK: usize = 110;
+const BUDGET_COMMAND: usize = 75;
 const BUDGET_FILE: usize = 30;
 pub use state::state;
 
