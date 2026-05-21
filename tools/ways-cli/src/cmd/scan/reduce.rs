@@ -105,21 +105,40 @@ fn split_sentences(s: &str) -> Vec<&str> {
         let is_paragraph_break = c == b'\n'
             && i + 1 < bytes.len()
             && bytes[i + 1] == b'\n';
-        if is_sentence_end || is_paragraph_break {
-            let end = if is_paragraph_break { i } else { i + 1 };
-            let chunk = s[start..end].trim();
-            if !chunk.is_empty() {
-                sentences.push(chunk);
+
+        if is_sentence_end {
+            // Include the terminating punctuation in the sentence.
+            if start <= i + 1 {
+                let chunk = s[start..i + 1].trim();
+                if !chunk.is_empty() {
+                    sentences.push(chunk);
+                }
             }
-            start = end + 1;
-            i += if is_paragraph_break { 2 } else { 1 };
+            // Advance past the punctuation AND the following whitespace
+            // so the next iteration doesn't re-process the whitespace
+            // and trigger a paragraph-break with start > end.
+            start = i + 2;
+            i += 2;
+            continue;
+        }
+        if is_paragraph_break {
+            if start <= i {
+                let chunk = s[start..i].trim();
+                if !chunk.is_empty() {
+                    sentences.push(chunk);
+                }
+            }
+            start = i + 2;
+            i += 2;
             continue;
         }
         i += 1;
     }
-    let tail = s[start..].trim();
-    if !tail.is_empty() {
-        sentences.push(tail);
+    if start < bytes.len() {
+        let tail = s[start..].trim();
+        if !tail.is_empty() {
+            sentences.push(tail);
+        }
     }
     sentences
 }
@@ -386,5 +405,138 @@ mod tests {
         assert!((sum - 1.0).abs() < 1e-9, "softmax should sum to 1.0, got {sum}");
         // High count gets high weight.
         assert!(weights["a"] > weights["b"]);
+    }
+
+    // ── Behavioral tests against actual crash repros ──────────────
+
+    /// Mimics PID 128657 / 156817 — vue-expert agent dispatch.
+    fn crash_repro_vue_expert_prompt() -> &'static str {
+        "you're standing in for the project's vue-expert agent — the project's \
+         claude.md mandates vue 3 work be done through vue-expert (defined at \
+         /home/foo/projects/inventory/.claude/agents/vue-expert.md). \
+         Read that agent file first to align with its rules (script setup \
+         patterns, scope, recipes), then proceed. \
+         \n\nTask: augment client/src/views/orders.vue to add a submitted \
+         orders section showing restocking orders submitted via the new \
+         /api/restocking/orders endpoint. This is the still-owed half of \
+         step 6 (budget-based restocking) from a workshop the user is going \
+         through. \
+         \n\nContext: the restocking feature was built earlier this session. \
+         Backend endpoints exist: GET /api/restocking/orders returns the \
+         list of submitted orders. Each submitted order has shape: \
+         {id, submitted_at, budget, total, lead_time_days, status, items}. \
+         The new section should sit above the existing all-orders card. \
+         Match the existing orders.vue style with card / card-header / table. \
+         \n\nFiles you'll touch: client/src/views/orders.vue (add template \
+         section, add loader, add ref, expose to template), \
+         client/src/locales/en.js (add orders.submitted block), \
+         client/src/locales/ja.js (mirror with Japanese strings). \
+         \n\nFinal report: return a concise summary (under 250 words) \
+         covering the exact list of files changed, the new refs and methods \
+         you added in orders.vue setup, the new i18n keys, whether the smoke \
+         test passed, and anything you noticed the user should know."
+    }
+
+    /// Mimics PID 88563 / 197729 — gh pr create with heredoc body.
+    fn crash_repro_gh_pr_heredoc() -> &'static str {
+        r#"gh pr create --title "fix(scan): cap bash embed query at 256 chars" --body "$(cat <<'EOF'
+## Summary
+
+Bash tool inputs can carry kilobyte-scale heredoc bodies, JSON payloads,
+and multi-line PR descriptions. All of those overrun the MiniLM embedding
+model's position-embedding table and abort way-embed.
+
+## Diagnosis
+
+The signal that distinguishes one bash command from another lives in the
+program name and first few args. Heredoc bodies carry no signal for
+'what kind of command is this'. Truncate the command at 256 chars before
+passing to scan command.
+
+## Test plan
+
+- ls -la (short cmd) tested
+- 4845-char heredoc command tested with zero crashes
+- bash -n clean
+- All existing commands regex patterns under 106 chars
+EOF
+)""#
+    }
+
+    /// Mimics PID 197729 — task-completion notification through prompt hook.
+    fn crash_repro_task_notification() -> &'static str {
+        "<task-notification>\
+         <task-id>ad51ec1d3fe1b72df</task-id>\
+         <status>completed</status>\
+         <summary>Agent 'Review PR #94 (skip embed for custom agents)' completed</summary>\
+         <result>Review posted to PR #94. Approved with two non-blocking notes \
+         about subagent_type input validation. The discriminator correctly skips \
+         custom-agent dispatches; built-in subagent types still spawn way-embed \
+         as designed. Recommended a regex guard so subagent_type cannot \
+         glob-expand or path-traverse when used as a path component. Compgen \
+         alternative to shopt-toggle was suggested for the plugin path glob. \
+         Verdict: approve, ship it.</result></task-notification>"
+    }
+
+    #[test]
+    fn behavior_vue_expert_dispatch_reduces_safely() {
+        let input = crash_repro_vue_expert_prompt();
+        let out = reduce_for_embed(input, BUDGET_TASK_TEST);
+        assert!(!out.is_empty());
+        assert!(approx_tokens(&out) <= BUDGET_TASK_TEST + 20, "got {} tokens", approx_tokens(&out));
+        // Domain terms must survive — multiple sentences mention vue, agent,
+        // orders, restocking, so at least one should appear.
+        let has_vue = out.to_lowercase().contains("vue");
+        let has_orders = out.to_lowercase().contains("orders");
+        let has_restocking = out.to_lowercase().contains("restocking");
+        assert!(has_vue || has_orders || has_restocking,
+                "expected a domain term to survive, got: {out}");
+    }
+
+    #[test]
+    fn behavior_gh_pr_heredoc_does_not_crash() {
+        let input = crash_repro_gh_pr_heredoc();
+        let out = reduce_for_embed(input, BUDGET_COMMAND_TEST);
+        assert!(!out.is_empty());
+        assert!(approx_tokens(&out) <= BUDGET_COMMAND_TEST + 20);
+    }
+
+    #[test]
+    fn behavior_task_notification_reduces_safely() {
+        let input = crash_repro_task_notification();
+        let out = reduce_for_embed(input, BUDGET_PROMPT_TEST);
+        assert!(!out.is_empty());
+        assert!(approx_tokens(&out) <= BUDGET_PROMPT_TEST + 20);
+    }
+
+    // Budget constants for tests — mirror the module-level budgets in
+    // scan/mod.rs but kept here to avoid coupling test code to that file's
+    // private namespace.
+    const BUDGET_PROMPT_TEST: usize = 95;
+    const BUDGET_TASK_TEST: usize = 95;
+    const BUDGET_COMMAND_TEST: usize = 60;
+
+    /// Recall property: the high-frequency content terms from the input
+    /// must appear in the reduced output. This is the in-process proxy
+    /// for top-1 match recall — if the reducer keeps the terms the embed
+    /// would weight highest, the embed match downstream is unlikely to
+    /// drift to a different way.
+    #[test]
+    fn high_frequency_terms_survive_reduction() {
+        let input = "deploy the new build to staging. \
+                     The deploy pipeline checks must pass. \
+                     My cat is asleep. \
+                     Each deploy step writes to the build log. \
+                     Coffee is good. \
+                     Build artifacts get tagged in the registry. \
+                     Thunderstorm tonight. \
+                     The deploy completes when the build hash matches.";
+        let out = reduce_for_embed(input, 30);
+        // "deploy" and "build" appear 4 and 3 times respectively — they
+        // MUST survive. The unrelated terms (cat, coffee, thunderstorm)
+        // appear once each and may or may not survive depending on
+        // sentence-level salience.
+        assert!(out.to_lowercase().contains("deploy"), "deploy must survive: {out}");
+        assert!(out.to_lowercase().contains("build"), "build must survive: {out}");
     }
 }
