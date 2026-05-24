@@ -106,6 +106,7 @@ hooks/ways/.obsidian/
 !scripts/attend-format-probe.sh
 !scripts/hook-fire-detector.sh
 !scripts/signal-report.py
+!scripts/audit-permissions.sh
 !docs/signal-analysis/
 !docs/signal-analysis/*.md
 !docs/signal-analysis/*.png
