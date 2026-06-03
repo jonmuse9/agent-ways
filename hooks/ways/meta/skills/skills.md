@@ -1,6 +1,6 @@
 ---
-description: Claude Code skills — SKILL.md format, creation, discovery, slash commands, frontmatter
-vocabulary: skill slash command SKILL.md create author invoke user-invocable plugin
+description: How we write Claude Code skills in this repo — when a skill vs a way vs a slash command, naming and scope conventions, the global-scope caveat; defers SKILL.md mechanics to the official docs
+vocabulary: skill slash command SKILL.md create author write invoke user-invocable plugin convention scope global
 pattern: skill|SKILL\.md|skill.?(creation|author|write)|claude.?code.?skill|~\/\.claude\/skills
 scope: agent, subagent
 refire: 0.15
@@ -8,89 +8,78 @@ refire: 0.15
 <!-- epistemic: convention -->
 # Skills Way
 
-## What is a Skill?
+This way is *our convention* for writing skills — not a SKILL.md tutorial. The
+mechanics (every frontmatter field, location precedence, progressive-disclosure
+layout, argument/shell substitution) live in the canonical reference and change
+faster than any copy here would. Read it for the "how":
 
-A markdown file that teaches Claude how to do something specific. Claude automatically applies Skills when your request matches their description.
+> **Canonical mechanics:** https://code.claude.com/docs/en/skills.md
 
-## SKILL.md Structure
+Don't restate that doc in a skill or a way. If you catch yourself writing a
+frontmatter-fields table, stop — link the doc instead. What follows is only the
+judgment the doc can't make for you in *this* repo.
 
-```yaml
----
-name: explaining-code
-description: Explains code with visual diagrams and analogies. Use when explaining how code works or when asked "how does this work?"
-allowed-tools: Read, Grep, Glob
-model: claude-sonnet-4-20250514
----
+## First decide: skill, way, or slash command?
 
-# Instructions
+These three overlap, and reaching for the wrong one is the most common mistake.
 
-1. Start with an analogy
-2. Draw ASCII diagram
-3. Walk through step-by-step
-```
+| Want | Use | Because |
+|------|-----|---------|
+| Guidance that fires when a tool/file/prompt matches, injected mid-session | **a way** (`hooks/ways/…`) | Hooks disclose it just-in-time; no user action; participates in embedding match |
+| A capability the user (or Claude) invokes by name to *do* a task | **a skill** (`skills/…`) | Self-contained, can carry scripts and `allowed-tools`, runnable on demand |
+| A throwaway reusable prompt with no logic | a plain slash command | Lighter than a skill; no directory, no tools |
 
-## Frontmatter Fields
+Rule of thumb: **a way teaches Claude how to behave; a skill gives Claude something to run.** If the answer is "inject advice when X happens," it's a way — and most of *this repo's* value is ways, so default there and only reach for a skill when there's a concrete procedure to execute. (`ways-update`, `ways-tests`, `ship`, `attend` are skills because each *runs a procedure*; `meta/knowledge`, `softwaredev/code/quality` are ways because they *shape behavior*.)
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Lowercase, hyphenated, max 64 chars, matches directory |
-| `description` | Yes | What + when (max 1024 chars) - Claude uses this to decide |
-| `allowed-tools` | No | Tools Claude can use without permission |
-| `model` | No | Override model for this Skill |
+## The scope caveat — this repo IS `~/.claude`
 
-## Where Skills Live
+`skills/` here is the **live personal scope** (`~/.claude/skills/`). A skill added
+to this repo is available in **every** project on this machine the moment it lands.
+Two consequences:
 
-| Location | Path | Scope |
-|----------|------|-------|
-| Personal | `~/.claude/skills/` | All your projects |
-| Project | `.claude/skills/` | Team (in repo) |
-| Plugin | Bundled in plugin | Plugin users |
-| Enterprise | Managed settings | Organization |
+- **Triggers must be tight.** A loose `description` on a global skill hijacks
+  unrelated requests everywhere. Name the specific task and the words a user would
+  actually say, and say what it's *not* for. (`ways-update` ends its description
+  with "Not for editing or authoring individual ways… or upgrading project
+  dependencies" precisely to stay in its lane.)
+- **A global skill must be location-independent.** It can't assume cwd. Resolve the
+  target up front — e.g. `ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"` — and verify
+  it's the repo you expect before acting.
 
-Priority: Enterprise > Personal > Project > Plugin
+If a capability only makes sense inside one project, it belongs in *that* project's
+`.claude/skills/`, not here.
 
-## Writing Good Descriptions
+## House conventions
 
-The description is how Claude decides when to use your Skill.
+- **Naming.** Lowercase, hyphenated, directory matches `name`. Group related skills
+  into a family prefix that already exists rather than inventing a sibling vocabulary:
+  `ways-*` (tests, update), `think-*`, `project-*`. A new `ways-foo` reads as kin to
+  `ways-tests`; a bare `foo` reads as orphaned.
+- **Self-contained and honest about side effects.** Skills here lean on real tooling
+  (`make`, `ways`, `gh`) rather than reimplementing it. If a skill mutates anything —
+  git state, the working tree, remote — make it ask before destructive moves, the same
+  bar the delivery ways hold.
+- **Defer, don't duplicate.** Point at the canonical doc for mechanics and at sibling
+  ways/skills for adjacent concerns; keep the skill about its one job.
 
-**Bad**: "Helps with documents"
-**Good**: "Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction."
+## Worked example
 
-Include:
-1. What the Skill does (specific actions)
-2. When to use it (trigger keywords users would say)
+`skills/ways-update/SKILL.md` is the reference for the conventions above: a tight
+single-purpose description with an explicit "not for" clause, `CLAUDE_CONFIG_DIR`
+resolution so it runs from anywhere, real `make`/`ways` tooling instead of
+hand-rolled steps, and a pre-flight check before it touches git. Copy its shape.
 
-## Progressive Disclosure
+## Validate before shipping
 
-Keep `SKILL.md` under 500 lines. Link to supporting files:
+A skill is picked up at Claude Code startup — there's no corpus rebuild (that's
+ways). After adding or editing one:
 
-```
-my-skill/
-├── SKILL.md        # Overview (required)
-├── reference.md    # Detailed docs (loaded when needed)
-├── examples.md     # Usage examples
-└── scripts/
-    └── helper.py   # Executed, not loaded into context
-```
+- Confirm `name` matches the directory and the frontmatter parses.
+- **Restart Claude Code**, then ask "what skills are available?" and trigger it with
+  a realistic phrasing to confirm the description fires when it should — and doesn't
+  fire on the near-miss requests you wrote it to avoid.
 
-## Skills vs Other Options
+## See Also
 
-| Use | When | Activation |
-|-----|------|------------|
-| **Skills** | Specialized knowledge | Claude chooses automatically |
-| **Slash commands** | Reusable prompts | You type `/command` |
-| **CLAUDE.md** | Project-wide rules | Every conversation |
-| **Ways** | Tool/file-triggered guidance | Hook events |
-
-## Testing
-
-```
-# Restart Claude Code after creating
-claude
-
-# Ask Claude what's available
-"What Skills are available?"
-
-# Test with matching request
-"How does this code work?"
-```
+- knowledge/authoring(meta) — authoring ways (the other half of the skill-vs-way call)
+- Canonical SKILL.md reference — https://code.claude.com/docs/en/skills.md
