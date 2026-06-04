@@ -17,14 +17,14 @@ refire: 0.15
 |---------------|--------------|
 | Semantic discovery ("explain code") | Tool-triggered (`git commit` → format reminder) |
 | Tool restrictions (`allowed-tools`) | File-triggered (edit `.env` → config guidance) |
-| Multi-file reference docs | Session-gated (once per session) |
+| Multi-file reference docs | Session-gated, re-injects on a decay curve |
 | | Dynamic context (macro queries API) |
 
 They complement: Skills can't detect tool execution. Ways support both regex and semantic matching.
 
 ## How Ways Work
 
-Ways are contextual guidance that loads once per session when triggered by:
+Ways are contextual guidance that discloses when triggered by:
 - **Keywords** in user prompts (UserPromptSubmit)
 - **Tool use** - commands, file paths (PreToolUse)
 - **State conditions** - context threshold, file existence (UserPromptSubmit)
@@ -32,11 +32,12 @@ Ways are contextual guidance that loads once per session when triggered by:
 ## State Machine
 
 ```
-(not_shown)-[:TRIGGER {keyword|command|file|state}]->(shown)  // output + create marker
-(shown)-[:TRIGGER]->(shown)  // no-op, idempotent
+(not_shown)-[:TRIGGER {keyword|command|file|state|embed}]->(shown)  // output + stamp epoch
+(shown)-[:TRIGGER, suppressed]->(shown)                             // hold — re-disclosure threshold not met
+(shown)-[:TRIGGER, threshold met]->(shown)                          // re-inject to course-correct
 ```
 
-Each (way, session) pair has its own marker. Multiple ways can fire per prompt. Project-local wins over global for same name.
+Disclosure isn't once-and-done. Each (way, session) pair stamps the epoch it fired; a per-way decay curve lowers its suppression threshold as the session grows (context size, epoch distance), so a way that fired early becomes eligible to re-inject when it matches again. Re-disclosure course-corrects drift over long sessions — it isn't verbatim repetition. Multiple ways can fire per prompt. Project-local wins over global for same name.
 
 ## Locations
 
