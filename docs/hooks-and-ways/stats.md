@@ -13,7 +13,7 @@ Every time a way fires, `log-event.sh` appends a line to `~/.claude/stats/events
 Session start events are also logged. For teammates, the team name is included:
 
 ```json
-{"ts":"2026-02-05T19:01:12Z","event":"way_fired","way":"meta/teams","domain":"meta","trigger":"state","scope":"teammate","project":"/home/you/myproject","session":"def-456","team":"my-refactor-team"}
+{"ts":"2026-02-05T19:01:12Z","event":"way_fired","way":"collaboration/teams","domain":"collaboration","trigger":"state","scope":"teammate","project":"/home/you/myproject","session":"def-456","team":"my-refactor-team"}
 ```
 
 The log is append-only JSONL. Each line is self-contained. Nothing reads this file during normal operation — it's purely for after-the-fact analysis.

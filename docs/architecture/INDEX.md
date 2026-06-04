@@ -50,6 +50,9 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-127](./system/ADR-127-reject-full-body-embedding-corpus.md) | Full-body embedding corpus for way matching | Rejected |
 | [ADR-128](./system/ADR-128-memory-as-repo-portable-ways-seed-routing-over-accumulated-snapshots.md) | Memory as repo-portable ways — seed routing over accumulated snapshots | Draft |
 | [ADR-129](./system/ADR-129-instance-suffix-and-heartbeat-liveness.md) | Instance suffix and heartbeat liveness for attend identity | Proposed |
+| [ADR-130](./system/ADR-130-sentence-salience-input-reduction-for-embed-matching.md) | Sentence-salience input reduction for embed matching | Accepted |
+| [ADR-131](./system/ADR-131-project-scope-way-toggles.md) | Project-scope way toggles | Draft |
+| [ADR-132](./system/ADR-132-collaboration-ways-domain.md) | Collaboration ways domain | Draft |
 
 ## Documentation
 _Documentation structure, tooling, coherence_
