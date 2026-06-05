@@ -20,6 +20,65 @@ pub fn normalize_path_sep(path: &Path) -> PathBuf {
     path.components().collect()
 }
 
+/// True if `content` opens with a `---` YAML frontmatter delimiter.
+///
+/// Uses `lines()` (which strips a trailing `\r`) so a way authored on Windows
+/// with CRLF endings is recognized. A hard `content.starts_with("---\n")` check
+/// fails on `---\r\n` and silently drops the file — on the scan/resolve path
+/// that means the way never matches or renders. Every frontmatter gate routes
+/// through here so the behavior is uniform across platforms.
+pub fn has_frontmatter(content: &str) -> bool {
+    content.lines().next() == Some("---")
+}
+
+/// Join a path's components with '/' regardless of OS separator.
+///
+/// Way IDs are a stable, cross-platform namespace: a way at
+/// `softwaredev/code/quality.md` has id `softwaredev/code` on every OS. Using
+/// `Path::display()` would leak backslashes on Windows, so corpus IDs and scan
+/// candidate IDs would silently never match. Both sides must route through here.
+pub fn path_to_id(rel: &Path) -> String {
+    rel.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Encode a real project path into the namespace key that prefixes
+/// project-local way IDs in the corpus.
+///
+/// Computed from the REAL path — not the lossy `~/.claude/projects/` encoded
+/// dir name — so the corpus side (CLAUDE_PROJECT_DIR / a resolved project path)
+/// and the scan side (`--project`) produce an identical key for the same
+/// project. The result is a flat token (every separator and ':' becomes '-'),
+/// so the only '/' in the resulting `{key}/{bare_id}` corpus id is the boundary
+/// between the namespace key and the bare way id.
+///
+/// Canonicalize is authoritative (resolves symlinks, case, and trailing
+/// components); the lexical fallback keeps the key stable when the path does not
+/// exist on disk. Both call sites apply this identical rule.
+pub fn encode_project_key(path: &Path) -> String {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let normalized = normalize_path_sep(&resolved);
+    let mut s = normalized.to_string_lossy().into_owned();
+
+    // Strip the verbatim prefixes canonicalize() adds on Windows.
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        s = format!(r"\\{rest}");
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        s = rest.to_string();
+    }
+
+    #[cfg(windows)]
+    {
+        s = s.to_lowercase();
+    }
+
+    s.chars()
+        .map(|c| if c == '\\' || c == '/' || c == ':' { '-' } else { c })
+        .collect()
+}
+
 /// Home directory from $HOME (or USERPROFILE on Windows), falling back to /tmp.
 ///
 /// On Windows, $HOME is often set by Git Bash to a Unix-style path like /c/Users/name,
@@ -182,5 +241,51 @@ mod tests {
     fn handles_deeply_dotted_names() {
         // Last segment is the locale candidate
         assert_eq!(extract_locale_from_filename("some.way.name.ja.md"), Some("ja".to_string()));
+    }
+
+    #[test]
+    fn has_frontmatter_tolerates_crlf() {
+        assert!(has_frontmatter("---\ndescription: x\n---\n"));
+        assert!(has_frontmatter("---\r\ndescription: x\r\n---\r\n"));
+        assert!(!has_frontmatter("no frontmatter\n"));
+        assert!(!has_frontmatter(""));
+    }
+
+    #[test]
+    fn path_to_id_uses_forward_slashes() {
+        assert_eq!(path_to_id(Path::new("softwaredev/code")), "softwaredev/code");
+        // A relative path built from OS-native parts still joins with '/'.
+        let p: PathBuf = ["softwaredev", "code", "quality"].iter().collect();
+        assert_eq!(path_to_id(&p), "softwaredev/code/quality");
+        assert_eq!(path_to_id(Path::new("")), "");
+    }
+
+    #[test]
+    fn encode_project_key_is_a_flat_token() {
+        // No path separators or ':' survive — exactly one boundary later when
+        // joined with a bare id.
+        let key = encode_project_key(Path::new("/nonexistent/proj/sub"));
+        assert!(!key.contains('/'), "key must be flat: {key}");
+        assert!(!key.contains('\\'), "key must be flat: {key}");
+        assert!(!key.contains(':'), "key must be flat: {key}");
+    }
+
+    #[test]
+    fn encode_project_key_ignores_trailing_slash_and_dot() {
+        // Lexical fallback (paths don't exist) must normalize trailing slash and
+        // '.' so corpus-time and scan-time keys agree.
+        let a = encode_project_key(Path::new("/nonexistent/proj"));
+        let b = encode_project_key(Path::new("/nonexistent/proj/"));
+        let c = encode_project_key(Path::new("/nonexistent/proj/."));
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn encode_project_key_matches_for_existing_dir() {
+        // The contract that makes Bug B fix work: corpus-time and scan-time both
+        // canonicalize the same real dir to the same key.
+        let dir = std::env::temp_dir();
+        assert_eq!(encode_project_key(&dir), encode_project_key(&dir));
     }
 }

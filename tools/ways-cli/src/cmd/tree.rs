@@ -174,7 +174,7 @@ fn find_way_files(dir: &Path) -> Result<Vec<PathBuf>> {
         }
         // Check frontmatter
         if let Ok(content) = std::fs::read_to_string(path) {
-            if content.starts_with("---\n") {
+            if crate::util::has_frontmatter(&content) {
                 files.push(path.to_path_buf());
             }
         }

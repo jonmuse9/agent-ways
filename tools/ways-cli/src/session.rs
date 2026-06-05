@@ -488,7 +488,7 @@ fn find_way_in_dir(dir: &Path) -> Option<PathBuf> {
             continue;
         }
         if let Ok(content) = std::fs::read_to_string(&path) {
-            if content.starts_with("---\n") {
+            if crate::util::has_frontmatter(&content) {
                 return Some(path);
             }
         }

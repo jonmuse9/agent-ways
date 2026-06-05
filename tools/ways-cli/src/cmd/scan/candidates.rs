@@ -12,15 +12,18 @@ use super::WayCandidate;
 pub(crate) fn collect_candidates(project_dir: &str) -> Vec<WayCandidate> {
     let mut candidates = Vec::new();
 
-    // Project-local first
+    // Project-local first. The corpus namespaces project ways as
+    // `{encode_project_key(project_dir)}/{id}`; we compute the identical prefix
+    // here so the embedding lookup (best_en/best_multi) finds them (Bug B fix).
     let project_ways = PathBuf::from(project_dir).join(".claude/ways");
     if project_ways.is_dir() {
-        collect_from_dir(&project_ways, &mut candidates);
+        let prefix = project_corpus_prefix(project_dir);
+        collect_from_dir(&project_ways, &prefix, &mut candidates);
     }
 
-    // Global
+    // Global ways are not namespaced — corpus id == bare id.
     let global_ways = super::scoring::home_dir().join(".claude/hooks/ways");
-    collect_from_dir(&global_ways, &mut candidates);
+    collect_from_dir(&global_ways, "", &mut candidates);
 
     candidates
 }
@@ -30,16 +33,23 @@ pub(crate) fn collect_checks(project_dir: &str) -> Vec<WayCandidate> {
 
     let project_ways = PathBuf::from(project_dir).join(".claude/ways");
     if project_ways.is_dir() {
-        collect_checks_from_dir(&project_ways, &mut candidates);
+        let prefix = project_corpus_prefix(project_dir);
+        collect_checks_from_dir(&project_ways, &prefix, &mut candidates);
     }
 
     let global_ways = super::scoring::home_dir().join(".claude/hooks/ways");
-    collect_checks_from_dir(&global_ways, &mut candidates);
+    collect_checks_from_dir(&global_ways, "", &mut candidates);
 
     candidates
 }
 
-fn collect_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
+/// The corpus-id prefix for project-local ways: `{key}/`, where `key` is the
+/// project root's namespace key. Mirrors `ways corpus` exactly.
+fn project_corpus_prefix(project_dir: &str) -> String {
+    format!("{}/", crate::util::encode_project_key(Path::new(project_dir)))
+}
+
+fn collect_from_dir(dir: &Path, corpus_prefix: &str, out: &mut Vec<WayCandidate>) {
     for entry in WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
@@ -58,7 +68,7 @@ fn collect_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        if !content.starts_with("---\n") {
+        if !crate::util::has_frontmatter(&content) {
             continue;
         }
 
@@ -73,13 +83,13 @@ fn collect_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
             continue;
         }
 
-        if let Some(candidate) = parse_candidate(&id, path, &content) {
+        if let Some(candidate) = parse_candidate(&id, corpus_prefix, path, &content) {
             out.push(candidate);
         }
     }
 }
 
-fn collect_checks_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
+fn collect_checks_from_dir(dir: &Path, corpus_prefix: &str, out: &mut Vec<WayCandidate>) {
     for entry in WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
@@ -98,7 +108,7 @@ fn collect_checks_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        if !content.starts_with("---\n") {
+        if !crate::util::has_frontmatter(&content) {
             continue;
         }
 
@@ -107,7 +117,7 @@ fn collect_checks_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
             continue;
         }
 
-        if let Some(candidate) = parse_candidate(&id, path, &content) {
+        if let Some(candidate) = parse_candidate(&id, corpus_prefix, path, &content) {
             out.push(candidate);
         }
     }
@@ -115,11 +125,14 @@ fn collect_checks_from_dir(dir: &Path, out: &mut Vec<WayCandidate>) {
 
 // ── Parsing ────────────────────────────────────────────────────
 
-fn parse_candidate(id: &str, path: &Path, content: &str) -> Option<WayCandidate> {
+fn parse_candidate(id: &str, corpus_prefix: &str, path: &Path, content: &str) -> Option<WayCandidate> {
     let fm = extract_frontmatter(content)?;
 
     Some(WayCandidate {
         id: id.to_string(),
+        // Bare id keeps driving session markers, show, and parent-boost; the
+        // corpus_id (prefixed for project ways) is used only for embedding lookup.
+        corpus_id: format!("{corpus_prefix}{id}"),
         path: path.to_path_buf(),
         pattern: get_fm_field(&fm, "pattern"),
         commands: get_fm_field(&fm, "commands"),
@@ -145,20 +158,22 @@ fn parse_candidate(id: &str, path: &Path, content: &str) -> Option<WayCandidate>
 
 pub(crate) fn way_id_from_path(path: &Path, base: &Path) -> String {
     let parent = path.parent().unwrap_or(path);
-    parent
-        .strip_prefix(base)
-        .unwrap_or(parent)
-        .display()
-        .to_string()
+    crate::util::path_to_id(parent.strip_prefix(base).unwrap_or(parent))
 }
 
 pub(crate) fn extract_frontmatter(content: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
+    let mut lines = content.lines();
+    if lines.next()? != "---" {
         return None;
     }
-    let rest = &content[4..];
-    let end = rest.find("\n---\n").or_else(|| rest.find("\n---"))?;
-    Some(rest[..end].to_string())
+    let mut fm_lines = Vec::new();
+    for line in lines {
+        if line == "---" {
+            return Some(fm_lines.join("\n"));
+        }
+        fm_lines.push(line);
+    }
+    None
 }
 
 pub(crate) fn get_fm_field(fm: &str, name: &str) -> Option<String> {
@@ -223,4 +238,21 @@ pub(crate) fn check_when(
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LF: &str = "---\ndescription: hello\npattern: foo\n---\n# Body\n";
+    const CRLF: &str = "---\r\ndescription: hello\r\npattern: foo\r\n---\r\n# Body\r\n";
+
+    #[test]
+    fn fields_parse_identically_across_line_endings() {
+        let lf = extract_frontmatter(LF).expect("LF frontmatter");
+        let crlf = extract_frontmatter(CRLF).expect("CRLF frontmatter");
+        assert_eq!(get_fm_field(&lf, "pattern").as_deref(), Some("foo"));
+        assert_eq!(get_fm_field(&crlf, "pattern").as_deref(), Some("foo"));
+        assert_eq!(get_fm_field(&crlf, "description").as_deref(), Some("hello"));
+    }
 }
