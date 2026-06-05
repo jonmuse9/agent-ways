@@ -66,9 +66,49 @@
       "Bash(id:*)",
       "Bash(date:*)",
       "Bash(sleep:*)",
-      "Bash(command:*)"
+      "Bash(command:*)",
+      "mcp__thinking-strategies__think-strategies",
+      "Bash(./dotfiles help)",
+      "Bash(./dotfiles status)",
+      "Bash(./dotfiles deploy:*)",
+      "Bash(./dotfiles capture:*)",
+      "Bash(~/.dotfiles/dotfiles status *)",
+      "Bash(~/.dotfiles/dotfiles diff *)",
+      "Bash(~/.dotfiles/dotfiles list *)",
+      "Bash(~/.dotfiles/dotfiles deploy *)",
+      "Bash(~/.dotfiles/dotfiles help *)",
+      "Bash(~/.dotfiles/dotfiles capture *)",
+      "Bash(/home/aaron/.dotfiles/dotfiles help *)",
+      "Bash(/home/aaron/.dotfiles/dotfiles status *)",
+      "Read(//usr/share/oh-my-posh/themes/**)",
+      "Read(//home/aaron/**)",
+      "Bash(/home/aaron/.dotfiles/dotfiles add *)",
+      "Bash(/home/aaron/.dotfiles/dotfiles deploy *)",
+      "Bash(posh-theme help *)",
+      "Bash(posh-theme list *)",
+      "Bash(posh-theme current *)",
+      "Bash(posh-theme preview *)",
+      "Bash(oh-my-posh --help)",
+      "Bash(oh-my-posh get *)",
+      "WebFetch(domain:ohmyposh.dev)",
+      "Bash(oh-my-posh print *)",
+      "Bash(oh-my-posh debug *)",
+      "Bash(oh-my-posh config *)",
+      "Bash(posh-theme fetch *)",
+      "Bash(/home/aaron/.dotfiles/dotfiles diff *)",
+      "Bash(/home/aaron/.dotfiles/dotfiles push *)",
+      "Bash(posh-theme preview-all *)",
+      "Bash(zsh *)",
+      "Bash(oh-my-posh init *)",
+      "Bash(/bin/cat)",
+      "Bash(/bin/cat -A)",
+      "Bash(ssh *)",
+      "Bash(sshpass -V)",
+      "Bash(glow --version)",
+      "Bash(/home/aaron/.dotfiles/dotfiles)"
     ],
-    "defaultMode": "default"
+    "deny": [],
+    "defaultMode": "auto"
   },
   "hooks": {
     "SessionStart": [
@@ -255,5 +295,7 @@
         "repo": "anthropics/knowledge-work-plugins"
       }
     }
-  }
+  },
+  "autoCompactEnabled": false,
+  "teammateMode": "auto"
 }
