@@ -53,6 +53,7 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-130](./system/ADR-130-sentence-salience-input-reduction-for-embed-matching.md) | Sentence-salience input reduction for embed matching | Accepted |
 | [ADR-131](./system/ADR-131-project-scope-way-toggles.md) | Project-scope way toggles | Draft |
 | [ADR-132](./system/ADR-132-collaboration-ways-domain.md) | Collaboration ways domain | Accepted |
+| [ADR-133](./system/ADR-133-plugin-way-discovery.md) | Plugin Way Discovery | Proposed |
 
 ## Documentation
 _Documentation structure, tooling, coherence_
