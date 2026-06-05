@@ -45,7 +45,7 @@ Scope filtering is handled by the `ways` binary: it checks the way's `scope:` fi
 
 ## The Teams Way
 
-`meta/teams/teams.md` fires on `session-start` with `scope: teammate`. When a teammate's first `UserPromptSubmit` hook runs, `check-state.sh` evaluates this trigger, confirms the scope matches, and injects the coordination norms:
+`collaboration/teams/teams.md` fires on `session-start` with `scope: teammate`. When a teammate's first `UserPromptSubmit` hook runs, `check-state.sh` evaluates this trigger, confirms the scope matches, and injects the coordination norms:
 
 - Check TaskList after completing each task
 - Use SendMessage to report progress and blockers
