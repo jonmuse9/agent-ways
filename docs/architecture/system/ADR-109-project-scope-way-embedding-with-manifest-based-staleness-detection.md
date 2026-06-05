@@ -1,5 +1,5 @@
 ---
-status: Draft
+status: Accepted
 date: 2026-03-23
 deciders:
   - aaronsb
@@ -8,6 +8,8 @@ related:
   - ADR-108
   - ADR-107
   - ADR-105
+  - ADR-111
+  - ADR-125
 ---
 
 # ADR-109: Project-Scope Way Embedding with Manifest-Based Staleness Detection
@@ -35,7 +37,14 @@ Additionally, runtime artifacts need clear separation from source. The corpus is
    b. Check the inclusion marker at `<project>/.claude/.ways-embed`
    c. Embed included ways into the same corpus
 
-Corpus IDs follow Claude Code's native project encoding. Global ways keep their current format (`softwaredev/code/testing`). Project ways are namespaced by encoded project path, mirroring `~/.claude/projects/` conventions: `<encoded-path>/<way-tree-path>`.
+Global ways keep their current format (`softwaredev/code/testing`). Project ways are namespaced by a **project key derived from the project's real path**: `<project-key>/<way-tree-path>`.
+
+> **Implementation note (supersedes the original "encoded project path" wording).**
+> The corpus id prefix is *not* the `~/.claude/projects/<encoded-path>` directory name. That encoding (`/`→`-`, and `:`→`-` on Windows) is one-way and lossy, and — critically — the matcher (`ways scan`) only knows the *real* project directory (from `--project` / `CLAUDE_PROJECT_DIR`), never the encoded form. If the corpus prefixed ids with the encoded dir name, the matcher's lookup key would never equal the corpus id and project ways would never match semantically on any platform.
+>
+> Instead, both sides compute one shared key, `encode_project_key(real_path)` (`ways-cli/src/util.rs`): canonicalize the path, strip Windows verbatim prefixes (`\\?\`), lowercase on Windows, then flatten every separator and `:` to `-`. The result is a flat token, so the single `/` in `<project-key>/<way-tree-path>` is the namespace boundary. Way-tree path segments are joined with `/` on all platforms (`path_to_id`) so ids never leak `\` on Windows.
+>
+> Corpus generation embeds the **current** project straight from `CLAUDE_PROJECT_DIR` (Windows-safe, no decode) and additionally scans `~/.claude/projects/*` for other projects, deriving each one's key from its *resolved real path* (via `sessions-index.json`, falling back to greedy filesystem decode) — never the raw encoded dir name. The matcher prefixes its project candidates with `encode_project_key(--project dir)`, so the keys agree by construction.
 
 Way trees are n-deep (progressive disclosure, ADR-105), so IDs reflect the full tree path — no fixed domain/way depth assumption.
 
@@ -112,10 +121,14 @@ If a project is deleted or its ways removed, stale embeddings remain in the corp
 ### Neutral
 
 - BM25 and NCD fallback paths already handle project-local ways — this extends existing behavior to the embedding tier
-- The scanner (`match-way.sh`) needs no changes for matching — it already resolves project overrides at runtime. The change is in corpus generation only.
-- Progressive disclosure (ADR-105) works the same way for project ways — parent/child relationships, sibling coverage, depth tracking all apply
-- `embed-status` CLI tool needs updating to report: manifest contents, per-project inclusion state (included/disincluded/not found), staleness per scope, and decoded project paths. The current project path decoding is lossy — this implementation should store the real path in the manifest when running in project context.
-- Claude Code's project path encoding (`/` → `-`) is a one-way function. Paths with hyphens in directory names can't be decoded. The manifest must record real paths at embed time, not attempt reverse decoding.
+- The matcher **does** need a change for matching: its project candidates must be looked up under the same `<project-key>/<way-tree-path>` namespace the corpus writes (see implementation note above). The original ADR assumed corpus generation alone sufficed; that was incorrect — the two sides must share one key derivation. Pattern/keyword matching was unaffected (it reads way files directly), which is why the gap surfaced only as silent semantic misses.
+- Progressive disclosure (ADR-105) works the same way for project ways — parent/child relationships, sibling coverage, depth tracking all apply. These operate on the bare way id (session markers, show, parent-boost); only the embedding lookup uses the namespaced `<project-key>/...` id.
+- `embed-status` CLI tool needs updating to report: manifest contents, per-project inclusion state (included/disincluded/not found), staleness per scope, and project paths.
+- Claude Code's project path encoding (`/` → `-`, and `:` → `-` on Windows) is a one-way function. Paths with hyphens in directory names can't be reverse-decoded. The manifest records real paths at embed time and the namespace key is derived from the real path, not the encoded dir name — so decoding is never on the matching critical path. `~/.claude/projects/*` scanning uses `sessions-index.json` (real path) first and greedy decode only as a best-effort fallback for *other* projects; the current project always comes from `CLAUDE_PROJECT_DIR`.
+
+### Footgun guard (added during implementation)
+
+`ways corpus --ways-dir <dir>` historically wrote to and re-embedded the canonical user corpus, silently replacing all global + project ways with just `<dir>`'s ways. Corpus generation now accepts `--output <dir>` to direct artifacts to an isolated location, and warns when `--ways-dir` is used without `--output` against the canonical corpus.
 
 ## Alternatives Considered
 

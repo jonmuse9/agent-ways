@@ -33,6 +33,11 @@ use scoring::{capture_show_check, capture_show_way, default_project, EmbedScores
 
 pub(crate) struct WayCandidate {
     pub id: String,
+    /// Namespaced id used solely for the embedding-corpus lookup. Equals `id`
+    /// for global ways; for project ways it is `{project_key}/{id}`, matching
+    /// how `ways corpus` namespaces project entries. Session markers, show, and
+    /// parent-boost all use the bare `id`, not this.
+    pub corpus_id: String,
     pub path: PathBuf,
     pub pattern: Option<String>,
     pub commands: Option<String>,
@@ -94,7 +99,7 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
         let channel = match_prompt(
             query,
             &way.pattern,
-            &way.id,
+            &way.corpus_id,
             effective_thresholds(way, session_id),
             &embed_matches,
         );
@@ -160,7 +165,7 @@ pub fn task(
         let channel = match_prompt(
             query,
             &way.pattern,
-            &way.id,
+            &way.corpus_id,
             effective_thresholds(way, session_id),
             &embed_matches,
         );
@@ -391,7 +396,7 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
 fn match_prompt(
     query: &str,
     pattern: &Option<String>,
-    way_id: &str,
+    corpus_id: &str,
     thresholds: EffectiveThresholds,
     scores: &EmbedScores,
 ) -> Option<String> {
@@ -408,8 +413,8 @@ fn match_prompt(
     // each model's noise band sits below its gate:
     //   - EN model (0.40): sharp on English, noise below 0.35
     //   - multi model (0.55): cross-lingual but coarser, noise at 0.30-0.50
-    let en_fires = scores.best_en(way_id).is_some_and(|s| s >= thresholds.en);
-    let multi_fires = scores.best_multi(way_id).is_some_and(|s| s >= thresholds.multi);
+    let en_fires = scores.best_en(corpus_id).is_some_and(|s| s >= thresholds.en);
+    let multi_fires = scores.best_multi(corpus_id).is_some_and(|s| s >= thresholds.multi);
 
     if en_fires {
         Some("semantic:embedding:en".to_string())
@@ -474,8 +479,8 @@ fn effective_thresholds(way: &WayCandidate, session_id: &str) -> EffectiveThresh
 /// path clears.
 fn check_semantic_score(check: &WayCandidate, session_id: &str, scores: &EmbedScores) -> f64 {
     let t = effective_thresholds(check, session_id);
-    let en = scores.best_en(&check.id).filter(|s| *s >= t.en);
-    let mu = scores.best_multi(&check.id).filter(|s| *s >= t.multi);
+    let en = scores.best_en(&check.corpus_id).filter(|s| *s >= t.en);
+    let mu = scores.best_multi(&check.corpus_id).filter(|s| *s >= t.multi);
     match (en, mu) {
         (Some(e), Some(m)) => e.max(m),
         (Some(s), None) | (None, Some(s)) => s,

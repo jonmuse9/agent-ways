@@ -384,7 +384,10 @@ static int cmd_generate(const char *corpus_path, const char *model_path, const c
 
     fclose(out);
 
-    /* atomic rename */
+    /* atomic rename — on Windows, rename() fails if destination exists; remove first */
+#ifdef _WIN32
+    remove(out_path);
+#endif
     if (rename(tmp_path.c_str(), out_path) != 0) {
         fprintf(stderr, "error: failed to rename %s -> %s\n", tmp_path.c_str(), out_path);
         engine_free(engine);

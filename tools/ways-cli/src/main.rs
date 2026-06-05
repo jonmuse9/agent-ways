@@ -49,6 +49,11 @@ enum Commands {
         /// Ways root directory (default: ~/.claude/hooks/ways)
         #[arg(long)]
         ways_dir: Option<String>,
+        /// Output directory for corpus artifacts (default: canonical XDG cache).
+        /// Use with --ways-dir for an isolated build that won't clobber the
+        /// canonical user corpus.
+        #[arg(long)]
+        output: Option<String>,
         /// Suppress progress output
         #[arg(long, short)]
         quiet: bool,
@@ -514,7 +519,7 @@ fn main() -> Result<()> {
     match command {
         Commands::Context { project, json } => cmd::context::run(project.as_deref(), json),
         Commands::Lint { path, schema, check, fix, global } => cmd::lint::run(path, schema, check, fix, global),
-        Commands::Corpus { ways_dir, quiet, if_stale } => cmd::corpus::run(ways_dir, quiet, if_stale),
+        Commands::Corpus { ways_dir, output, quiet, if_stale } => cmd::corpus::run(ways_dir, output, quiet, if_stale),
         Commands::Match { query, corpus } => cmd::match_cmd::run(query, corpus),
         Commands::Embed { query, corpus, model } => cmd::embed::run(query, corpus, model),
         Commands::Siblings { id, threshold, corpus, model } => {

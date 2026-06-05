@@ -109,7 +109,7 @@ pub fn run(file: String, min_freq: u32) -> Result<()> {
 }
 
 fn parse_way_file(content: &str) -> Option<(String, String, String)> {
-    if !content.starts_with("---\n") {
+    if !crate::util::has_frontmatter(content) {
         return None;
     }
 

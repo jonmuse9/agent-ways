@@ -118,14 +118,27 @@ pub(super) fn maybe_self_reload(
         env!("ATTEND_COMMIT")
     );
 
-    use std::os::unix::process::CommandExt;
+    // exec self: replace process on Unix, spawn+exit on Windows
     let args: Vec<String> = std::env::args().collect();
-    let err = std::process::Command::new(&args[0])
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(&args[0])
+            .args(&args[1..])
+            .env("ATTEND_RELOADED_FROM", &prev_version)
+            .exec();
+        // exec() only returns on failure
+        emit::log(&format!("self-reload failed: {}", err));
+    }
+    #[cfg(not(unix))]
+    match std::process::Command::new(&args[0])
         .args(&args[1..])
         .env("ATTEND_RELOADED_FROM", &prev_version)
-        .exec();
-    // exec() only returns on failure
-    emit::log(&format!("self-reload failed: {}", err));
+        .spawn()
+    {
+        Ok(_) => std::process::exit(0),
+        Err(err) => emit::log(&format!("self-reload failed: {}", err)),
+    }
 }
 
 /// One iteration of the sensor loop: drain ready sensors, decide

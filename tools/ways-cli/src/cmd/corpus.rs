@@ -7,17 +7,40 @@ use walkdir::WalkDir;
 
 use crate::frontmatter;
 
-pub fn run(ways_dir: Option<String>, quiet: bool, if_stale: bool) -> Result<()> {
+pub fn run(
+    ways_dir: Option<String>,
+    output_dir: Option<String>,
+    quiet: bool,
+    if_stale: bool,
+) -> Result<()> {
     let global_dir = ways_dir
+        .as_ref()
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir().join(".claude/hooks/ways"));
 
-    let xdg_way = xdg_cache_dir().join("claude-ways/user");
+    // The engine dir holds the way-embed binary + GGUF models — always canonical.
+    let engine_dir = crate::util::normalize_path_sep(&xdg_cache_dir().join("claude-ways/user"));
+    // Corpus artifacts (jsonl, splits, manifest) go to --output if given, else
+    // the canonical engine dir.
+    let out_dir = match &output_dir {
+        Some(o) => crate::util::normalize_path_sep(&PathBuf::from(o)),
+        None => engine_dir.clone(),
+    };
+
+    // Bug-C guard: an ad-hoc --ways-dir build that lands on the canonical corpus
+    // re-embeds and wipes the global + project ways. Steer it to --output.
+    if ways_dir.is_some() && output_dir.is_none() && out_dir == engine_dir {
+        eprintln!(
+            "[ways corpus] WARNING: --ways-dir regenerates the canonical corpus at {},",
+            out_dir.display()
+        );
+        eprintln!("  replacing global + all project ways. Pass --output <dir> for an isolated build.");
+    }
 
     // Staleness check: skip regen if corpus is fresh
     if if_stale {
-        let manifest = xdg_way.join("embed-manifest.json");
-        let corpus = xdg_way.join("ways-corpus.jsonl");
+        let manifest = out_dir.join("embed-manifest.json");
+        let corpus = out_dir.join("ways-corpus.jsonl");
         if manifest.is_file() && corpus.is_file() {
             let project_dir = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
             if !is_stale(&manifest, &global_dir, &project_dir) {
@@ -26,10 +49,10 @@ pub fn run(ways_dir: Option<String>, quiet: bool, if_stale: bool) -> Result<()> 
         }
         // Missing manifest/corpus → always regen
     }
-    std::fs::create_dir_all(&xdg_way)?;
-    let output = xdg_way.join("ways-corpus.jsonl");
+    std::fs::create_dir_all(&out_dir)?;
+    let corpus_path = out_dir.join("ways-corpus.jsonl");
 
-    let tmpfile = output.with_extension("jsonl.tmp");
+    let tmpfile = corpus_path.with_extension("jsonl.tmp");
     let mut w = BufWriter::new(
         std::fs::File::create(&tmpfile)
             .with_context(|| format!("creating {}", tmpfile.display()))?,
@@ -52,12 +75,40 @@ pub fn run(ways_dir: Option<String>, quiet: bool, if_stale: bool) -> Result<()> 
     ));
 
     // Scan project-local ways
-    let projects_dir = home_dir().join(".claude/projects");
     let mut project_total = 0;
     let mut manifest_projects: HashMap<String, serde_json::Value> = HashMap::new();
-
     let mut seen_ways_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
+    // Current project first, straight from CLAUDE_PROJECT_DIR. This is the
+    // Windows-safe path: no lossy decode of the ~/.claude/projects/ dir name.
+    // The namespace key is derived from the REAL project root via
+    // encode_project_key, so it matches exactly what `ways scan --project`
+    // computes for the same directory (the fix for Bug B).
+    if let Ok(cpd) = std::env::var("CLAUDE_PROJECT_DIR") {
+        if !cpd.is_empty() {
+            let proj_root = PathBuf::from(&cpd);
+            let ways_path = proj_root.join(".claude/ways");
+            if ways_path.is_dir() {
+                let canon = std::fs::canonicalize(&ways_path).unwrap_or_else(|_| ways_path.clone());
+                seen_ways_dirs.insert(canon);
+                let key = crate::util::encode_project_key(&proj_root);
+                let real = std::fs::canonicalize(&proj_root)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or(cpd);
+                project_total += embed_one_project(
+                    &ways_path,
+                    &key,
+                    &real,
+                    &excluded,
+                    &mut w,
+                    &mut manifest_projects,
+                    &log,
+                )?;
+            }
+        }
+    }
+
+    let projects_dir = home_dir().join(".claude/projects");
     if projects_dir.is_dir() {
         for entry in std::fs::read_dir(&projects_dir)? {
             let entry = entry?;
@@ -77,44 +128,25 @@ pub fn run(ways_dir: Option<String>, quiet: bool, if_stale: bool) -> Result<()> 
                 None => continue,
             };
 
-            // Dedup: multiple encoded dirs may resolve to the same .claude/ways/
-            if !seen_ways_dirs.insert(ways_path.clone()) {
+            // Dedup: multiple encoded dirs (and the current project above) may
+            // resolve to the same .claude/ways/. Compare canonical paths.
+            let canon = std::fs::canonicalize(&ways_path).unwrap_or_else(|_| ways_path.clone());
+            if !seen_ways_dirs.insert(canon) {
                 continue;
             }
 
-            // Check .ways-embed marker
-            let marker_dir = ways_path.parent().unwrap_or(Path::new(""));
-            let marker = marker_dir.join(".ways-embed");
-            if marker.is_file() {
-                let state = std::fs::read_to_string(&marker)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                if state == "disinclude" {
-                    continue;
-                }
-            }
-
-            let prefix = format!("{encoded}/");
-            let local_count = scan_ways_dir(&ways_path, &prefix, &excluded, &mut w)?;
-
-            if local_count > 0 {
-                project_total += local_count;
-                let local_hash = content_hash(&ways_path);
-                log(&format!(
-                    "  {}: {local_count} ways (hash: {}...)",
-                    project_path,
-                    &local_hash[..16.min(local_hash.len())]
-                ));
-                manifest_projects.insert(
-                    encoded.clone(),
-                    json!({
-                        "path": &project_path,
-                        "ways_hash": local_hash,
-                        "ways_count": local_count,
-                    }),
-                );
-            }
+            // Key off the resolved REAL path, not the lossy encoded dir name, so
+            // it matches `ways scan --project <that project>`.
+            let key = crate::util::encode_project_key(Path::new(&project_path));
+            project_total += embed_one_project(
+                &ways_path,
+                &key,
+                &project_path,
+                &excluded,
+                &mut w,
+                &mut manifest_projects,
+                &log,
+            )?;
         }
     }
 
@@ -122,16 +154,16 @@ pub fn run(ways_dir: Option<String>, quiet: bool, if_stale: bool) -> Result<()> 
     drop(w);
 
     // Atomic move
-    std::fs::rename(&tmpfile, &output)?;
+    std::fs::rename(&tmpfile, &corpus_path)?;
 
     let total = global_count + project_total;
     log(&format!(
         "Generated {}: {total} ways ({global_count} global, {project_total} project)",
-        output.display()
+        corpus_path.display()
     ));
 
     // Auto-embed if way-embed binary and model are available
-    auto_embed(&xdg_way, &output, &log)?;
+    auto_embed(&out_dir, &engine_dir, &corpus_path, &log)?;
 
     // Write manifest
     let manifest = json!({
@@ -140,11 +172,61 @@ pub fn run(ways_dir: Option<String>, quiet: bool, if_stale: bool) -> Result<()> 
         "total_count": total,
         "projects": manifest_projects,
     });
-    let manifest_path = xdg_way.join("embed-manifest.json");
+    let manifest_path = out_dir.join("embed-manifest.json");
     std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
     log(&format!("Manifest written: {}", manifest_path.display()));
 
     Ok(())
+}
+
+/// Embed one project's `.claude/ways/` under namespace `key`.
+///
+/// Honors the `.ways-embed` marker (skips on `disinclude`), namespaces every
+/// way id as `{key}/{bare_id}`, and records the project in the manifest under
+/// `key`. Returns the number of ways embedded.
+#[allow(clippy::too_many_arguments)]
+fn embed_one_project(
+    ways_path: &Path,
+    key: &str,
+    project_path: &str,
+    excluded: &[String],
+    w: &mut impl Write,
+    manifest_projects: &mut HashMap<String, serde_json::Value>,
+    log: &dyn Fn(&str),
+) -> Result<usize> {
+    // Check .ways-embed marker (skip only on explicit disinclude)
+    let marker_dir = ways_path.parent().unwrap_or(Path::new(""));
+    let marker = marker_dir.join(".ways-embed");
+    if marker.is_file() {
+        let state = std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if state == "disinclude" {
+            return Ok(0);
+        }
+    }
+
+    let prefix = format!("{key}/");
+    let local_count = scan_ways_dir(ways_path, &prefix, excluded, w)?;
+
+    if local_count > 0 {
+        let local_hash = content_hash(ways_path);
+        log(&format!(
+            "  {project_path}: {local_count} ways (hash: {}...)",
+            &local_hash[..16.min(local_hash.len())]
+        ));
+        manifest_projects.insert(
+            key.to_string(),
+            json!({
+                "path": project_path,
+                "ways_hash": local_hash,
+                "ways_count": local_count,
+            }),
+        );
+    }
+
+    Ok(local_count)
 }
 
 /// Scan a ways directory for semantic ways (having description + vocabulary).
@@ -224,11 +306,8 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
         }
 
         let relpath = path.strip_prefix(dir).unwrap_or(path);
-        let id = format!(
-            "{}{}",
-            id_prefix,
-            relpath.parent().unwrap_or(Path::new("")).display()
-        );
+        let id_body = crate::util::path_to_id(relpath.parent().unwrap_or(Path::new("")));
+        let id = format!("{id_prefix}{id_body}");
 
         // .md ways always use EN model (locale stubs use multilingual)
         let entry = json!({
@@ -248,7 +327,7 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
     for path in &locale_files {
         let parent = path.parent().unwrap_or(Path::new(""));
         let relparent = parent.strip_prefix(dir).unwrap_or(parent);
-        let id = format!("{}{}", id_prefix, relparent.display());
+        let id = format!("{}{}", id_prefix, crate::util::path_to_id(relparent));
 
         let entries = match frontmatter::parse_locales_jsonl(path) {
             Ok(e) => e,
@@ -283,9 +362,13 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
 
 /// Shell out to way-embed generate for embedding vectors.
 /// Generates two corpus files: one with EN model embeddings, one with multilingual.
-fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
+///
+/// `out_dir` receives the split corpora; `engine_dir` (always the canonical XDG
+/// cache) supplies the way-embed binary and GGUF models. The two differ only
+/// when `ways corpus --output <dir>` redirects an isolated build.
+fn auto_embed(out_dir: &Path, engine_dir: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
     let embed_bin = [
-        xdg_way.join("way-embed"),
+        engine_dir.join("way-embed"),
         home_dir().join(".claude/bin/way-embed"),
     ]
     .into_iter()
@@ -299,13 +382,13 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
         }
     };
 
-    let en_model = xdg_way.join("minilm-l6-v2.gguf");
-    let multi_model = xdg_way.join("multilingual-minilm-l12-v2-q8.gguf");
+    let en_model = engine_dir.join("minilm-l6-v2.gguf");
+    let multi_model = engine_dir.join("multilingual-minilm-l12-v2-q8.gguf");
 
     // Split corpus into EN and multilingual entries
     let corpus_content = std::fs::read_to_string(corpus)?;
-    let corpus_en = xdg_way.join("ways-corpus-en.jsonl");
-    let corpus_multi = xdg_way.join("ways-corpus-multi.jsonl");
+    let corpus_en = out_dir.join("ways-corpus-en.jsonl");
+    let corpus_multi = out_dir.join("ways-corpus-multi.jsonl");
     let mut en_count = 0usize;
     let mut multi_count = 0usize;
 
@@ -330,6 +413,13 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
         }
     }
 
+    // On Windows, Stdio::null() for the NUL device can cause MSVC C runtime
+    // to abort the child process. Use Stdio::inherit() on Windows instead.
+    #[cfg(windows)]
+    let embed_stderr = || std::process::Stdio::inherit();
+    #[cfg(not(windows))]
+    let embed_stderr = || std::process::Stdio::null();
+
     // Embed EN corpus
     if en_model.is_file() && en_count > 0 {
         log(&format!("Embedding {en_count} ways with English model..."));
@@ -338,7 +428,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
             .arg(&corpus_en)
             .args(["--model"])
             .arg(&en_model)
-            .stderr(std::process::Stdio::null())
+            .stderr(embed_stderr())
             .status();
 
         match status {
@@ -355,7 +445,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
             .arg(&corpus_multi)
             .args(["--model"])
             .arg(&multi_model)
-            .stderr(std::process::Stdio::null())
+            .stderr(embed_stderr())
             .status();
 
         match status {
@@ -376,7 +466,7 @@ fn auto_embed(xdg_way: &Path, corpus: &Path, log: &dyn Fn(&str)) -> Result<()> {
             .arg(corpus)
             .args(["--model"])
             .arg(&en_model)
-            .stderr(std::process::Stdio::null())
+            .stderr(embed_stderr())
             .status();
 
         match status {
