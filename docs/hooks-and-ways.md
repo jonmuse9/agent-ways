@@ -118,7 +118,7 @@ The teammate marker is created by `inject-subagent.sh` during Phase 2 of the two
 |-----|-------|-----|
 | `meta/memory` | `agent` | Prevents concurrent MEMORY.md writes from multiple teammates |
 | `meta/subagents` | `agent` | Delegation guidance is irrelevant to agents that are themselves delegated work |
-| `meta/teams` | `teammate` | Coordination norms only make sense for team members |
+| `collaboration/teams` | `teammate` | Coordination norms only make sense for team members |
 
 Subagent injection bypasses the marker system entirely. A way can fire for the parent (marker-gated) AND separately for each subagent or teammate (no markers). The parent's way guidance doesn't automatically transfer because the Task prompt is a compact delegation — the scope system bridges this gap.
 

@@ -1,6 +1,6 @@
 ---
-description: Mermaid diagrams, flowcharts, sequence diagrams, state diagrams, diagram styling
-vocabulary: mermaid diagram flowchart sequence state class gantt chart gitgraph timeline svg
+description: Mermaid diagrams, flowcharts, sequence diagrams, state diagrams, diagram styling, palette and color choices for light and dark themes
+vocabulary: mermaid diagram flowchart sequence state class gantt chart gitgraph timeline svg styling palette color fill stroke contrast light dark mode theme legible opaque subgraph
 scope: agent, subagent
 refire: 0.15
 ---
@@ -38,31 +38,52 @@ flowchart LR
 
 When reviewing or writing Mermaid diagrams, replace any `\n` in node labels with `<br>`.
 
-## Styling
+**Literal angle brackets in labels:** escape `<` and `>` as `&lt;` and `&gt;`. Otherwise the renderer reads `<env>` as an HTML tag and silently drops it.
 
-Diagrams should be legible in both dark and light mode with good color saturation.
+## Styling for Both Themes
 
-**Color principles:**
-- Use **mid-saturation colors** — vivid enough to differentiate, not so bright they strain
-- Avoid pure white (`#fff`) or pure black (`#000`) fills — they break in one mode or the other
-- Use **consistent text colors** that contrast against their fill in both modes
+A diagram on GitHub is painted against a white **or** near-black page, depending on the viewer's theme setting — you don't control which. So the question that governs every color choice is: **where does this color land — on a node, or on the page?** Those two cases want opposite treatments.
 
-**Recommended palette:**
+**Text on a node fill → contrast is theme-independent, so pair brightness to the fill.** Make node fills fully *opaque* and choose the text color *per fill*, against the node's own background rather than the page:
+- Dark text (`#1a1a1a`) on **bright** fills (orange, amber, teal)
+- White text (`#ffffff`) on **deep** fills (violet, slate, deep blue)
+
+Because an opaque node hides the page behind it, that pairing reads the same in both themes. This is also why "white text everywhere" (or black everywhere) breaks — some fills are light and some are dark, so one rule can't serve both.
+
+**Subgraph titles and borders → they land on the *page*, so they must clear both backgrounds.** A subgraph label or stroke paints over the page itself, not over a node. A full-saturation brand color that looks crisp in dark mode can fall below ~2.9:1 on white. Use **mid-tone** strokes/labels that clear ~3:1 on *both* backgrounds, and give the container a translucent fill (alpha `1a`) so it tints the region without hiding the opaque nodes inside it.
+
+**A starting palette** — the specific hues don't matter; the brightness-and-text pairing does. Swap colors freely, keep the structure:
 
 ```
-Fills (mid-saturation, dark/light safe):
-  #2D7D9A  — teal/process blue
-  #7B2D8E  — purple/integration
-  #2D8E5E  — green/success/data
-  #C2572A  — burnt orange/warning/external
-  #5A6ABF  — slate blue/internal
-  #8E6B2D  — amber/config/state
+Opaque node fills + matched text:
+  bright  #f6821f orange  text #1a1a1a   |  #fbbf24 amber  text #1a1a1a
+  bright  #2d7d9a teal    text #ffffff   |  (teal is dark enough for white)
+  deep    #7c3aed violet  text #ffffff   |  #475569 slate  text #ffffff
+  deep    #2d8e5e green   text #ffffff
 
-Text: #FFFFFF on dark fills, #1A1A2E on light fills
-Borders: #4A5568 (neutral gray, works both modes)
+Subgraph (over the page — mid-tone, ~3:1 in both modes):
+  stroke #d97706 fill #f6821f1a   |   stroke #8b5cf6 fill #7c3aed1a
+
+Borders: a neutral mid-gray (e.g. #4a5568 / #94a3b8) reads in both modes
 ```
+
+**Map color to intent, then stay consistent.** A reader learns the legend once from context and then reads color as meaning — so a hue should signal the same *role* in every node and every diagram in a repo. Pick a mapping up front; these are common conventions, not rules:
+
+| Color family | Reads as | Typical use |
+|---|---|---|
+| Green | healthy / done / data-at-rest | success states, stores, terminal "done" nodes |
+| Blue / teal | neutral process / compute | the default "a step happens here" node |
+| Violet / indigo | core / internal service | your own services, the system's heart |
+| Amber / yellow | caution / waiting / config | pending states, queues, config & secrets |
+| Orange / red | warning / external / boundary | third-party edges, error paths, things outside your control |
+| Slate / gray | inert / out-of-scope | the browser, the user, anything you don't own |
+
+Two anchors keep it legible: **one hue = one role** (don't reuse green for both "success" and "database" in the same diagram unless they're genuinely the same idea), and **brand or domain cues stay fixed** — if orange means "the edge tier" in one diagram, it means that in all of them. When a diagram has a recurring entity (a provider, a tier, a lane), give it its own hue and never lend that hue to anything else.
 
 **Avoid:**
-- Default unstyled diagrams when 3+ actors or concerns are present — add color
-- Neon or pastel fills that disappear against white or dark backgrounds
-- Text-on-fill combinations that require squinting
+- One text color for every node — match it to each fill's brightness instead
+- Translucent or default node fills — the page bleeds through and breaks in one mode
+- Full-saturation brand colors on subgraph labels/strokes — fine on dark, washed out on white
+- Unstyled diagrams when 3+ actors or concerns are present — add color
+
+**Validate before committing.** Render the diagram (`mmdc -i diagram.mmd -o /tmp/out.svg`, or the terminal `mmaid` way) — a clean render means the syntax parsed. Eyeball it in both a light and a dark preview.
