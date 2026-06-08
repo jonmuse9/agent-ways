@@ -40,6 +40,8 @@ When reviewing or writing Mermaid diagrams, replace any `\n` in node labels with
 
 **Literal angle brackets in labels:** escape `<` and `>` as `&lt;` and `&gt;`. Otherwise the renderer reads `<env>` as an HTML tag and silently drops it.
 
+**…but not in sequence-diagram messages — there, avoid the brackets entirely.** The `&lt;`/`&gt;` fix is for *node labels* (flowchart, state). In a `sequenceDiagram` message the trailing `;` of the entity is parsed as a statement separator, so `A->>B: deploy &lt;env&gt;` is a parse error. Rephrase to drop the brackets instead — `deploy(env)`, `deploy [env]`, or just `deploy env`.
+
 ## Styling for Both Themes
 
 A diagram on GitHub is painted against a white **or** near-black page, depending on the viewer's theme setting — you don't control which. So the question that governs every color choice is: **where does this color land — on a node, or on the page?** Those two cases want opposite treatments.
