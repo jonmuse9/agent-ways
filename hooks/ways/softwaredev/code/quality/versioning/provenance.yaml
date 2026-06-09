@@ -1,0 +1,19 @@
+policy:
+  - uri: governance/policies/code-lifecycle.md
+    type: governance-doc
+controls:
+  - id: ISO/IEC 25010:2011 (Maintainability - Modifiability, Analyzability)
+    justifications:
+      - Version-numbered identifiers create parallel implementations that degrade modifiability — callers split across revisions nobody consolidates
+      - Names describing what a symbol is (not which revision) preserve analyzability; VCS carries the timeline
+  - id: NIST SP 800-53 SA-15 (Development Process, Standards, and Tools)
+    justifications:
+      - Anti-pattern detection on the authored diff catches versioned twins at the moment they would become permanent
+      - Distinguishes code-owned identifiers from legitimate external version references to avoid false enforcement
+verified: 2026-05-18
+rationale: >
+  Versioned identifiers (process_v2, _FOO_V0, "v0 seed") freeze authoring-time
+  snapshots into permanent names. The old revision rarely gets deleted, producing
+  parallel half-migrations — a direct ISO 25010 modifiability regression. Reactive
+  detection scoped to the written diff (not the whole file) operationalizes NIST
+  SA-15 anti-pattern enforcement without penalizing externally-versioned contracts.
