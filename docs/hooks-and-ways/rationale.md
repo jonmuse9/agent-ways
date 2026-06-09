@@ -1,6 +1,14 @@
 # Design Rationale: Why Ways Work This Way
 
-Ways are a surprise management system. This document explains the cognitive science and practical reasoning behind the design -- not as academic argument, but as shared context for anyone maintaining or extending the system.
+Ways can be read through two complementary frames. The cognitive frame: a surprise management system. The organizational frame: socialization — how a newcomer acquires "the way we do it around here." This document covers both; the [vocabulary reference](../vocabulary.md) maps every project term to its established anchor.
+
+## The Socialization Frame
+
+Organizational socialization (Van Maanen & Schein, 1979) is how human organizations transmit norms to newcomers — and the situated-learning literature (Lave & Wenger, 1991) shows it doesn't happen through handbooks. Nobody internalizes team norms from an orientation binder; they internalize them when a colleague leans over at the moment they're about to do the thing differently. Ways implement the leaning-over colleague, not the binder: guidance delivered at the tool-call boundary, at the moment of relevant action.
+
+One constraint separates this system from the human literature it borrows from: socialization theory assumes the newcomer persists. The organization pays the onboarding cost once, and internalization does the rest. An LLM session cannot internalize — no weight updates, no carried memory; every session is a new hire off the assembly line. So ways substitute **re-enactment for internalization**: socialization performed mechanically, every session, on a spaced schedule (the same spacing-effect mechanics as human spaced repetition) tuned to fake a memory the agent does not have.
+
+The frame also names what happens without the system. In principal–agent terms, an agent that doesn't know its principal's norms faces **preference uncertainty**, and has only two safe strategies: ask constantly, or hedge exhaustively. Ablation testing (removing ways) produces exactly this across all model tiers — the approval-seeking behavior of an employee in their first week. Ways reduce preference uncertainty cheaply enough that autonomy becomes the rational strategy.
 
 ## The Core Thesis
 
@@ -138,6 +146,16 @@ The matching channels, in practice:
 | Regex | < 1ms | High for known patterns | Most ways — keywords, commands, file paths |
 | Embedding | ~20ms | Good for semantic neighborhood | Ways where exact keywords aren't predictable |
 
+## What's Durable Here
+
+The system does two separable jobs, and they age differently as models improve:
+
+**Scheduling** — re-disclosing guidance because its influence fades over token distance — compensates for a measurable deficiency of current models (the forgetting curve applied to in-context instructions). Deficiencies get fixed. As effective attention improves, expect the tuned half-lives to lengthen and re-fires to get rarer; `ways tune` exists precisely to recalibrate this per model generation. The mechanism degrades gracefully — its cost trends toward zero as it becomes less necessary.
+
+**Routing** — delivering local norms just-in-time, matched to the action at hand — answers a structural problem, not a deficiency. No future model ships knowing this team's conventions; that information must either be front-loaded (paying context cost every session for guidance mostly irrelevant to the task) or retrieved at the moment of relevance. Better models don't change that trade. The ablation evidence confirms it: the approval-seeking behavior appears in every model tier, because its cause is missing information, not weak attention.
+
+Maintenance implication: defend the routing pipeline (matching, precision discipline, tool-boundary injection); let the scheduling parameters atrophy as measurements say they can. The scheduling half of ways is a patch on current models; the routing half is a permanent answer to preference uncertainty.
+
 ## References
 
 - Brown, J. S., Collins, A., & Duguid, P. (1989). Situated cognition and the culture of learning. *Educational Researcher*, 18(1), 32-42.
@@ -146,6 +164,7 @@ The matching channels, in practice:
 - Friston, K. (2010). The free-energy principle: a unified brain theory? *Nature Reviews Neuroscience*, 11(2), 127-138.
 - Godden, D. R., & Baddeley, A. D. (1975). Context-dependent memory in two natural environments: on land and underwater. *British Journal of Psychology*, 66(3), 325-331.
 - Hutchins, E. (1995). *Cognition in the Wild*. MIT Press.
+- Lave, J., & Wenger, E. (1991). *Situated Learning: Legitimate Peripheral Participation*. Cambridge University Press.
 - Liu, N. F., et al. (2023). Lost in the middle: How language models use long contexts. *arXiv:2307.03172*.
 - Ohno, T. (1988). *Toyota Production System: Beyond Large-Scale Production*. Productivity Press.
 - Rao, R. P. N., & Ballard, D. H. (1999). Predictive coding in the visual cortex. *Nature Neuroscience*, 2(1), 79-87.
@@ -153,6 +172,8 @@ The matching channels, in practice:
 - Simons, D. J., & Chabris, C. F. (1999). Gorillas in our midst. *Perception*, 28(9), 1059-1074.
 - Sperber, D., & Wilson, D. (1986). *Relevance: Communication and Cognition*. Harvard University Press.
 - Suchman, L. A. (1987). *Plans and Situated Actions*. Cambridge University Press.
+- Sumers, T., Yao, S., Narasimhan, K., & Griffiths, T. (2023). Cognitive architectures for language agents. *arXiv:2309.02427*.
 - Sweller, J. (1988). Cognitive load during problem solving. *Cognitive Science*, 12(2), 257-285.
+- Van Maanen, J., & Schein, E. H. (1979). Toward a theory of organizational socialization. *Research in Organizational Behavior*, 1, 209-264.
 - Vervaeke, J., Lillicrap, T. P., & Richards, B. A. (2012). Relevance realization and the emerging framework in cognitive science. *Journal of Logic and Computation*, 22(1), 79-99.
 - Vygotsky, L. S. (1978). *Mind in Society: The Development of Higher Psychological Processes*. Harvard University Press.

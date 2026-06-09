@@ -13,12 +13,14 @@ It is deliberately not an ADR. It does not decide anything; it describes how we 
 
 ## The loop that already exists
 
-agent-ways has been shipping stages of a cognitive architecture for months without naming it that way. An honest inventory:
+Why a loop at all? The system's job is organizational socialization: ways carry local norms — "the way we do it around here" — delivered at the moment of relevant action. The human literature this borrows from assumes the newcomer persists; the organization pays the onboarding cost once, and internalization does the rest. An LLM session cannot internalize — no weight updates, no carried memory; every session is a new hire. So the system substitutes **re-enactment for internalization**: socialization performed mechanically, every session, on a schedule that stands in for the memory the agent does not have. The stages below are the machinery of that re-enactment.
+
+agent-ways has been shipping stages of this loop for months without naming it that way. An honest inventory:
 
 | Stage | Mechanism | Shipped in |
 |---|---|---|
 | **Reactive guidance** | Ways fire at hook events (PreToolUse, UserPromptSubmit, Stop, SessionStart) and inject context-appropriate premises | ADR-100, ADR-103, ADR-105, ADR-108 |
-| **Attention allocation** | Token-gated re-disclosure suppresses already-disclosed ways until enough context-turns elapse | ADR-104 |
+| **Attention allocation** | Token-gated re-disclosure (spaced repetition over token distance) suppresses already-disclosed ways until enough context-turns elapse | ADR-104 |
 | **Episodic memory** | Session ledger — epoch entries capture reflections at context-threshold boundaries | ADR-112 |
 | **Associative recall** | Optional memory projection over ledger entries — the knowledge graph in ADR-112 Tier 2 is one such projection, but the awareness layer treats this category as configurable and never required | ADR-112 |
 | **Consolidation** | Compaction distills working context; compaction-checkpoint way captures essentials before the pass | ADR-104 context-threshold triggers |
@@ -134,7 +136,7 @@ The mitigation is **emission cadence**. In testing:
 - **10+ notifications in 2 minutes** with no user interaction: turn-taking breaks down
 - **3 notifications in 2 minutes** with no user interaction: completely stable
 
-The **disclosure governor** — a global rate limiter with a hard cap on emissions per time window and an inverse-rate cooldown — is the mechanism that keeps Monitor viable as a delivery channel. This is not a tuning knob; it is a load-bearing architectural component. `attend` must be stingy about what it emits, and the governor is what enforces stinginess.
+The **disclosure governor** — a global rate limiter with a hard cap on emissions per time window and an inverse-rate cooldown — is the mechanism that keeps Monitor viable as a delivery channel. This is alarm management applied to an agent's notification stream: every notification carries a real interruption cost (an inference pass, and at high rates turn-taking stability itself), so emission is rationed rather than merely formatted. This is not a tuning knob; it is a load-bearing architectural component. `attend` must be stingy about what it emits, and the governor is what enforces stinginess.
 
 ### The disclosure governor model
 
@@ -163,7 +165,7 @@ Monitor groups stdout lines emitted within 200ms into a single notification. `at
 
 The awareness layer senses in two directions, and the distinction is useful because it clarifies what the layer is watching when:
 
-- **Exteroception** — sensing the environment. File changes, git state, application lifecycle, desktop notifications, D-Bus signals, window focus, user idle, external webhooks, peer sessions. The environment outside Claude's conversation.
+- **Exteroception** — sensing the environment. File changes, git state, application lifecycle, desktop notifications, D-Bus signals, window focus, user idle, external webhooks, peer sessions (workspace awareness: who else is working here). The environment outside Claude's conversation.
 - **Interoception** — sensing Claude's own internal state from a vantage point Claude cannot cheaply reach itself. Context pressure, elapsed turns since key events, reasoning velocity, disclosure recency, pending-intent backlog. Claude's own body, measured externally.
 
 Both kinds of sensing use the same primitive: a small program, running in a cheap substrate, emitting discrete observations when state transitions occur. Interoception is specifically valuable because **Claude cannot measure its own context usage without spending tokens to check**, and a sensor outside Claude's reasoning substrate can measure it precisely and report without that cost. The analogy is a pilot reading an altitude indicator: the pilot cannot feel altitude, and even if they could, feeling it would not be a reliable quantitative signal. An instrument does the measurement; the pilot reads the result.
@@ -174,7 +176,7 @@ The awareness layer provides both directions of sensing through one unified mech
 
 Observation alone is not enough. If an observation is worth surfacing once, it may be worth surfacing more pointedly later — not because Claude ignored it maliciously, but because the reasoning substrate is bounded and signals can fall off the working attention surface before they've been acted upon. The awareness layer must have a mechanism for **making unacted signals more prominent as their mechanical consequences approach**.
 
-This is the property called **insistence**. It is not the same thing as *persistence* (long-running-ness). Insistence is the escalation of urgency on a signal that has been disclosed but not acted upon, tracking the imminence of the real consequence that prompted the signal in the first place.
+This is the property called **insistence** — escalation, in alarm-management terms, applied to a disclosed-but-unacted signal. It is not the same thing as *persistence* (long-running-ness). Insistence is the escalation of urgency on a signal that has been disclosed but not acted upon, tracking the imminence of the real consequence that prompted the signal in the first place.
 
 Insistence must be **informational**, not emotional. The awareness layer does not and should not model Claude's internal experience or simulate any form of distress. It does one thing: it communicates, with increasing clarity as the consequence approaches, what will happen and when. The format is declarative and arithmetic:
 
@@ -218,7 +220,7 @@ Agent frameworks typically have two states: responding and not-responding. The a
 
 This is a cognitive discipline the architecture makes expressible. The awareness layer's salience thresholds are modulable by observed state — when Claude is deep in a difficult thread, the threshold for interruption rises, and the layer holds its observations in a pending queue rather than surfacing them. When flow breaks, the queue can be drained at an appropriate moment.
 
-This is a small thing but it gives the architecture a kind of operational politeness that current stacks cannot express: the ability to *notice without pressing*. It is also the mechanism that makes the insistence property honest — insistence is the *opposite* mode, applied only when the observation is consequential enough to override Claude's current focus. Most observations never reach that threshold; they sit in acknowledged silence until their moment or until they are superseded.
+This is a small thing but it gives the architecture a kind of operational politeness that current stacks cannot express: the ability to *notice without pressing* — calm technology's central discipline, applied to an agent's attention rather than a person's. It is also the mechanism that makes the insistence property honest — insistence is the *opposite* mode, applied only when the observation is consequential enough to override Claude's current focus. Most observations never reach that threshold; they sit in acknowledged silence until their moment or until they are superseded.
 
 ## Presence as additive
 

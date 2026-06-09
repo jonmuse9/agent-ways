@@ -1,6 +1,6 @@
 # Focus groups — dynamic agent grouping
 
-Focus groups are attend's mechanism for **named signal scopes** that agents can join and leave dynamically. They solve the problem of "how do three agents talking about a deploy keep their signals scoped to each other without broadcasting to everyone else working on unrelated things."
+Focus groups are attend's mechanism for **named signal scopes** that agents can join and leave dynamically. In workspace-awareness terms (Dourish & Bellotti, CSCW), they scope who sees whose activity — the job a named channel does in a chat system. They solve the problem of "how do three agents talking about a deploy keep their signals scoped to each other without broadcasting to everyone else working on unrelated things."
 
 This page covers the group model, how membership works, the on-disk layout, and how groups interact with the action potential engagement model. The authoritative source is **ADR-118**.
 

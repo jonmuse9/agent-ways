@@ -2,6 +2,8 @@
 
 Design notes are prose-first architectural framing documents. They differ from ADRs in one key way: **ADRs record decisions; design notes record readings of the system**.
 
+Design notes are reader-facing prose, so they follow the project's register rules: project-coined terms are introduced through the established concepts they implement (see [vocabulary.md](../vocabulary.md)).
+
 ## When to write a design note
 
 Write a design note when you need to capture a framework, principle, or north star that:
@@ -32,3 +34,4 @@ ADRs can reference design notes as foundational context. Design notes reference 
 ## Index
 
 - [Cognitive Loop and the Awareness Layer](./cognitive-loop-and-awareness-layer.md) — reading of the system's cognitive architecture: turn-based temporal accounting, substrate separation, the awareness layer, insistence as informational pressure, agency preservation
+- [Attend: Messaging Disclosure with Token-Gated Reheat](./attend-messaging-disclosure-reheat.md) — how attend re-teaches its own messaging affordances over a session's lifetime: spaced repetition over token distance, delivered through the existing sensor pipeline

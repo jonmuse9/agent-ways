@@ -1,6 +1,6 @@
 # Engagement — the action potential firing gate
 
-Attend's engagement model governs *when a sensor is allowed to fire a disclosure*. It's a per-sensor state machine inspired by the neuronal action potential: resting baseline, rapid rise on stimulus, refractory period after a burst, gradual return to rest. The biology gives us a predictable, well-studied shape for a phenomenon we actually care about — how productive engagement with a stimulus decays naturally over time.
+Attend's engagement model governs *when a sensor is allowed to fire a disclosure*. The idea it implements is established: in cognitive architectures like ACT-R, base-level activation decays with disuse, and recent activity changes how easily the next stimulus gets through. Attend applies that idea per sensor, borrowing its shape from the neuronal action potential: resting baseline, rapid rise on stimulus, refractory period after a burst, gradual return to rest. The biology gives us a predictable, well-studied shape for a phenomenon we actually care about — how productive engagement with a stimulus decays naturally over time.
 
 This page covers the model in prose and diagrams, explains what each parameter does, and walks through how it interacts with the disclosure governor. The canonical architecture is **[ADR-123](../architecture/system/ADR-123-firing-dynamics-progression-axis-unification.md)** — the progression-axis unification that moved the firing-dynamics core into a shared crate consumed by both attend and ways. This page is the attend-specific, implementer-and-author-friendly explainer for how attend instantiates that core.
 
@@ -8,7 +8,7 @@ This page covers the model in prose and diagrams, explains what each parameter d
 
 Without engagement, attend's disclosure logic is a flat threshold. A sensor observes something, accumulates magnitude, crosses the emission threshold, fires. Rinse and repeat. This produces the "party problem": an agent responding to a lively conversation has no built-in signal that the return on engagement is declining. It will keep responding at the same threshold indefinitely until the human intervenes or the context window runs out.
 
-The action potential model adds **per-sensor memory of recent activity**. After a sensor has fired a burst of disclosures, its effective threshold *rises* for a while, then decays back to baseline. High-magnitude stimuli still break through. Low-magnitude follow-ups are silently suppressed. The sensor disengages from the fading topic on its own.
+The action potential model adds **per-sensor memory of recent activity**. After a sensor has fired a burst of disclosures, its effective threshold *rises* for a while, then decays back to baseline — habituation, implemented as arithmetic. High-magnitude stimuli still break through. Low-magnitude follow-ups are silently suppressed. The sensor disengages from the fading topic on its own.
 
 Said another way: refractory isn't silence, it's *raised bar*. Nothing is censored; thresholds are just temporarily harder to cross.
 

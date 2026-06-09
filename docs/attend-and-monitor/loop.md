@@ -129,7 +129,7 @@ stateDiagram-v2
 
 ## Disclosure and the governor
 
-After all ready sensors are drained, the loop checks whether the `DisclosureGovernor` permits output. The governor enforces two limits:
+After all ready sensors are drained, the loop checks whether the `DisclosureGovernor` permits output. The governor is alarm management (ISA-18.2) applied to the notification channel — it bounds how often attend may interrupt, no matter how much the sensors want to say. It enforces two limits:
 
 - **Base cooldown** — minimum seconds between disclosures (default 15s).
 - **Rate window** — max disclosures per rolling window (default 3 per 120s).

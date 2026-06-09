@@ -1,6 +1,6 @@
 # Ways and RAG: Same Problem, Different Architecture
 
-Ways and Retrieval-Augmented Generation (RAG) solve the same fundamental problem: getting the right knowledge into a language model's context window at the right time. The resemblance is real — both systems select relevant information and inject it before generation. But the mechanisms differ in ways that matter for how well each approach works in practice.
+Ways (situated delivery of local norms — "the way we do it around here," injected at the moment of relevant action) and Retrieval-Augmented Generation (RAG) solve the same fundamental problem: getting the right knowledge into a language model's context window at the right time. The resemblance is real — both systems select relevant information and inject it before generation. But the mechanisms differ in ways that matter for how well each approach works in practice.
 
 This document explores the relationship honestly: what's shared, what's different, and why the differences produce different outcomes.
 
@@ -58,6 +58,8 @@ This is a feedback loop in the retrieval system itself. Building this on top of 
 RAG typically retrieves *information* — facts, documentation, reference material. The retrieved content answers questions or provides context for reasoning.
 
 Ways retrieve *behavioral constraints* — directives about how to act in a specific situation. "Use conventional commit format" isn't information to reason about; it's an instruction to follow. The content is prescriptive, not informational.
+
+The distinction has a name in principal–agent theory: what ways resolve is **preference uncertainty**. No model ships knowing this team's norms, and an agent that lacks them has only two safe strategies — ask constantly or hedge exhaustively. RAG resolves missing facts; ways resolve missing norms.
 
 You *could* use RAG to retrieve prescriptive content. But without trigger specificity, you'd inject commit guidance while someone is debugging CSS, because the semantic distance between "write good code" and "write good commits" is small. Ways solve this by coupling the retrieval to the specific action, not to the semantic neighborhood.
 

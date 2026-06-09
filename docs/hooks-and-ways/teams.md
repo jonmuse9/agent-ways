@@ -1,8 +1,8 @@
 # Teams
 
-When you go from one agent to a team of them, each teammate arrives with no prior context, receives injected guidance it didn't ask for, follows structured procedures, communicates through approved channels, and gets observed through telemetry. The problem — consistent governance across multiple autonomous agents — is the same whether you're one person with a side project or an organization managing a fleet.
+When you go from one agent to a team of them, each teammate arrives with no prior context, receives injected guidance it didn't ask for, follows structured procedures, communicates through approved channels, and gets observed through telemetry. This is organizational socialization applied to a fleet: every teammate is a new hire, every session, and the onboarding is re-enacted mechanically at spawn time. The problem — consistent governance across multiple autonomous agents — is the same whether you're one person with a side project or an organization managing a fleet.
 
-The ways system handles it either way. Every teammate operates under the same governance, regardless of who spawned it or what it's working on. The ways are the employee handbook. These policy docs are the management rationale the handbook doesn't include.
+The ways system handles it either way. Every teammate operates under the same governance, regardless of who spawned it or what it's working on. The ways are the onboarding, delivered at the moment it applies. These policy docs are the management rationale the onboarding doesn't include.
 
 ## The Three-Scope Model
 

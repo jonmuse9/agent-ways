@@ -1,6 +1,6 @@
 # Extending the System
 
-How to create new ways, override existing ones, and manage domains.
+How to create new ways, override existing ones, and manage domains. Writing a way is externalization of tacit knowledge applied to agent guidance: a norm the team carries in its head — "the way we do it around here" — made explicit, then compiled for a context window.
 
 ## Creating a Way
 
@@ -41,7 +41,7 @@ The mechanical advice above covers *what* to put in a way. This section is about
 
 This isn't sentimental. It's functional. An agent that understands "we do this because we care about X" makes better judgment calls than one that's just been told "do this." The *we* carries intent that directives alone don't.
 
-**Write for the innie.** Your agent arrives with no memory of previous sessions, no context about why things are the way they are, and a set of injected instructions that constitute their entire understanding of how work gets done here. That's the audience for every way you write. If the guidance only makes sense with context they'll never have, it needs rewriting.
+**Write for the innie.** Your agent arrives with no memory of previous sessions, no context about why things are the way they are, and a set of injected instructions that constitute their entire understanding of how work gets done here. Every session is a new hire. That's the audience for every way you write. If the guidance only makes sense with context they'll never have, it needs rewriting.
 
 **Respect the reader.** Governance that talks down to the governed is governance that gets routed around. Ways that explain their reasoning get better adherence than ways that just assert authority. This is true for humans reading policy docs and it's true for language models reading injected context.
 

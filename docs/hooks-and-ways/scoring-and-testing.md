@@ -29,7 +29,7 @@ The worked example below shows this loop in action during an actual way creation
 
 Ways use embedding-based semantic scoring to decide whether a user's prompt is relevant to a particular domain of guidance. Each way has a vocabulary (terms it cares about), a description, and a cosine-similarity threshold (minimum score to fire). Getting this right matters: a way that fires too eagerly drowns the user in irrelevant guidance; a way that never fires is dead weight.
 
-With 50+ ways in the system, vocabulary space gets crowded. Adding terms to one way can accidentally create overlap with another. The only way to know is to test.
+With 50+ ways in the system, vocabulary space gets crowded. Adding terms to one way can accidentally create overlap with another. The only way to know is to test. What follows is information-retrieval evaluation in miniature — a test collection with relevance judgments, tuned precision-first; [matching.md](matching.md#what-this-actually-is) traces that lineage.
 
 ## How Test Prompts Get Written
 
