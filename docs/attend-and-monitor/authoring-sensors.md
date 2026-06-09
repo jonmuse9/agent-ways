@@ -1,6 +1,6 @@
 # Authoring sensors
 
-Sensor authorship is a first-class design surface in attend. A sensor is not a log tail — it's a module that translates raw environmental change into *magnitude-weighted observations* that feed attend's engagement model (ADR-119) and disclosure governor. A well-designed sensor encodes how much each kind of change matters in the magnitude, and lets the loop handle when to fire, how often, and whether to suppress.
+Sensor authorship is a first-class design surface in attend. A sensor is not a log tail — it's a module that translates raw environmental change into *magnitude-weighted observations* that feed attend's engagement model (ADR-119) and disclosure governor. A well-designed sensor encodes how much each kind of change matters in the magnitude, and lets the loop handle when to fire, how often, and whether to suppress. This is the discipline alarm management (ISA-18.2) brings to control rooms, applied to agent notifications: a channel stays trustworthy only as long as its loudest tier is reserved for what is genuinely loud.
 
 This page is for people building sensors, in either of attend's two implementations.
 
@@ -260,7 +260,7 @@ Written as heuristics, not commandments:
 
 1. **Design magnitudes as a hierarchy, not a scale.** Don't linearly interpolate magnitudes across your event types. Pick a few discrete tiers (background, notable, urgent, critical) and assign each event type to one.
 2. **Your background events should sum to something useful.** If your sensor only ever emits 0.5s, those 0.5s should aggregate to meaningful disclosure when enough of them happen. Check: does 3–5 background events add up to cross threshold?
-3. **Reserve the top tier for actual emergencies.** If your sensor can emit a 5.0 event, it should be the kind of thing that needs to break through an ongoing conversation about something else. Abuse of the top tier trains the user to ignore attend.
+3. **Reserve the top tier for actual emergencies.** If your sensor can emit a 5.0 event, it should be the kind of thing that needs to break through an ongoing conversation about something else. Abuse of the top tier trains the user to ignore attend — alarm flooding, the failure mode alarm management exists to prevent.
 4. **Prefer empty polls to noisy polls.** When nothing is happening, return an empty vec. The loop handles quiet — it slows the sensor's polling frequency, lets the engagement state relax, and stays out of the user's way. An always-chatty sensor is fighting the loop.
 5. **Make poll idempotent.** The script should produce the same output for the same state regardless of when it's called. Attend handles "what changed" via the accumulator; you just report the current situation. State tracking inside your script is fine (as in the GH example), but use it to detect transitions, not to throttle.
 6. **Fail silently and cheaply.** If your upstream is unavailable (network down, `gh` not authed, API rate-limited), exit 0 with no output. Don't emit error events — they pollute the notification stream. Use stderr if you need to log for debugging.

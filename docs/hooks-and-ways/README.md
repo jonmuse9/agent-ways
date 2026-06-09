@@ -1,10 +1,10 @@
 # Start Here
 
-This directory documents a system for injecting contextual guidance into Claude Code sessions. If you're new to it, read this page first.
+This directory documents the ways system: organizational socialization applied to language-model agents. Local norms — "the way we do it around here" — are injected into Claude Code sessions at the moment of relevant action, because an agent that cannot carry memory between sessions cannot internalize them any other way. If you're new to it, read this page first. For the full mapping of project terms to their established anchors, see [vocabulary.md](../vocabulary.md).
 
 ## The Pipeline
 
-Ways are the end product of a pipeline that starts with opinions and ends with machine-readable guidance. Each stage has a different audience and purpose.
+Ways are the end product of a pipeline that starts with opinions and ends with machine-readable guidance — externalization of tacit knowledge (Nonaka & Takeuchi's SECI cycle) applied to agent guidance: norms a team carries in its head, made explicit, then compiled for a context window. Each stage has a different audience and purpose.
 
 ```mermaid
 flowchart LR
@@ -225,12 +225,13 @@ See [provenance.md](provenance.md) for the full traceability system — manifest
 
 If you want to understand the system:
 1. **This file** — you're here
-2. **[rationale.md](rationale.md)** — why this exists
-3. **[ways-vs-rag.md](ways-vs-rag.md)** — how Ways relate to RAG (and where they diverge)
-4. **[context-decay.md](context-decay.md)** — the attention decay model and injection topology
-5. **[context-decay-formal-foundations.md](context-decay-formal-foundations.md)** — formal proofs, control theory, human operator modeling
-6. **[../hooks-and-ways.md](../hooks-and-ways.md)** — how it works (reference)
-7. **Domain docs** — the policy for each group of ways
+2. **[../vocabulary.md](../vocabulary.md)** — the project's terms and their established anchors
+3. **[rationale.md](rationale.md)** — why this exists
+4. **[ways-vs-rag.md](ways-vs-rag.md)** — how Ways relate to RAG (and where they diverge)
+5. **[context-decay.md](context-decay.md)** — the attention decay model and injection topology
+6. **[context-decay-formal-foundations.md](context-decay-formal-foundations.md)** — formal proofs, control theory, human operator modeling
+7. **[../hooks-and-ways.md](../hooks-and-ways.md)** — how it works (reference)
+8. **Domain docs** — the policy for each group of ways
 
 If you want to add or modify ways:
 1. **[extending.md](extending.md)** — how to create ways

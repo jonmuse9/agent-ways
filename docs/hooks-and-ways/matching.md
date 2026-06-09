@@ -1,6 +1,6 @@
 # Matching and Routing
 
-How ways decide when to fire, and how progressive disclosure is structured.
+How ways decide when to fire, and how progressive disclosure is structured. Matching is text retrieval applied to guidance routing: the user's prompt (or tool input) is the query, the ways are the document collection, and a way "fires" when it is retrieved and injected. The [What This Actually Is](#what-this-actually-is) section maps the full workflow to its information-retrieval lineage.
 
 ## The Way Graph
 

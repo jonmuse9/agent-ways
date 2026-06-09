@@ -61,7 +61,7 @@ _Documentation structure, tooling, coherence_
 | ADR | Title | Status |
 |-----|-------|--------|
 | [ADR-300](./documentation/ADR-300-documentation-structure.md) | Documentation Structure | Accepted |
-| [ADR-301](./documentation/ADR-301-situated-socialization-as-canonical-framing-and-documentation-prose-refactor.md) | Situated socialization as canonical framing and documentation prose refactor | Proposed |
+| [ADR-301](./documentation/ADR-301-situated-socialization-as-canonical-framing-and-documentation-prose-refactor.md) | Situated socialization as canonical framing and documentation prose refactor | Accepted |
 
 ## Legacy (Pre-Domain Numbering)
 

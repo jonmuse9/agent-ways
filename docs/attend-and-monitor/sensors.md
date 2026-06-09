@@ -1,6 +1,6 @@
 # Sensors — the built-in set
 
-Attend ships with four built-in sensors, each compiled in as a separate Rust crate and wired into the orchestrator via a feature flag. They form the baseline observation surface of "what's happening outside the conversation" — context state, git state, peer sessions, and process activity. Everything beyond these four is a user-authored sensor, either another crate or an external script (see [`authoring-sensors.md`](authoring-sensors.md)).
+Attend ships with four built-in sensors, each compiled in as a separate Rust crate and wired into the orchestrator via a feature flag. They form the baseline observation surface — the awareness an employee would otherwise have ambiently: context state, git state, peer sessions, and process activity. Everything beyond these four is a user-authored sensor, either another crate or an external script (see [`authoring-sensors.md`](authoring-sensors.md)).
 
 This page covers what each built-in observes, what magnitudes it emits, and what kinds of events a reader will see in notifications.
 
@@ -73,7 +73,7 @@ Doesn't watch git hooks, doesn't parse commit messages, doesn't look at tags. It
 
 ## `sensor-peers` — other sessions and signal files
 
-Discovers other Claude Code sessions and reads peer signal files from `~/.cache/attend/signals/`. This is the sensor that makes multi-agent coordination possible — it reads messages sent via `attend send` from other sessions.
+Discovers other Claude Code sessions and reads peer signal files from `~/.cache/attend/signals/`. This is the sensor that makes multi-agent coordination possible — workspace awareness (Dourish & Bellotti) for agent sessions: who else is working, where, and what they said via `attend send`.
 
 ### What it observes
 

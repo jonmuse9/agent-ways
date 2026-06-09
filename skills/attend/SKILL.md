@@ -20,6 +20,8 @@ at different points in a session. Keep the load-bearing framing
 (send vs reply, autonomy, silence, CLI contract) in lockstep.
 -->
 
+Attend gives the session the awareness an employee would otherwise have ambiently — what is changing, who else is working, what deserves attention. It surfaces those changes as Monitor notifications, rate-limited so the channel stays calm: most of the time it is silent, and a notification means something actually moved. The peer-messaging commands below are workspace awareness for agent sessions — colleagues noticing and addressing each other, not a protocol to be ceremonious about.
+
 ## Step 1: Pre-flight
 
 Check that `attend` is installed:

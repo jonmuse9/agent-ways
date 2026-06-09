@@ -32,6 +32,8 @@ The task completed on both machines. The differences were large enough to be una
 
 The ~27% context-cost reduction is meaningful on its own, but the more telling signal was the qualitative gap in steering cost. Vanilla Claude was burning context on cycles of drift-and-correct. Ways Claude was not.
 
+The steering-cost gap has an established name: preference uncertainty, from principal–agent theory. An agent that doesn't know its principal's norms and current frame has only two safe strategies — ask constantly or hedge exhaustively — and the operator pays the cost of resolving that uncertainty turn by turn. Ways resolve it mechanically, at the moment of action, which is why the same model on the same task stopped needing the nudges.
+
 ## The mechanism observation
 
 The operator's direct observation of *what* was going wrong with vanilla Claude, lightly cleaned up from his original description:

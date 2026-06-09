@@ -1,14 +1,14 @@
 # Attend and Monitor
 
-This directory documents the active awareness layer — how `attend` rides on top of Claude Code's `Monitor` tool to surface environmental changes as async notifications into a running session, and how humans and other Claude agents can both participate in the same signal stream.
+This directory documents the active awareness layer. Attend gives a session the awareness an employee would otherwise have ambiently — what is changing, who else is working, what deserves attention. Mechanically, it rides on top of Claude Code's `Monitor` tool to surface environmental changes as async notifications into a running session, and humans and other Claude agents can both participate in the same signal stream.
 
 ## The thesis
 
 Monitor is Claude Code's general-purpose async delivery mechanism: launch a command, stream its stdout as notifications. Anthropic's assumption in designing it seems to be that Claude will wire up whatever ad-hoc command fits the moment — a `tail -f`, a `cargo watch`, a bespoke shell pipeline — and let Monitor relay whatever comes out. That's a powerful primitive but it puts the burden on every Claude session to reinvent the observation logic from scratch.
 
-**Attend is Monitor with intention.** It's a long-lived logic module that Claude doesn't have to tune case by case. It knows what kinds of changes matter, it governs their rate and salience through a formal engagement model (ADR-119), it routes messages between peer agents through focus groups (ADR-118), and it cleans up after itself (ADR-121 for presentation decay, plus the 30-day disk sweep). A Claude session drops into attend and gets a stable, opinionated awareness channel for free.
+**Attend is Monitor with intention.** It's a long-lived logic module that Claude doesn't have to tune case by case. It knows what kinds of changes matter, it governs their rate and salience through a formal engagement model (ADR-119, borrowing the activation-decay shape from ACT-R), it routes messages between peer agents through focus groups (ADR-118), and it cleans up after itself (ADR-121 for presentation decay, plus the 30-day disk sweep). Its emission governor is alarm management (ISA-18.2) applied to agent notifications — rate-limiting what reaches the conversation so the channel stays trustworthy instead of noisy. A Claude session drops into attend and gets a stable, opinionated awareness channel for free.
 
-Said another way: **Monitor is a delivery mechanism; attend is the editorial layer that decides what's worth delivering.** The combination turns "sporadic unpredictable state" into a structured stream of observations the agent can act on.
+Said another way: **Monitor is a delivery mechanism; attend is the editorial layer that decides what's worth delivering.** That editorial policy is calm technology (Weiser & Brown) applied to a coding session: most changes stay in the periphery, and only what deserves attention moves to the center. The combination turns "sporadic unpredictable state" into a structured stream of observations the agent can act on.
 
 ## The pair
 
@@ -20,7 +20,7 @@ The common thread across every Monitor use case is **sporadic unpredictable stat
 
 ## Two consumers, one channel
 
-Attend is not exclusively for AI agents. A human can launch it too, and both consumers share the same signal bus.
+Attend is not exclusively for AI agents. A human can launch it too, and both consumers share the same signal bus. The peer layer underneath is workspace awareness (Dourish & Bellotti's CSCW term) applied to coding agents — knowing who else is working, where, and what they said — served to humans and agents through one protocol.
 
 **Agent mode — `attend run`:** An AI agent session invokes attend through Monitor. The sensor loop emits notifications into the conversation. The agent responds to what it sees, sends peer messages back through `attend send`, and participates in focus groups through `attend focus`. See [`loop.md`](loop.md) for the sensor loop substrate.
 
@@ -83,6 +83,7 @@ Files marked **planned** are part of the ongoing documentation pass.
 
 ## Related docs
 
+- [`../vocabulary.md`](../vocabulary.md) — terminology anchors mapping the project's coined terms to their established concepts (ADR-301)
 - **ADR-113** (`docs/architecture/system/`) — the original decision to build attend as an active awareness module
 - **ADR-114** — attend as an insistent trigger type for ways
 - **ADR-115** — declarative config with project-scope overlay

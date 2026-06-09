@@ -7,8 +7,7 @@
 
 ## What this note is
 
-This note describes how `attend` should teach Claude how to *use* it — and, more importantly, how it should *re-teach* Claude over the lifetime of a session as the relevant instructions drift out of effective context.
-
+This note describes how `attend` should teach Claude how to *use* it — and, more importantly, how it should *re-teach* Claude over the lifetime of a session as the relevant instructions drift out of effective context. The reheat mechanic is spaced repetition applied to injected instructions: guidance loses influence as context scrolls past — the forgetting curve, operating over token distance rather than days — so the system re-presents it as it approaches the point of no longer being load-bearing.
 It is the same problem ADR-104 solved for ways: instructional context that mattered at session start is not reliably present three reflection windows later. Ways answered with token-gated re-disclosure. Attend has the same shape of problem at a different surface — the *interactive messaging* surface — and the answer is structurally the same. Reusing the model preserves substrate separation (the cheap binary tracks token distance; the expensive substrate just reads what the cheap one decided to surface) and reinforces a single mental model for "Claude is being reheated on something."
 
 ## The problem
@@ -17,7 +16,7 @@ It is the same problem ADR-104 solved for ways: instructional context that matte
 
 The cost of this gap is asymmetric. When a peer message arrives via Monitor, Claude reads the notification but may not remember *that it can reply, or how*. The notification tells Claude *something happened*; it does not tell Claude *what affordances exist to act on it*. The user pays an inference turn for Claude to either improvise, ask, or — most commonly — silently fail to engage.
 
-The fix is to attach the affordance description to the moment Claude needs it: when a message arrives. And to attach it again, later, when enough of Claude's working window has scrolled past that the previous teaching is no longer load-bearing.
+The fix is to attach the affordance description to the moment Claude needs it: when a message arrives. This is the same situated-learning bet the ways system makes — teach at the moment of relevant action, not in an orientation document. And to attach it again, later, when enough of Claude's working window has scrolled past that the previous teaching is no longer load-bearing.
 
 ## The reheat principle, applied
 
@@ -49,7 +48,7 @@ Magnitude is fixed per observation (matching `sensor-context`'s discrete-thresho
 
 1. **First-run disclosure is automatic.** The first poll after `attend run` start finds every component with a missing marker and fires them all. No separate startup-banner injection, no special-case code in `main.rs`.
 2. **Batching with peer messages is emergent.** When the disclosure sensor and `sensor-peers` both mark themselves `ready_to_disclose()` within the same governor window, the main loop's batch assembly puts them in the same `emit::emit_batch` call and Monitor groups them in its 200ms window. When timing doesn't align, the disclosure fires standalone at its own tick. Either outcome is fine — the teaching reaches Claude.
-3. **The disclosure governor already applies.** No new rate-limiting knob needed. If the global disclosure budget is tight, the disclosure sensor waits its turn like everything else.
+3. **The disclosure governor already applies.** The governor is attend's interruption-cost control — calm technology enforced as a rate limit, because every notification costs an inference pass — and no new rate-limiting knob is needed. If the global disclosure budget is tight, the disclosure sensor waits its turn like everything else.
 
 **Attend process session id.** The attend process resolves its session id via `own_session_id()` at `tools/attend/src/main.rs:1381` (process ancestry, no env var), but `DisclosureSensor` has no use for it — nothing is keyed by session id because nothing is written anywhere. The sensor is scoped to the *attend process*, which is strictly narrower than the session itself.
 
@@ -107,5 +106,5 @@ Work proceeds on the existing `feat/attend-messaging-reheat` branch as:
 ## References
 
 - [ADR-104](../architecture/system/ADR-104-token-gated-way-re-disclosure-for-long-context-windows.md) — Token-gated way re-disclosure (the model this note reuses)
-- [ADR-113](../architecture/system/ADR-113-attend-active-awareness-module-as-an-executive-layer.md) — `attend`: active awareness module as an executive layer
+- [ADR-113](../architecture/system/ADR-113-attend-active-awareness-module.md) — `attend`: active awareness module
 - [Cognitive loop and the awareness layer](./cognitive-loop-and-awareness-layer.md) — the broader frame this work sits within

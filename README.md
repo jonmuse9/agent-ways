@@ -10,7 +10,9 @@
 ![License](https://img.shields.io/github/license/aaronsb/agent-ways)
 ![Last commit](https://img.shields.io/github/last-commit/aaronsb/agent-ways)
 
-Event-driven cognitive steering for AI coding agents. Ways encode *how we do things* — prescriptive guidance triggered by context, not requested by intent — and inject them just-in-time before tools execute.
+Organizational socialization for AI coding agents. Ways encode *"the way we do it around here"* — the local norms an agent cannot know because it was never told them — and deliver them the way human teams actually transmit norms: situated, at the moment of relevant action, just before tools execute.
+
+An LLM session cannot internalize norms — no weight updates, no carried memory; every session is a new hire. So the system re-enacts socialization mechanically, on a spaced schedule that substitutes for the memory the agent does not have. In one sentence: *procedural memory for coding agents, maintained by spaced repetition.* Every project-coined term here maps to an established concept — the [vocabulary reference](docs/vocabulary.md) is the index.
 
 > **Current status:** Agent Ways ships with full support for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Support for additional CLI-based coding agents is in development.
 
@@ -39,7 +41,7 @@ sequenceDiagram
 
 **Ways** = policy and process encoded as contextual guidance. Triggered by keywords, commands, and file patterns — they fire once per session, before tools execute, and carry into subagents.
 
-**Why this works:** System prompt adherence decays as a power law over conversation turns — instructions at position zero lose influence as context grows. Ways sidestep this by injecting small, relevant guidance near the attention cursor at the moment it matters, maintaining steady-state adherence instead of a damped sawtooth. It's [progressive disclosure](docs/hooks-and-ways/context-decay.md) applied to the model itself.
+**Why this works:** System prompt adherence decays as a power law over conversation turns — instructions at position zero lose influence as context grows. This is the forgetting curve (Ebbinghaus) operating over token distance instead of days, and the countermeasure is the one human learning already uses: spaced repetition. Ways inject small, relevant guidance near the attention cursor at the moment it matters and re-disclose it as its influence fades, maintaining steady-state adherence instead of a damped sawtooth. It's [progressive disclosure](docs/hooks-and-ways/context-decay.md) applied to the model itself.
 
 ### Session replay with `ways rethink`
 
@@ -225,6 +227,8 @@ Also included:
 
 Claude Code ships two official features for injecting guidance: **Rules** (`.claude/rules/*.md`) and **Skills** (`~/.claude/skills/`). Ways solve problems that neither can.
 
+The problem has a name in principal–agent theory: **preference uncertainty**. An agent that doesn't know its principal's norms has only two safe strategies — ask constantly, or hedge exhaustively. Remove the ways system and agents of every model tier revert to exactly that. Rules and skills each supply some norms; ways supply them *situated* — at the moment of action, wherever in the file tree that action happens.
+
 ### The progressive disclosure problem
 
 Rules and ways both inject guidance conditionally — but their disclosure models are fundamentally different:
@@ -310,6 +314,7 @@ If your organization clones this repo under a different name without forking on 
 
 | Path | What's there |
 |------|-------------|
+| [docs/vocabulary.md](docs/vocabulary.md) | **The framing** — terminology anchors, why "ways", the canonical description |
 | [docs/hooks-and-ways/README.md](docs/hooks-and-ways/README.md) | **Start here** — the pipeline, creating ways, reading order |
 | [docs/hooks-and-ways/](docs/hooks-and-ways/) | Matching, macros, provenance, teams, stats |
 | [docs/hooks-and-ways.md](docs/hooks-and-ways.md) | Reference: hook lifecycle, state management, data flow |

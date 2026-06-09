@@ -13,7 +13,7 @@ Attend's signal layer solves a coordination problem for multi-agent sessions. Th
 Two secondary consequences fall out of this:
 
 1. **The routing protocol gets dogfooded.** Any friction the human feels — wrong defaults, confusing scope, bad message framing — is friction the agents also feel. Design improvements surface faster when humans are first-person users.
-2. **Solo developers get value too.** The TUI is not only for four-agent orchestration. A single developer running one Claude session can launch `attend chat` and watch environmental signals (git state, GitHub Project moves, build finishes) in one pane while the agent works in another. It's a peripheral-vision surface that doesn't compete with the agent's terminal for attention.
+2. **Solo developers get value too.** The TUI is not only for four-agent orchestration. A single developer running one Claude session can launch `attend chat` and watch environmental signals (git state, GitHub Project moves, build finishes) in one pane while the agent works in another. It's calm technology (Weiser & Brown) applied to a terminal pane — a peripheral-vision surface that informs without competing with the agent's terminal for the center of attention.
 
 ## Invocation
 
