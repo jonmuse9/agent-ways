@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SessionStart: Check if ways installation is complete.
 # Runs as the first startup hook. If setup is incomplete, emits a
 # one-time diagnostic and exits cleanly so other hooks don't error.
@@ -47,8 +47,10 @@ fi
 MODEL="${XDG_WAY}/minilm-l6-v2.gguf"
 EMBED_BIN="${XDG_WAY}/way-embed"
 if [[ ! -f "$MODEL" ]] || [[ ! -x "$EMBED_BIN" ]]; then
-  # Only mention this once per day (rate limit via marker file)
-  MARKER="/tmp/.claude-embed-notice-$(date +%Y%m%d)"
+  # Only mention this once per day (rate limit via marker file).
+  # Resolve a writable temp dir portably: TMPDIR/TEMP/TMP are set on Windows
+  # (Git Bash) and most CI; /tmp is the Unix fallback.
+  MARKER="${TMPDIR:-${TEMP:-${TMP:-/tmp}}}/.claude-embed-notice-$(date +%Y%m%d)"
   if [[ ! -f "$MARKER" ]]; then
     cat <<'MSG'
 

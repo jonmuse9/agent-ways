@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Refresh CLAUDE.md context after compaction
 # This script ensures Claude re-reads both user and project scope configurations
 

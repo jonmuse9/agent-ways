@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Pre-commit hook to prevent secrets and high entropy patterns from being committed
 # This hook checks for potential API keys, tokens, and other sensitive data
@@ -134,7 +134,20 @@ if [[ $total_violations -gt 0 ]]; then
     echo -e "${YELLOW}Please review and remove any sensitive data before committing.${NC}"
     echo -e "${YELLOW}If these are false positives, you can bypass with: git commit --no-verify${NC}"
     exit 1
-else
-    echo -e "${GREEN}✅ No secrets detected. Safe to commit!${NC}"
-    exit 0
 fi
+
+echo -e "${GREEN}✅ No secrets detected.${NC}"
+
+# --- Cross-platform portability check (CRLF, shebangs, hardcoded paths) ---
+echo -e "${GREEN}🌐 Running portability checks...${NC}"
+REPO_TOP="$(git rev-parse --show-toplevel)"
+if [[ -x "$REPO_TOP/scripts/check-portability.sh" ]]; then
+    if ! "$REPO_TOP/scripts/check-portability.sh"; then
+        echo -e "${RED}❌ Portability check failed (see above).${NC}"
+        echo -e "${YELLOW}If intentional, bypass with: git commit --no-verify${NC}"
+        exit 1
+    fi
+fi
+
+echo -e "${GREEN}✅ Safe to commit!${NC}"
+exit 0

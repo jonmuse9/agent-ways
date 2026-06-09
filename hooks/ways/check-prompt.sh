@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Check user prompts against ways — thin dispatcher to ways binary
 #
 # The ways binary handles: file walking, frontmatter extraction, pattern

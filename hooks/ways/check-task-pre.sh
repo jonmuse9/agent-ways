@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PreToolUse:Task — thin dispatcher to ways binary
 #
 # Phase 1 of two-phase subagent injection:

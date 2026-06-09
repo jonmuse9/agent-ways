@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Download the pre-built ways binary for the current platform
 #
 # Detects OS/arch, downloads from GitHub Releases, verifies it runs.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Timeout for all operations (1 second max)
 TIMEOUT=1

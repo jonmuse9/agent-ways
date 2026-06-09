@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Research way macro — show available skills for investigation tasks
 #
 # Research is mostly greenfield (no official Anthropic skills),

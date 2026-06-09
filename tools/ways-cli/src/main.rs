@@ -242,6 +242,10 @@ enum Commands {
         /// Session ID
         session: String,
     },
+    /// Print the per-user sessions root directory. Lets the hook scripts (and
+    /// CI) verify they resolve the same path as the binary on every platform —
+    /// the contract documented in `hooks/ways/sessions-root.sh`.
+    SessionsRoot,
     /// Manage configuration (init/show/path)
     Config {
         #[command(subcommand)]
@@ -626,6 +630,10 @@ fn main() -> Result<()> {
         }
         Commands::Reset { session, all, confirm } => {
             cmd::reset::run(session.as_deref(), all, confirm)
+        }
+        Commands::SessionsRoot => {
+            println!("{}", session::sessions_root());
+            Ok(())
         }
         Commands::ResponseTopicsPath { session } => {
             println!("{}", session::response_topics_path(&session).display());

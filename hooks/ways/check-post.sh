@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PostToolUse / PostToolUseFailure: reactive firing via postcheck.sh
 # (ADR-123 Decision 5).
 #

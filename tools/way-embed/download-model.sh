@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Download embedding models for way-embed
 #
 # Models:

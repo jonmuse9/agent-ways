@@ -1,0 +1,50 @@
+# Cross-platform line-ending policy.
+#
+# Everything in this repo runs under bash (Git Bash on Windows) or is parsed by
+# the Rust/C++ tooling, all of which expect LF. Without this file, a contributor
+# with `core.autocrlf=true` (the Git default on Windows) checks out CRLF shell
+# scripts that fail under bash with "command not found" / "\r" errors. Pinning
+# eol=lf here overrides autocrlf for matched files on every platform, so the
+# working tree is always LF regardless of local git config.
+
+# Default: let Git detect text vs binary, but normalize text to LF in the tree.
+* text=auto eol=lf
+
+# Scripts and source — must be LF.
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.rs        text eol=lf
+*.toml      text eol=lf
+*.md        text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.cpp       text eol=lf
+*.cc        text eol=lf
+*.h         text eol=lf
+*.hpp       text eol=lf
+*.c         text eol=lf
+Makefile    text eol=lf
+*.mk        text eol=lf
+
+# Extensionless shell scripts that live in hooks/ (e.g. the git pre-commit hook).
+hooks/pre-commit text eol=lf
+
+# Windows-native scripts, if ever added, must stay CRLF.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary assets — never normalize.
+*.gguf      binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.exe       binary
+*.dll       binary
+*.so        binary
+*.dylib     binary
+*.a         binary
+*.lib       binary

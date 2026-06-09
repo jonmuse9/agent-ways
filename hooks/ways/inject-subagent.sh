@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SubagentStart - Inject subagent-scoped ways from stash
 #
 # TRIGGER FLOW:

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Install agent-ways into ~/.claude
 #
 # This is a gateway, not a butler. It checks readiness, detects complexity,

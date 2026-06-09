@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ADR context macro — detect project ADR state and provide actionable commands
 #
 # Outputs nothing if the project has no ADRs (way content still shows as a reminder,

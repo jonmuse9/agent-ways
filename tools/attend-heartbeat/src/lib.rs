@@ -197,8 +197,15 @@ pub fn try_acquire_session_lock(session_id: &str) -> io::Result<Option<SessionLo
 
 fn home_dir() -> PathBuf {
     std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                PathBuf::from("C:\\Users\\Public")
+            } else {
+                PathBuf::from("/tmp")
+            }
+        })
 }
 
 #[cfg(test)]
