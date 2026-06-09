@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Writing way macro — show available skills for content creation
 #
 # Skills are not required to be installed. This tells Claude what exists

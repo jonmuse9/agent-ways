@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Smoke test for way-embed: validates the embedding engine against key scenarios.
 # Tests the claims from ADR-108 — stem collision disambiguation and false positive reduction.
 

@@ -1,7 +1,8 @@
 //! Session state management — markers, epochs, token positions, scope detection.
 //!
-//! All session state lives in /tmp/.claude-sessions-{uid}/{session_id}/ as a
-//! directory tree. Way IDs map directly to paths (no dash-encoding).
+//! All session state lives under `sessions_root()/{session_id}/` as a directory
+//! tree (`/tmp/.claude-sessions-{uid}/` on Unix, `%LOCALAPPDATA%/claude-ways/`
+//! on Windows). Way IDs map directly to paths (no dash-encoding).
 //! This module owns all reads and writes to session state.
 
 use std::path::{Path, PathBuf};
@@ -18,28 +19,56 @@ pub use engagement::{
 
 // ── Session directory ──────────────────────────────────────────
 
-/// Per-user sessions root: /tmp/.claude-sessions-{uid}
+/// Per-user sessions root.
 ///
-/// Uses XDG_RUNTIME_DIR (per-user on systemd) if available, otherwise
-/// falls back to /tmp/.claude-sessions-{uid} using $EUID or `id -u`.
+/// Resolution order — **must stay identical to `hooks/ways/sessions-root.sh`**.
+/// The binary and the shell hooks both compute this independently; if they
+/// disagree they read and write session state in different directories and
+/// coordination silently breaks:
+///   1. `$XDG_RUNTIME_DIR/claude-sessions`            (Linux/systemd — already per-user)
+///   2. Windows: `%LOCALAPPDATA%/claude-ways/sessions`  (per-user; LOCALAPPDATA is
+///      exported in both native Windows and Git Bash, so the `.exe` and the shell
+///      hooks resolve the identical path)
+///   3. `/tmp/.claude-sessions-{uid}`                 (other Unix)
 pub fn sessions_root() -> String {
-    // Prefer XDG_RUNTIME_DIR (already per-user, no UID needed)
+    // 1. XDG_RUNTIME_DIR (already per-user, no UID needed) — wins on any platform.
     if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
         return format!("{xdg}/claude-sessions");
     }
-    // Fall back to /tmp with UID namespace
-    let uid = std::env::var("EUID")
-        .or_else(|_| std::env::var("UID"))
-        .unwrap_or_else(|_| {
-            std::process::Command::new("id")
-                .arg("-u")
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|| "0".to_string())
-        });
-    format!("/tmp/.claude-sessions-{uid}")
+
+    // 2. Windows: per-user LOCALAPPDATA base (matches sessions-root.sh).
+    #[cfg(windows)]
+    {
+        format!("{}/claude-ways/sessions", win_user_base())
+    }
+
+    // 3. Other Unix: /tmp with a UID namespace.
+    #[cfg(not(windows))]
+    {
+        let uid = std::env::var("EUID")
+            .or_else(|_| std::env::var("UID"))
+            .unwrap_or_else(|_| {
+                std::process::Command::new("id")
+                    .arg("-u")
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "0".to_string())
+            });
+        format!("/tmp/.claude-sessions-{uid}")
+    }
+}
+
+/// Per-user base directory for transient session state on Windows: `%LOCALAPPDATA%`,
+/// falling back to the system temp dir if it is somehow unset. Centralized so
+/// `sessions_root()` and `response_topics_path()` cannot drift on Windows.
+#[cfg(windows)]
+fn win_user_base() -> String {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| std::env::temp_dir().to_string_lossy().into_owned())
 }
 
 /// Root directory for a session's state.
@@ -54,7 +83,21 @@ fn session_dir(session_id: &str) -> PathBuf {
 /// hierarchy. Canonical here so reset, the writer, and the consumer all
 /// resolve through one source of truth and cannot drift.
 pub fn response_topics_path(session_id: &str) -> PathBuf {
-    PathBuf::from(format!("/tmp/claude-response-topics-{session_id}"))
+    // The shell hooks never hardcode this — they read it back from
+    // `ways response-topics-path`, so only the binary's view must be correct
+    // per platform. On Windows, `/tmp` is not a real path for the native `.exe`,
+    // so anchor to the per-user LOCALAPPDATA base (which always exists).
+    #[cfg(windows)]
+    {
+        PathBuf::from(format!(
+            "{}/claude-response-topics-{session_id}",
+            win_user_base()
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from(format!("/tmp/claude-response-topics-{session_id}"))
+    }
 }
 
 /// Ensure a path's parent directories exist.

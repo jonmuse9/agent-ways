@@ -1,24 +1,39 @@
 //! Session Simulator Integration Test
 //!
 //! Exercises the `ways` binary by replaying synthetic sessions.
-//! Assertions use /tmp markers (the source of truth), not output parsing.
+//! Assertions read the on-disk session markers (the source of truth), not
+//! output parsing.
 //!
 //! Each scenario gets a unique session ID and cleans up after itself.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// ── Session root (must match session::sessions_root()) ────────
+// ── Session root (MUST match session::sessions_root()) ────────
+// Mirror of the production resolver so assertions look where the binary writes.
+// If they drift, every scenario fails — which is exactly what caught the
+// missing Windows branch when sessions_root() was hardened.
 
 fn sessions_root() -> String {
     if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
         return format!("{xdg}/claude-sessions");
     }
-    let uid = Command::new("id").arg("-u").output().ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "0".to_string());
-    format!("/tmp/.claude-sessions-{uid}")
+    #[cfg(windows)]
+    {
+        let base = std::env::var("LOCALAPPDATA")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| std::env::temp_dir().to_string_lossy().into_owned());
+        format!("{base}/claude-ways/sessions")
+    }
+    #[cfg(not(windows))]
+    {
+        let uid = Command::new("id").arg("-u").output().ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "0".to_string());
+        format!("/tmp/.claude-sessions-{uid}")
+    }
 }
 
 // ── Test infrastructure ────────────────────────────────────────
@@ -86,6 +101,10 @@ impl Session {
                 "--project", "/tmp/nonexistent-project",
             ])
             .env("HOME", fixture_home())
+            // home_dir() prefers USERPROFILE on Windows, so set both or the
+            // fixture-home redirection is ignored and the binary reads the real
+            // ~/.claude. See util::home_dir().
+            .env("USERPROFILE", fixture_home())
             .env("XDG_CACHE_HOME", self.corpus.parent().unwrap().parent().unwrap().parent().unwrap())
             .output()
             .expect("Failed to run ways scan prompt");
@@ -102,6 +121,10 @@ impl Session {
                 "--project", "/tmp/nonexistent-project",
             ])
             .env("HOME", fixture_home())
+            // home_dir() prefers USERPROFILE on Windows, so set both or the
+            // fixture-home redirection is ignored and the binary reads the real
+            // ~/.claude. See util::home_dir().
+            .env("USERPROFILE", fixture_home())
             .env("XDG_CACHE_HOME", self.corpus.parent().unwrap().parent().unwrap().parent().unwrap())
             .output()
             .expect("Failed to run ways scan command");
@@ -118,6 +141,10 @@ impl Session {
                 "--project", "/tmp/nonexistent-project",
             ])
             .env("HOME", fixture_home())
+            // home_dir() prefers USERPROFILE on Windows, so set both or the
+            // fixture-home redirection is ignored and the binary reads the real
+            // ~/.claude. See util::home_dir().
+            .env("USERPROFILE", fixture_home())
             .env("XDG_CACHE_HOME", self.corpus.parent().unwrap().parent().unwrap().parent().unwrap())
             .output()
             .expect("Failed to run ways scan file");
@@ -134,6 +161,10 @@ impl Session {
                 "--project", project,
             ])
             .env("HOME", fixture_home())
+            // home_dir() prefers USERPROFILE on Windows, so set both or the
+            // fixture-home redirection is ignored and the binary reads the real
+            // ~/.claude. See util::home_dir().
+            .env("USERPROFILE", fixture_home())
             .env("XDG_CACHE_HOME", self.corpus.parent().unwrap().parent().unwrap().parent().unwrap())
             .output()
             .expect("Failed to run ways scan prompt");
@@ -150,6 +181,7 @@ impl Session {
                 "--project", "/tmp/nonexistent-project",
             ])
             .env("HOME", home)
+            .env("USERPROFILE", home) // see scan_prompt: home_dir() prefers USERPROFILE on Windows
             .env("XDG_CACHE_HOME", self.corpus.parent().unwrap().parent().unwrap().parent().unwrap())
             .output()
             .expect("Failed to run ways scan prompt");
@@ -177,6 +209,10 @@ impl Session {
         let output = Command::new(ways_bin())
             .args(&args)
             .env("HOME", fixture_home())
+            // home_dir() prefers USERPROFILE on Windows, so set both or the
+            // fixture-home redirection is ignored and the binary reads the real
+            // ~/.claude. See util::home_dir().
+            .env("USERPROFILE", fixture_home())
             .env("XDG_CACHE_HOME", self.corpus.parent().unwrap().parent().unwrap().parent().unwrap())
             .output()
             .expect("Failed to run ways scan state");
@@ -200,11 +236,43 @@ fn fixture_home() -> PathBuf {
     let ways_link = home.join(".claude/hooks/ways");
     if !ways_link.exists() {
         std::fs::create_dir_all(ways_link.parent().unwrap()).unwrap();
-        // Symlink fixture ways to where the binary expects them
+        // Put the fixture ways where the binary expects them
+        // ($HOME/.claude/hooks/ways).
         #[cfg(unix)]
         std::os::unix::fs::symlink(fixture_ways_dir(), &ways_link).ok();
+        // Windows symlinks need admin / Developer Mode (the Makefile copies for
+        // the same reason), so copy the tree in. Stage in a pid-unique dir and
+        // atomically rename, so parallel tests never observe a half-copy.
+        #[cfg(windows)]
+        {
+            let staging =
+                home.join(format!(".claude/hooks/ways.staging-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&staging);
+            if copy_dir_all(&fixture_ways_dir(), &staging).is_ok()
+                && std::fs::rename(&staging, &ways_link).is_err()
+            {
+                // Another test won the race; discard our copy.
+                let _ = std::fs::remove_dir_all(&staging);
+            }
+        }
     }
     home
+}
+
+#[cfg(windows)]
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
 }
 
 fn clean_markers(session_id: &str) {
@@ -465,13 +533,19 @@ fn scenario_9_domain_disable() {
     let claude_dir = home.join(".claude");
     std::fs::create_dir_all(&claude_dir).unwrap();
 
-    // Symlink ways
+    // Place fixture ways under this scenario's private home.
     let ways_link = claude_dir.join("hooks/ways");
     std::fs::create_dir_all(ways_link.parent().unwrap()).unwrap();
     #[cfg(unix)]
     {
         let _ = std::fs::remove_file(&ways_link);
         std::os::unix::fs::symlink(fixture_ways_dir(), &ways_link).unwrap();
+    }
+    // Windows: copy instead of symlink (needs admin/Developer Mode otherwise).
+    #[cfg(windows)]
+    {
+        let _ = std::fs::remove_dir_all(&ways_link);
+        copy_dir_all(&fixture_ways_dir(), &ways_link).unwrap();
     }
 
     // Write ways.json disabling testdomain

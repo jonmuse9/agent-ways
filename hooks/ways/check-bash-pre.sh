@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PreToolUse: Check bash commands against ways — thin dispatcher
 #
 # The ways binary handles: command pattern matching, semantic scoring,

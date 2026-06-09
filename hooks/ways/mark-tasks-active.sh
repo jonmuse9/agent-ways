@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PreToolUse hook for TaskCreate
 # Sets marker so context-threshold nag stops repeating
 source "$(dirname "$0")/sessions-root.sh"

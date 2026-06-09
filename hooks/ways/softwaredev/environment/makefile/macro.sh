@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Dynamic context for Makefile way
 # Detects Makefile in project, shows available targets, warns about bare-make safety.
 

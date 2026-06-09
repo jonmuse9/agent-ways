@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Guard: exit silently if ways binary is not available.
 # Source this at the top of any hook script that calls the ways binary.
 #

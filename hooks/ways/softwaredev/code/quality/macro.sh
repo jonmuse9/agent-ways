@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Scan for files exceeding quality thresholds
 # Runs when quality way triggers - appends file list to way output
 

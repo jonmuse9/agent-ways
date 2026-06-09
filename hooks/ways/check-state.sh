@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # State-based trigger evaluator — thin dispatcher to ways binary
 #
 # Evaluates: context-threshold, file-exists, session-start triggers.

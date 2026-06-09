@@ -141,8 +141,20 @@ pub(crate) fn parse_git_describe(s: &str) -> Option<GitDescribe> {
 
 /// Print update availability status from the cached state file.
 pub(crate) fn update_status_text() -> String {
-    let uid = unsafe { libc_getuid() };
-    let cache_file = format!("/tmp/.claude-config-update-state-{uid}");
+    // Path MUST match check-config-updates.sh (the writer). Unix keys by uid
+    // under /tmp; Windows uses the per-user LOCALAPPDATA base (no uid namespace —
+    // LOCALAPPDATA is already per-user and `id -u` / getuid disagree there).
+    #[cfg(not(windows))]
+    let cache_file = {
+        let uid = unsafe { libc_getuid() };
+        format!("/tmp/.claude-config-update-state-{uid}")
+    };
+    #[cfg(windows)]
+    let cache_file = format!(
+        "{}/.claude-config-update-state",
+        std::env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned())
+    );
     let content = match std::fs::read_to_string(&cache_file) {
         Ok(c) => c,
         Err(_) => return String::new(),
@@ -233,7 +245,10 @@ pub(crate) fn dirty_status_text(claude_dir: &Path) -> String {
     out
 }
 
-/// Get uid without pulling in libc crate.
+/// Get uid without pulling in libc crate. Only needed off Windows, where the
+/// config-update cache is keyed by uid (Windows uses the per-user LOCALAPPDATA
+/// base instead — see `update_status_text`).
+#[cfg(not(windows))]
 pub(crate) unsafe fn libc_getuid() -> u32 {
     #[cfg(unix)]
     unsafe {

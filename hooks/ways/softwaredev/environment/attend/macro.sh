@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Dynamic context for attend way
 # Checks if attend is installed and running, emits live state
 

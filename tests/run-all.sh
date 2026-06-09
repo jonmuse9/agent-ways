@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Run all automated tests. Exit non-zero if any fail.
 #
 # Usage: tests/run-all.sh [--verbose]

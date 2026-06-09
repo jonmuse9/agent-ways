@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Stop hook: Analyze Claude's response for topic awareness
 #
 # Reads the transcript after Claude responds, extracts topics,
