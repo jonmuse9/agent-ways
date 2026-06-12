@@ -60,6 +60,25 @@ The gate inherits ADR-134's precision-first, zero-false-positive **hard constrai
 
 This makes ADR-135 the first *content-level* and *pattern-level* application of ADR-134's machinery: 134 tunes thresholds and cadence from telemetry; 135 tunes recognition itself from the same substrate.
 
+## Amendment — 2026-06-12: mechanism (PostToolUse postcheck, pattern-as-way)
+
+The Decision above specified the content channel as *PreToolUse* plus a new `ways scan --content` channel in the binary. Implementation grounding revised the mechanism on two points. The intent above is unchanged — detect concrete over-build in candidate code, as a learning corpus governed by precision-first silence. Only the delivery changes, and it changes toward less code and existing infrastructure.
+
+**1. PostToolUse via per-way `postcheck.sh`, not PreToolUse via the binary.** The repo already has the mechanism this needs: ADR-123 Decision 5's reactive-firing path (`check-post.sh` walks `**/postcheck.sh`, pipes the PostToolUse input to each, and treats exit 0 as a fire request gated through `ways show way`). The gate is advisory — it emits, never denies — so PreToolUse's interception power buys nothing; PostToolUse is both the better behavioral fit (let the write land, then surface the fix for the next turn, as the usage report itself suggested) and free of any binary or core-hook change. The PreToolUse/binary channel was the right *first* design on paper; the existing postcheck path is the lazier one that works.
+
+**2. Patterns live as pattern-ways, not as a bespoke data structure.** A postcheck's stdout is discarded — only its exit code is read, and the content injected on a fire is the *way's own body*. So a postcheck cannot emit a dynamic finding line; the body carries the named replacement(s). This collapses the "self-extending pattern corpus" into the corpus itself:
+
+- **Recognition** = a postcheck predicate (stimulus → match?).
+- **Learned response** = the way's body (the named replacement).
+- **Learning a pattern** = authoring a pattern-way, through the existing `knowledge/authoring` loop — so the #7 loop's "record a finding" is literally `ways`-authoring from encounter telemetry.
+- **Pruning** = deleting the way; **exemption** = the absence of one.
+
+The pattern library is therefore not new infrastructure; it is a small, prunable domain of pattern-ways. This deepens, rather than alters, the learning-corpus thesis: the recognition set is the corpus, and it grows and shrinks by gaining and losing ways. Encounter telemetry and the loop (#7) remain gated on ADR-134.
+
+**Granularity is a YAGNI call, decided by the hot path.** `check-post.sh` runs *every* `postcheck.sh` on *every* `Edit`/`Write`/`Bash`/`Task` — so one-way-per-pattern means one subprocess spawn per pattern per tool event. v1 is therefore a **single `softwaredev/code/overbuild` way** whose one postcheck holds the seed detectors and whose body lists their replacements; Claude self-selects the relevant one. Splitting into per-pattern ways (`overbuild/lru`, `overbuild/email`, …) is the loop's later refinement, justified only when per-pattern pruning or telemetry earns the extra spawns. The conceptual mapping above holds at either granularity — one way with N detectors, or N ways with one each.
+
+Implementation note: the over-build way fires *only* via its postcheck, not via prompt/file embedding — its frontmatter is kept trigger-inert (no `description`/`vocabulary`/`pattern`) so it never pollutes semantic matching, and needs no locale companion.
+
 ## Consequences
 
 ### Positive
