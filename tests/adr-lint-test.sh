@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test ADR lint frontmatter detection
 #
 # Tests that `adr lint` correctly identifies:

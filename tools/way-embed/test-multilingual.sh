@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Cross-language and same-language embedding similarity tests.
 # Validates multilingual model quality against English-only baseline.
 #

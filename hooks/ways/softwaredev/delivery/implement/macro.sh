@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Implementation way macro — progressive disclosure of parallelization guidance
 #
 # Lightweight: the way file always shows the briefing protocol

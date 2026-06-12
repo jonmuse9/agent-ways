@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Clear way markers for fresh session
 # Called on SessionStart and after compaction
 #

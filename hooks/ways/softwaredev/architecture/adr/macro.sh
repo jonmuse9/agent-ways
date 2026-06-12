@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ADR way macro — tri-state detection of ADR tooling in project
 #
 # States:

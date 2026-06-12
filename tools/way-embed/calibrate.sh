@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Calibrate embedding thresholds against test fixtures
 #
 # Runs each test fixture through way-embed match at threshold 0.0,

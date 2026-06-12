@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Reactive firing for softwaredev/code/quality (ADR-123 Phase D).
 #
 # Exits 0 (requesting fire) when the just-completed Edit/Write touched

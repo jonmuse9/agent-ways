@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Check if agent-ways is up to date with upstream
 # Handles four install scenarios: direct clone, fork, renamed clone, plugin
 #
@@ -16,7 +16,18 @@ CLAUDE_DIR="${HOME}/.claude"
 UPSTREAM_REPO="aaronsb/agent-ways"
 UPSTREAM_URL="https://github.com/${UPSTREAM_REPO}"
 UPSTREAM_MARKER="${CLAUDE_DIR}/.claude-upstream"
-CACHE_FILE="/tmp/.claude-config-update-state-$(id -u)"
+# Cache file path MUST match metrics::update_status_text() in the ways binary
+# (the reader). Unix keys by uid under /tmp; Windows uses the per-user
+# LOCALAPPDATA base (no uid — LOCALAPPDATA is already per-user, and the parent
+# always exists so the atomic mv below succeeds).
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    CACHE_FILE="${LOCALAPPDATA}/.claude-config-update-state"
+    ;;
+  *)
+    CACHE_FILE="/tmp/.claude-config-update-state-$(id -u)"
+    ;;
+esac
 ONE_HOUR=3600
 CURRENT_TIME=$(date +%s)
 

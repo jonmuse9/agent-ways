@@ -441,7 +441,7 @@ impl PeerSensor {
             }
 
             let project_name = sf.cwd
-                .rsplit('/')
+                .rsplit(|c| c == '/' || c == '\\')
                 .next()
                 .unwrap_or("?")
                 .to_string();
@@ -714,8 +714,15 @@ impl Sensor for PeerSensor {
 
 fn home_dir() -> PathBuf {
     std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                PathBuf::from("C:\\Users\\Public")
+            } else {
+                PathBuf::from("/tmp")
+            }
+        })
 }
 
 fn signals_base() -> PathBuf {
@@ -724,10 +731,11 @@ fn signals_base() -> PathBuf {
 
 /// Encode a cwd path to match Claude Code's project directory naming.
 /// Same encoding as abtop uses: '/', '_', '.' → '-'
+/// On Windows, backslash and colon (drive separator) are also replaced.
 fn encode_cwd(cwd: &str) -> String {
     cwd.chars()
         .map(|c| match c {
-            '/' | '_' | '.' => '-',
+            '/' | '_' | '.' | '\\' | ':' => '-',
             _ => c,
         })
         .collect()
@@ -744,12 +752,12 @@ fn parse_session_file(content: &str) -> Option<SessionFile> {
 
 /// Check if a PID is alive and running a claude process.
 ///
-/// Inspects the full command line rather than `comm`. The `comm` field is
-/// the executable basename, which for background sessions is the version
-/// number (e.g. `2.1.139`) because they exec the versioned binary at
-/// `~/.local/share/claude/versions/<ver>` directly. The full argv keeps
-/// the binary's path, which contains `claude` for both foreground and
-/// background sessions.
+/// Inspects the full command line / executable path. On Windows, queries the
+/// executable path via PowerShell; on Unix, reads the full argv via `ps`.
+/// The `comm` field is intentionally avoided: background sessions exec the
+/// versioned binary directly, so `comm` shows the version string rather than
+/// `claude`.
+#[cfg(not(windows))]
 fn pid_is_claude(pid: u32) -> bool {
     let output = Command::new("ps")
         .args(["--no-headers", "-p", &pid.to_string(), "-o", "args"])
@@ -765,9 +773,60 @@ fn pid_is_claude(pid: u32) -> bool {
     }
 }
 
+#[cfg(windows)]
+fn pid_is_claude(pid: u32) -> bool {
+    let script = format!(
+        "(Get-Process -Id {} -ErrorAction SilentlyContinue).Path",
+        pid
+    );
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .ok();
+    match output {
+        Some(out) if out.status.success() => {
+            let path = String::from_utf8_lossy(&out.stdout);
+            path.to_lowercase().contains("claude")
+        }
+        _ => false,
+    }
+}
+
+/// Return the parent PID of `pid`, or `None` if it cannot be determined.
+#[cfg(not(windows))]
+fn get_parent_pid(pid: u32) -> Option<u32> {
+    let output = Command::new("ps")
+        .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        s.trim().parse::<u32>().ok().filter(|&p| p > 0)
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn get_parent_pid(pid: u32) -> Option<u32> {
+    let script = format!(
+        "(Get-CimInstance Win32_Process -Filter 'ProcessId={}').ParentProcessId",
+        pid
+    );
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        s.trim().parse::<u32>().ok().filter(|&p| p > 0)
+    } else {
+        None
+    }
+}
+
 /// Check if a session PID is an ancestor of our own PID (i.e., our session).
 fn is_own_session(session_pid: u32, own_pid: u32) -> bool {
-    // Walk up the process tree from own_pid
     let mut pid = own_pid;
     for _ in 0..10 {
         if pid == session_pid {
@@ -776,19 +835,8 @@ fn is_own_session(session_pid: u32, own_pid: u32) -> bool {
         if pid <= 1 {
             break;
         }
-        // Get parent PID
-        let output = Command::new("ps")
-            .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid"])
-            .output()
-            .ok();
-        match output {
-            Some(out) if out.status.success() => {
-                let ppid_str = String::from_utf8_lossy(&out.stdout);
-                match ppid_str.trim().parse::<u32>() {
-                    Ok(ppid) if ppid > 0 && ppid != pid => pid = ppid,
-                    _ => break,
-                }
-            }
+        match get_parent_pid(pid) {
+            Some(ppid) if ppid != pid => pid = ppid,
             _ => break,
         }
     }
@@ -848,13 +896,8 @@ pub fn find_own_session_id(own_pid: u32) -> Option<String> {
         if pid <= 1 {
             break;
         }
-        let output = Command::new("ps")
-            .args(["--no-headers", "-p", &pid.to_string(), "-o", "ppid"])
-            .output()
-            .ok()?;
-        let line = String::from_utf8_lossy(&output.stdout);
-        match line.trim().parse::<u32>() {
-            Ok(ppid) if ppid > 0 && ppid != pid => pid = ppid,
+        match get_parent_pid(pid) {
+            Some(ppid) if ppid != pid => pid = ppid,
             _ => break,
         }
     }

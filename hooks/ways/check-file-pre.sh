@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PreToolUse: Check file operations against ways — thin dispatcher
 #
 # The ways binary handles: file pattern matching, check scoring,

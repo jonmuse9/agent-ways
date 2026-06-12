@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Macro: prepend way vocabulary health summary when optimization way fires
 # Runs ways suggest on all semantic ways and outputs a compact summary
 

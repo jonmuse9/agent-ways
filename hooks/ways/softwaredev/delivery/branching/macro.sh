@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Dynamic git branch context for branching way
 # Output: terse one-line summary of current git state
 # MUST complete in under 1 second — never block on failure

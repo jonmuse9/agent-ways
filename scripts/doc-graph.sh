@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Builds a link graph from git-tracked markdown files.
 # Finds all internal doc links, resolves paths, identifies dead ends,
 # orphans, and broken links. Outputs Mermaid diagram or JSON.
@@ -112,7 +112,9 @@ for src in "${MD_FILES[@]}"; do
         else
             BROKEN["$src -> $resolved"]="$raw_link"
         fi
-    done < <(grep -oP '\[(?:[^\]]*)\]\(\K[^)]+' "$REPO_ROOT/$src" 2>/dev/null || true)
+    # Extract markdown link targets — `[text](target)` → `target`. Uses portable
+    # grep -oE (BSD grep has no -P/PCRE) + sed to strip the `](` … `)` wrapper.
+    done < <(grep -oE '\]\([^)]+\)' "$REPO_ROOT/$src" 2>/dev/null | sed -E 's/^\]\(//; s/\)$//' || true)
 done
 
 # Deduplicate adjacency lists

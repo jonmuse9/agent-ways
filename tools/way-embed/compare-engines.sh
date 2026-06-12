@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Head-to-head comparison: BM25 vs Embedding engine
 # Runs test fixtures through both scorers, reports accuracy, timing, and disagreements.
 

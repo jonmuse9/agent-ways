@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Core macro — generates the available ways table for session start.
 # This is the archetype macro: other macros follow this pattern.
 #

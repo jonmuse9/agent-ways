@@ -111,7 +111,7 @@ fn scan_provenance(root: &Path) -> Result<(HashMap<String, serde_json::Value>, V
             Ok(c) => c,
             Err(_) => continue,
         };
-        if !content.starts_with("---\n") {
+        if !crate::util::has_frontmatter(&content) {
             continue;
         }
 

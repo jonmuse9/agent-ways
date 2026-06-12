@@ -1,0 +1,60 @@
+name: Cross-platform CI
+
+# Guards OS portability. The existing build-*.yml workflows package release
+# binaries (Linux + macOS) and run tests on Linux only — neither exercises
+# Windows. This workflow adds the missing Windows leg, runs the test suite on
+# all three OSes, and runs the portability lint everywhere so a Linux-only
+# assumption (CRLF, /bin/bash shebang, /tmp hardcode, sessions_root drift) fails
+# the Windows or macOS job instead of silently shipping.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/**'
+      - 'hooks/**'
+      - 'scripts/**'
+      - 'settings.json'
+      - '.gitattributes'
+      - '.github/workflows/portability.yml'
+  pull_request:
+    paths:
+      - 'tools/**'
+      - 'hooks/**'
+      - 'scripts/**'
+      - 'settings.json'
+      - '.gitattributes'
+      - '.github/workflows/portability.yml'
+  workflow_dispatch:
+
+jobs:
+  cross-platform:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash          # Git Bash on Windows runners — same script everywhere
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Build the crates that carry platform-specific (#[cfg(windows/unix)]) code,
+      # so a cfg regression breaks the build on the platform it affects.
+      - name: Build ways + attend (release)
+        run: cargo build --release --manifest-path tools/Cargo.toml -p ways -p attend
+
+      # Full suite — unit + the project_ways and session_sim integration tests.
+      # session_sim exercises the marker/hook/epoch machinery end-to-end against
+      # the built binary, so running it on every OS is the actual proof the
+      # session layer works cross-platform. Single-threaded for deterministic
+      # shared-fixture setup (matches build-ways.yml).
+      - name: Run ways tests (unit + integration)
+        run: cargo test --manifest-path tools/Cargo.toml -p ways -- --test-threads=1
+
+      - name: Portability lint (incl. sessions_root agreement)
+        run: bash scripts/check-portability.sh

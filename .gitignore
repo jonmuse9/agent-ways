@@ -3,6 +3,7 @@
 
 # Track these directories
 !.gitignore
+!.gitattributes
 !CLAUDE.md
 !todo-*.md
 !Makefile
@@ -98,6 +99,7 @@ hooks/ways/.obsidian/
 
 # Scripts (shared utilities for hooks, macros, skills)
 !scripts/
+!scripts/check-portability.sh
 !scripts/doc-graph.sh
 !scripts/install.sh
 !scripts/project-pulse
@@ -137,6 +139,9 @@ hooks/ways/.obsidian/
 !tools/way-embed/
 !tools/way-embed/*
 !tools/way-embed/llama.cpp
+# Generated cmake build tree — contains absolute, machine-specific paths
+# (e.g. /home/<user>/...). Rebuilt locally by `make way-embed`; never commit it.
+tools/way-embed/build/
 !tools/mmaid/
 !tools/mmaid/*
 !tools/agent-fmt/

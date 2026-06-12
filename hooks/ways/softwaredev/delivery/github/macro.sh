@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Dynamic context for GitHub way
 # Two concerns:
 #   1. Project scope (solo vs team) and workflow recommendations
