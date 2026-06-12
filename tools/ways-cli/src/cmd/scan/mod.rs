@@ -77,6 +77,7 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
 
     let scope = session::detect_scope(session_id);
     let candidates = collect_candidates(&project_dir);
+    let near_miss_margin = crate::config::global().near_miss_margin;
 
     // ADR-130: cap embed input to the model's working window via the
     // sentence-salience reducer. Pattern/keyword matching downstream
@@ -96,20 +97,25 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
         }
 
         // Additive matching: pattern OR semantic
-        let channel = match_prompt(
+        match match_prompt(
             query,
             &way.pattern,
             &way.corpus_id,
             effective_thresholds(way, session_id),
             &embed_matches,
-        );
-
-        if let Some(trigger) = channel {
-            let out = capture_show_way(&way.id, session_id, &trigger);
-            if !out.is_empty() {
-                context.push_str(&out);
-                context.push_str("\n\n");
+            near_miss_margin,
+        ) {
+            PromptMatch::Fired(trigger) => {
+                let out = capture_show_way(&way.id, session_id, &trigger);
+                if !out.is_empty() {
+                    context.push_str(&out);
+                    context.push_str("\n\n");
+                }
             }
+            PromptMatch::NearMiss(nm) => {
+                log_near_miss(way, &nm, "prompt", &scope, &project_dir, session_id, query);
+            }
+            PromptMatch::NoMatch => {}
         }
     }
 
@@ -134,6 +140,10 @@ pub fn task(
 
     let is_teammate = team.is_some();
     let candidates = collect_candidates(&project_dir);
+    let near_miss_margin = crate::config::global().near_miss_margin;
+    // Session scope for telemetry: the task channel is subagent unless a team
+    // name marks it as a teammate dispatch.
+    let task_scope = if is_teammate { "teammate" } else { "subagent" };
 
     // ADR-130: agent delegation prompts are the largest input class in
     // practice. Reduce to the model's window before embedding.
@@ -162,16 +172,19 @@ pub fn task(
             continue;
         }
 
-        let channel = match_prompt(
+        match match_prompt(
             query,
             &way.pattern,
             &way.corpus_id,
             effective_thresholds(way, session_id),
             &embed_matches,
-        );
-
-        if let Some(trigger) = channel {
-            matched.push((way.id.clone(), trigger));
+            near_miss_margin,
+        ) {
+            PromptMatch::Fired(trigger) => matched.push((way.id.clone(), trigger)),
+            PromptMatch::NearMiss(nm) => {
+                log_near_miss(way, &nm, "task", task_scope, &project_dir, session_id, query);
+            }
+            PromptMatch::NoMatch => {}
         }
     }
 
@@ -393,17 +406,42 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
 
 // ── Matching ────────────────────────────────────────────────────
 
+/// Outcome of matching a prompt against one way.
+enum PromptMatch {
+    /// The way fired; the payload is the trigger channel.
+    Fired(String),
+    /// The way did NOT fire, but at least one model scored within
+    /// `near_miss_margin` below its effective threshold (ADR-134). Carries the
+    /// already-computed scores for telemetry — no new embedding is done.
+    NearMiss(NearMiss),
+    /// No match, and not close enough to record.
+    NoMatch,
+}
+
+/// A below-threshold embedding result close enough to log (ADR-134 Decision 1).
+struct NearMiss {
+    score_en: Option<f64>,
+    score_multi: Option<f64>,
+    thr_en: f64,
+    thr_multi: f64,
+    /// Smallest `threshold - score` among the models within margin — how close
+    /// the way came to firing on its best path.
+    margin: f64,
+}
+
 fn match_prompt(
     query: &str,
     pattern: &Option<String>,
     corpus_id: &str,
     thresholds: EffectiveThresholds,
     scores: &EmbedScores,
-) -> Option<String> {
-    // Channel 1: Regex pattern — always checked first, always fires on match.
+    near_miss_margin: f64,
+) -> PromptMatch {
+    // Channel 1: Regex pattern — deterministic, scoreless. A pattern miss is
+    // never a near-miss (there is no margin to be near).
     if let Some(ref pat) = pattern {
         if regex_matches(pat, query) {
-            return Some("keyword".to_string());
+            return PromptMatch::Fired("keyword".to_string());
         }
     }
 
@@ -413,16 +451,79 @@ fn match_prompt(
     // each model's noise band sits below its gate:
     //   - EN model (0.40): sharp on English, noise below 0.35
     //   - multi model (0.55): cross-lingual but coarser, noise at 0.30-0.50
-    let en_fires = scores.best_en(corpus_id).is_some_and(|s| s >= thresholds.en);
-    let multi_fires = scores.best_multi(corpus_id).is_some_and(|s| s >= thresholds.multi);
+    let score_en = scores.best_en(corpus_id);
+    let score_multi = scores.best_multi(corpus_id);
 
-    if en_fires {
-        Some("semantic:embedding:en".to_string())
-    } else if multi_fires {
-        Some("semantic:embedding:multi".to_string())
-    } else {
-        None
+    if score_en.is_some_and(|s| s >= thresholds.en) {
+        return PromptMatch::Fired("semantic:embedding:en".to_string());
     }
+    if score_multi.is_some_and(|s| s >= thresholds.multi) {
+        return PromptMatch::Fired("semantic:embedding:multi".to_string());
+    }
+
+    // No fire. Record a near-miss when a model landed in the band just below
+    // its threshold: `thr - margin <= score < thr`. The reported margin is the
+    // smallest shortfall across qualifying models. Measured against the SAME
+    // effective thresholds the fire path uses, so parent-boost is honored.
+    let shortfall = |score: Option<f64>, thr: f64| -> Option<f64> {
+        score.and_then(|s| {
+            let gap = thr - s;
+            (gap > 0.0 && gap <= near_miss_margin).then_some(gap)
+        })
+    };
+    let margin = [
+        shortfall(score_en, thresholds.en),
+        shortfall(score_multi, thresholds.multi),
+    ]
+    .into_iter()
+    .flatten()
+    .fold(None, |acc: Option<f64>, g| Some(acc.map_or(g, |a| a.min(g))));
+
+    match margin {
+        Some(margin) => PromptMatch::NearMiss(NearMiss {
+            score_en,
+            score_multi,
+            thr_en: thresholds.en,
+            thr_multi: thresholds.multi,
+            margin,
+        }),
+        None => PromptMatch::NoMatch,
+    }
+}
+
+/// Emit a `way_nearmiss` telemetry event (ADR-134 Decision 1): a way that did
+/// not fire but scored within the near-miss margin of its threshold. This is
+/// persistence of already-computed scores, not new work — the tuning passes
+/// (`ways tune --cadence/--precision`) consume the stream. Field order mirrors
+/// `way_fired` (scan/state.rs) for reader symmetry.
+fn log_near_miss(
+    way: &WayCandidate,
+    nm: &NearMiss,
+    trigger: &str,
+    scope: &str,
+    project_dir: &str,
+    session_id: &str,
+    query: &str,
+) {
+    let fmt = |v: Option<f64>| v.map(|s| format!("{s:.4}")).unwrap_or_default();
+    let domain = way.id.split('/').next().unwrap_or(&way.id);
+    // ADR-134 task E: events.jsonl rotation/cap will bound this stream's growth.
+    session::log_event(&[
+        ("event", "way_nearmiss"),
+        ("way", &way.id),
+        ("corpus_id", &way.corpus_id),
+        ("domain", domain),
+        ("score_en", &fmt(nm.score_en)),
+        ("score_multi", &fmt(nm.score_multi)),
+        ("thr_en", &format!("{:.4}", nm.thr_en)),
+        ("thr_multi", &format!("{:.4}", nm.thr_multi)),
+        ("margin", &format!("{:.4}", nm.margin)),
+        ("trigger", trigger),
+        ("scope", scope),
+        ("project", project_dir),
+        ("session", session_id),
+        ("query_tokens", &reduce::approx_tokens(query).to_string()),
+    ]);
 }
 
 /// Per-model thresholds for a way at a given moment in a session.
@@ -515,4 +616,90 @@ pub(super) fn emit_hook_context(hook_event: &str, context: &str) {
         }),
     };
     println!("{payload}");
+}
+
+#[cfg(test)]
+mod near_miss_tests {
+    //! ADR-134 task A: the near-miss decision in `match_prompt`. These cover
+    //! the pure score/threshold arithmetic — no embedding subprocess, no I/O.
+    use super::*;
+
+    const THR: EffectiveThresholds = EffectiveThresholds { en: 0.40, multi: 0.55 };
+    const MARGIN: f64 = 0.05;
+
+    fn scores(en: Option<f64>, multi: Option<f64>) -> EmbedScores {
+        EmbedScores {
+            en: en.map(|s| vec![("w".to_string(), s)]),
+            multi: multi.map(|s| vec![("w".to_string(), s)]),
+        }
+    }
+
+    fn run(en: Option<f64>, multi: Option<f64>, pattern: Option<&str>) -> PromptMatch {
+        match_prompt(
+            "query text",
+            &pattern.map(|p| p.to_string()),
+            "w",
+            THR,
+            &scores(en, multi),
+            MARGIN,
+        )
+    }
+
+    #[test]
+    fn en_clears_fires_en() {
+        assert!(matches!(run(Some(0.41), None, None),
+            PromptMatch::Fired(c) if c == "semantic:embedding:en"));
+    }
+
+    #[test]
+    fn multi_clears_when_en_below_fires_multi() {
+        assert!(matches!(run(Some(0.20), Some(0.56), None),
+            PromptMatch::Fired(c) if c == "semantic:embedding:multi"));
+    }
+
+    #[test]
+    fn within_margin_is_near_miss_with_shortfall() {
+        match run(Some(0.37), None, None) {
+            PromptMatch::NearMiss(nm) => {
+                assert!((nm.margin - 0.03).abs() < 1e-9, "margin = thr - score");
+                assert_eq!(nm.score_en, Some(0.37));
+                assert_eq!(nm.score_multi, None);
+            }
+            other => panic!("expected NearMiss, got {:?}", discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn smallest_shortfall_wins_across_models() {
+        // en short by 0.03, multi short by 0.02 -> reported margin is 0.02.
+        match run(Some(0.37), Some(0.53), None) {
+            PromptMatch::NearMiss(nm) => assert!((nm.margin - 0.02).abs() < 1e-9),
+            other => panic!("expected NearMiss, got {:?}", discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn beyond_margin_is_no_match() {
+        assert!(matches!(run(Some(0.30), None, None), PromptMatch::NoMatch));
+    }
+
+    #[test]
+    fn pattern_match_preempts_near_miss() {
+        // Scores would be a near-miss, but a keyword hit is a deterministic fire.
+        assert!(matches!(run(Some(0.37), None, Some("query")),
+            PromptMatch::Fired(c) if c == "keyword"));
+    }
+
+    #[test]
+    fn absent_scores_are_no_match() {
+        assert!(matches!(run(None, None, None), PromptMatch::NoMatch));
+    }
+
+    fn discriminant(m: &PromptMatch) -> &'static str {
+        match m {
+            PromptMatch::Fired(_) => "Fired",
+            PromptMatch::NearMiss(_) => "NearMiss",
+            PromptMatch::NoMatch => "NoMatch",
+        }
+    }
 }

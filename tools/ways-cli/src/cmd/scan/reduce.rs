@@ -76,7 +76,7 @@ pub fn reduce_for_embed(input: &str, budget_tokens: usize) -> String {
     reduce_by_sentences(trimmed, &sentences, budget_tokens)
 }
 
-fn approx_tokens(s: &str) -> usize {
+pub(crate) fn approx_tokens(s: &str) -> usize {
     // Cheap upper bound. Three estimators, take the max so we never
     // under-budget:
     //

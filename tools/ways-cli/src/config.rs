@@ -65,6 +65,14 @@ pub struct Config {
     /// models produce scores in different distributions, so comparing
     /// them directly (max, average) is apples-to-oranges.
     pub default_multi_embed_threshold: f64,
+    /// Near-miss margin (ADR-134). A way that did NOT fire is logged as a
+    /// `way_nearmiss` telemetry event when at least one model's score landed
+    /// within this much *below* its effective threshold (`thr - margin <=
+    /// score < thr`). Purely a logging knob — it never changes firing. The
+    /// tuning passes (`ways tune --cadence/--precision`) consume the stream.
+    /// Default 0.05: a narrow band that captures genuine near-fires without
+    /// flooding the log with deep misses.
+    pub near_miss_margin: f64,
     /// Refire presets (ADR-126). Each value is a fraction of the session
     /// context window. At fire evaluation time, a way's `refire: <name>`
     /// resolves by looking up the preset here and multiplying by the
@@ -89,6 +97,7 @@ impl Default for Config {
             parent_boost_floor: 0.40,
             default_embed_threshold: 0.40,
             default_multi_embed_threshold: 0.55,
+            near_miss_margin: 0.05,
             refire_presets,
         }
     }
@@ -179,6 +188,9 @@ impl Config {
         }
         if let Some(v) = doc.get("default_multi_embed_threshold").and_then(|v| v.as_f64()) {
             self.default_multi_embed_threshold = v;
+        }
+        if let Some(v) = doc.get("near_miss_margin").and_then(|v| v.as_f64()) {
+            self.near_miss_margin = v;
         }
         if let Some(m) = doc.get("refire_presets").and_then(|v| v.as_mapping()) {
             for (k, v) in m {
