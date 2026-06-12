@@ -1,7 +1,7 @@
 ---
 description: writing or editing source code — new function, new file, implementation, code change
 vocabulary: implement write code function class module add feature edit logic build create refactor
-files: \.(py|ts|tsx|js|jsx|mjs|go|rs|rb|java|kt|scala|c|cc|cpp|h|hpp|cs|php|swift|sh|lua|ex|exs)$
+files: \.(py|ts|tsx|js|jsx|mjs|vue|svelte|go|rs|rb|java|kt|scala|c|cc|cpp|h|hpp|cs|php|swift|sh|lua|ex|exs)$
 scope: agent
 ---
 
