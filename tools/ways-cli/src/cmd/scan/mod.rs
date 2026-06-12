@@ -494,8 +494,11 @@ fn match_prompt(
 /// Emit a `way_nearmiss` telemetry event (ADR-134 Decision 1): a way that did
 /// not fire but scored within the near-miss margin of its threshold. This is
 /// persistence of already-computed scores, not new work — the tuning passes
-/// (`ways tune --cadence/--precision`) consume the stream. Field order mirrors
-/// `way_fired` (scan/state.rs) for reader symmetry.
+/// (`ways tune --cadence/--precision`) consume the stream. The leading fields
+/// (`event`, `way`, `domain`, `trigger`, `scope`, `project`, `session`) follow
+/// the `way_fired` convention (scan/state.rs) for reader symmetry; the score
+/// fields are near-miss-specific. There is no `team` field — team attribution
+/// lives on fires (show/mod.rs), not on the below-threshold telemetry.
 fn log_near_miss(
     way: &WayCandidate,
     nm: &NearMiss,
@@ -693,6 +696,15 @@ mod near_miss_tests {
     #[test]
     fn absent_scores_are_no_match() {
         assert!(matches!(run(None, None, None), PromptMatch::NoMatch));
+    }
+
+    #[test]
+    fn score_exactly_at_threshold_fires_not_near_miss() {
+        // The boundary where the `>=` fire check and the `gap > 0.0` near-miss
+        // guard must agree: a score equal to the threshold fires, it is never
+        // a (zero-shortfall) near-miss.
+        assert!(matches!(run(Some(0.40), None, None),
+            PromptMatch::Fired(c) if c == "semantic:embedding:en"));
     }
 
     fn discriminant(m: &PromptMatch) -> &'static str {
