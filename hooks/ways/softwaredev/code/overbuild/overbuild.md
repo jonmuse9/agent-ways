@@ -10,7 +10,6 @@ refire: 0.2
 The code you just wrote matches a known reinvention. The lazy path that works:
 
 - **Hand-rolled LRU/TTL cache** (`OrderedDict` + eviction) → `functools.lru_cache`. A hand-rolled cache is a bug farm with a hit rate.
-- **Email-validation regex** → a contains-`@` check is enough for *format*; the only real validation is the confirmation email.
-- **Hand-rolled singleton** (`__new__` + `_instance`) → a module-level value, or an injected dependency.
+- **Hand-rolled singleton** (`__new__` guarding `_instance`) → a module-level value, or an injected dependency.
 
 If the reinvention is deliberate and the stdlib/platform genuinely falls short, keep it and move on — this fires on the *shape*, not the intent.
