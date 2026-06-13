@@ -1,5 +1,5 @@
 ---
-status: Draft
+status: Accepted
 date: 2026-06-09
 deciders:
   - aaronsb
@@ -73,3 +73,15 @@ The reconciliation, decision by decision:
 - **Decision 4 (gated apply)** — **partly already shipped.** `tune-curves --apply` performs the `half_life` rewrite (on the `curve:` block) with sample-size reporting. Only `embed_threshold` apply — driven by the recall/precision signals — remains to build.
 
 Net: this ADR's open work is Decision 3 (precision) plus the `embed_threshold` slice of Decision 4. Decisions 1 and 2 and the `half_life` half of 4 are done. The ADR is retained whole — including the now-corrected Context — because the empirical-tuning frame and the precision signal it still authorizes remain valid; the value is in narrowing the build to what does not already exist.
+
+## Implementation status — 2026-06-12 (Accepted)
+
+The design is adopted; the empirical-tuning loop it authorizes is built and exercised against the real event log. Status of each piece:
+
+- **Decision 1 — near-miss logging** — shipped (PR #117). `way_nearmiss` events emit for below-threshold candidates within `near_miss_margin` (default 0.05); the matcher's `match_prompt` is a 3-state `Fired | NearMiss | NoMatch`. Verified live.
+- **Decision 2 — cadence calibration** — pre-existing as `ways tune-curves` (reconciled above, PR #118). No code.
+- **Decision 3 — relevance signal** — shipped (PR #119) as `ways tune-precision`: parent-family activity classes, off-class irrelevance rate, and a breadth-based cross-cutting guard that keeps the named false positive (`meta/tracking`) out of the vocab-narrowing remedy. Verified live (69 ok / 64 cross-cutting / 25 mis-targeted / 44 low-n of 202 ways).
+- **Decision 4 — gated apply** — split. `half_life` apply ships in `tune-curves --apply`. `embed_threshold` apply needs a derivation that the data did not support: `way_fired` carried no firing score. The **fire-score telemetry** that makes a principled raise possible shipped (PR #120) — `fire_score` is now logged on first-fires. The **suggestion + apply** itself is **deferred until that telemetry accumulates** (it cannot be validated over an empty population), sequenced exactly as `token_position`→`tune-curves` was. Tracked as the only remaining build.
+- **Negative (log growth)** — addressed (PR #121): `events.jsonl` is bounded by tail-compaction in `log_event`.
+
+This ADR is **Accepted** with the `embed_threshold`-apply slice of Decision 4 as tracked, data-gated future work — a sequencing constraint, not an open design question.
