@@ -125,6 +125,22 @@ This is *habituation* in the biological sense. The first mention of something is
 
 The mental model: **ways are a rate-limited stream of premises**. Claude does not read them all at once; Claude reads them as the situation calls for them, with the understanding that anything already disclosed is still in context unless compaction has happened.
 
+## Empirical tuning: letting telemetry revise the thresholds
+
+The thresholds, half-lives, and vocabularies above were all set by authorial judgment. **Empirical auto-tuning** ([ADR-134](architecture/system/ADR-134-empirical-auto-tuning-from-fire-and-near-miss-telemetry.md)) closes the loop by feeding the matcher's own firing record back into those settings. This is optional operational tooling, not part of the per-turn loop — but it is what keeps the precision-first discipline honest over time.
+
+Two signals accumulate in `~/.claude/stats/events.jsonl`, both written by the cheap substrate at fire time:
+
+- **`way_nearmiss` events** — a *recall* signal. When a way scores within `near_miss_margin` (default 0.05) of its effective threshold but does not fire, the matcher records the would-be miss (`score_en`, `score_multi`, `thr_en`, `thr_multi`, `margin`, `trigger`, `query_tokens`). The scores are already computed; this is persistence, not new work. False silences — the way that *should* have fired — were structurally invisible before this; now they are measurable.
+- **`fire_score` on `way_fired` events** — the embedding score that cleared threshold, recorded on first-fires only (never on re-disclosures, whose score reflects the re-triggering prompt). This is the population a future `embed_threshold` raise would tune against.
+
+Two report-only subcommands read this record:
+
+- **`ways tune-curves`** (ADR-123 Phase E) groups `way_fired` / `way_redisclosed` by `(way, session)`, computes token-position deltas between fires, and suggests `half_life ≈ median delta`. `--apply` rewrites the way's `curve:` block in place as an ordinary, reviewable git diff.
+- **`ways tune-precision`** is a heuristic relevance audit. For each way it estimates how often its fires landed off-class — in sessions whose activity (judged by the parent-family of the ways that co-fired) never touched the way's own domain — and reports an irrelevance rate. A narrow way repeatedly firing into the same wrong kind of session is flagged **mis-targeted** (remedy: raise `embed_threshold`, narrow vocabulary, or change trigger channel); a way that fires broadly by design (e.g. `meta/tracking`) is flagged **cross-cutting** and the vocabulary-narrowing remedy is suppressed — those are scoped by trigger, never auto-narrowed. Flags: `--min-sessions` (default 5), `--flag-threshold` (default 0.5), `--project`, `--way`, `--json`.
+
+Both report by default. Vocabulary is never auto-applied — it re-shapes the embedding neighborhood and stays authorial. The `embed_threshold` apply slice is deferred until the `fire_score` population accumulates (tracked as issue #123); the threshold is read alongside `default_embed_threshold` and `default_multi_embed_threshold` in the ways config, which is also where `near_miss_margin` lives.
+
 ## Memory across sessions: ledger and optional projections
 
 Ways handle the *current* session. Memory handles what persists across sessions.
@@ -138,6 +154,8 @@ The ledger is **what was understood**, not **what was observed**. Entries are sm
 Memory projections are **configurable and never required**. The KG is one example; a user could attach a different memory tool with the same general shape, or none at all. The system is memory-tool-agnostic: it works with whatever projection (or none) is configured, and the ledger is the stable foundation underneath.
 
 The **forgetting principle** is the critical counterpart. Most of what passes through a session is not worth keeping. Reflection captures what was reasoned about; everything else evaporates when the session ends. This keeps the ledger a journal rather than a log. The gate is: *did Claude actually reason about this?* If yes, eligible for ledger. If no, it dies with the session.
+
+The same principle bounds the raw telemetry. The fire/near-miss log (`~/.claude/stats/events.jsonl`, the input to the tuning loop above) is append-only, so it needs a ceiling: when it exceeds ~32 MiB, `log_event` tail-compacts it to the most recent ~24 MiB at a line boundary via an atomic temp-and-rename. The rewrite is rare, lossy on the oldest events only, and invisible to readers — tuning works from recent behavior, so the old tail is the part safe to forget.
 
 ## Active perception: the awareness layer
 
@@ -245,7 +263,7 @@ Stage by stage:
 - **Attention.** The disclosure gate ([ADR-104](architecture/system/ADR-104-token-gated-way-re-disclosure-for-long-context-windows.md)) applies habituation rules. Recently-disclosed ways are suppressed or re-surfaced tersely. Fresh signals get full weight. The cheap substrate decides what reaches Claude's reasoning in what form.
 - **Reasoning.** Claude integrates observations and guidance into its working model and decides what to do.
 - **Action.** Claude acts — edits files, runs tools, responds to the user.
-- **Capture.** At context-threshold boundaries, the reflection way fires. Claude writes a short prose reflection. The Stop hook captures it and appends to the ledger. If a memory projection is configured, the entry is also handed off to it.
+- **Capture.** At context-threshold boundaries, the reflection way fires. Claude writes a short prose reflection. The Stop hook captures it and appends to the ledger. If a memory projection is configured, the entry is also handed off to it. Separately, every fire and near-miss this turn is logged as cheap telemetry; offline, that record drives the empirical tuning of thresholds and half-lives (ADR-134) without touching the loop.
 - **Consolidation.** When context fills, compaction distills the working window. The ledger, memory projections, and `attend`'s state survive the pass. The next turn begins with a compressed but coherent working context.
 - **Back to Wake.** At the next session, the loop restarts with the updated state as its foundation.
 
@@ -279,6 +297,7 @@ Ordered roughly by how specific the topic is to your interest:
 - [ADR-112](architecture/system/ADR-112-session-ledger-and-knowledge-graph-integration.md) — session ledger and optional KG integration
 - [ADR-113](architecture/system/ADR-113-attend-active-awareness-module.md) — the `attend` binary
 - [ADR-114](architecture/system/ADR-114-attend-as-insistent-way-trigger-type.md) — the way trigger schema for `attend` signals
+- [ADR-134](architecture/system/ADR-134-empirical-auto-tuning-from-fire-and-near-miss-telemetry.md) — empirical auto-tuning from fire and near-miss telemetry
 
 **If you want to build ways or operate the system:**
 - [hooks-and-ways/README.md](hooks-and-ways/README.md) — start here for way authoring

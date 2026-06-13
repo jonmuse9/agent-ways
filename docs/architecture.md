@@ -289,6 +289,50 @@ flowchart TB
 
 The embedding model is a hard dependency of `ways`. See ADR-125 for the authored disclosure graph model and the single-tier decision.
 
+## Telemetry & Tuning
+
+The matcher computes a score for every way on every prompt. Fires are recorded; so are the *near-misses* — ways that scored just under threshold and stayed silent. Both feed back into how the engine is tuned. This closes the loop ADR-134 opened: hand-set thresholds and half-lives become things the system can revise from its own experience.
+
+```mermaid
+flowchart LR
+    classDef match fill:#6A1B9A,stroke:#4A148C,color:#fff
+    classDef log fill:#1565C0,stroke:#0D47A1,color:#fff
+    classDef tune fill:#00695C,stroke:#004D40,color:#fff
+    classDef apply fill:#E65100,stroke:#BF360C,color:#fff
+
+    Scan["match_prompt<br/>Fired · NearMiss · NoMatch"]:::match
+
+    Scan -->|fired| WF["way_fired<br/>(+ fire_score on first-fires)"]:::log
+    Scan -->|"within near_miss_margin"| NM["way_nearmiss<br/>(recall signal)"]:::log
+
+    WF --> EV[("~/.claude/stats/events.jsonl<br/>bounded ~24–32 MiB")]:::log
+    NM --> EV
+
+    EV --> TC["ways tune-curves<br/>half_life ≈ median fire delta"]:::tune
+    EV --> TP["ways tune-precision<br/>off-class irrelevance audit"]:::tune
+
+    TC -->|--apply| Curve["rewrite curve: block"]:::apply
+    TP -->|report-only| Remedy["flag: mis-targeted / cross-cutting"]:::apply
+```
+
+### Telemetry events
+
+Two events in `~/.claude/stats/events.jsonl` carry the tuning signal:
+
+- `way_fired` now records `fire_score` — the embedding score that cleared threshold — on **first-fires only** (not on `way_redisclosed`). It feeds future `embed_threshold` tuning.
+- `way_nearmiss` is emitted when a way scores within `near_miss_margin` *below* its effective threshold but does not fire. The scores already exist; this is persistence, not new computation. Fields: `score_en`, `score_multi`, `thr_en`, `thr_multi`, `margin`, `trigger`, `query_tokens`. It is a recall signal — the first measure of likely *false silences*, the ways that should have fired and didn't.
+
+`near_miss_margin` (default `0.05`) is parsed from the ways config YAML alongside `default_embed_threshold` and `default_multi_embed_threshold`. It caps near-miss volume: only the band just under threshold logs.
+
+The log grows faster with near-misses, so its growth is bounded. `log_event` tail-compacts `events.jsonl` once it crosses ~32 MiB, keeping the most recent ~24 MiB (cut at a line boundary, written to a temp file and atomically renamed). The oldest events are lost; readers are unaffected — a reader holding the pre-compaction file keeps reading it intact.
+
+### Tuning commands
+
+- **`ways tune-curves`** (ADR-123 Phase E) — cadence calibration. Groups `way_fired` / `way_redisclosed` by `(way, session)`, computes token-position deltas between fires, and suggests `half_life ≈ median delta`. `--apply` rewrites the way's `curve:` block in place.
+- **`ways tune-precision`** (ADR-134 Decision 3) — a heuristic relevance audit of fire telemetry, report-only. For each way it estimates how often its fires landed *off-class*: in sessions whose activity — judged by the parent-family of the ways that co-fired — never touched the way's own domain. It reports an irrelevance rate and a flag: **mis-targeted** (a narrow way repeatedly firing into the same wrong kind of session; remedy: raise `embed_threshold`, narrow vocabulary, or change trigger channel) vs **cross-cutting** (a way that fires broadly by design, e.g. `meta/tracking`; remedy: scope by trigger — vocabulary is *never* auto-narrowed). Flags: `--min-sessions` (default 5), `--flag-threshold` (default 0.5), `--project`, `--way`, `--json`.
+
+ADR-134 is **Accepted**. One slice — the `embed_threshold`-gated `--apply`, driven by accumulated `fire_score` data — is deferred and data-gated (GitHub issue #123).
+
 ## Macro Injection
 
 Ways with `macro: prepend|append` run dynamic scripts that query live state:

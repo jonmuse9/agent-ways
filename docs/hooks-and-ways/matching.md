@@ -119,7 +119,9 @@ sequenceDiagram
 Configure via `~/.config/ways/config.yaml`:
 ```yaml
 parent_threshold_multiplier: 0.8   # 1.0 disables the boost
-default_embed_threshold: 0.35      # base for nodes without explicit override
+default_embed_threshold: 0.35      # English base for nodes without explicit override
+default_multi_embed_threshold: 0.55 # multilingual-model base (per-way override via embed_threshold)
+near_miss_margin: 0.05             # how far below threshold a non-fire is logged as a near-miss (ADR-134)
 ```
 
 A way's **effective threshold** therefore depends on session state, not just frontmatter. This is what makes disclosure feel progressive: the same query "rename this variable" may not fire the refactoring way in a fresh session but will fire it once the code/quality parent has been active.

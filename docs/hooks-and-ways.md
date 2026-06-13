@@ -204,6 +204,22 @@ Corpus: `${XDG_CACHE_HOME:-~/.cache}/claude-ways/user/ways-corpus.jsonl`
 
 Both user-scope (`~/.claude/hooks/ways/`) and project-scope (`.claude/ways/`) corpora are scanned. They share the same model file.
 
+#### Calibrating from telemetry
+
+Once a corpus has been firing for a while, two commands audit and calibrate the embedding match against observed behavior rather than guesswork (ADR-134).
+
+```bash
+# Audit fire relevance — flag ways landing in off-domain sessions
+ways tune-precision
+
+# Calibrate firing-dynamics curves from observed cadence
+ways tune-curves
+```
+
+`ways tune-precision` is a report-only relevance audit. For each way it estimates how often its fires landed *off-class* — in sessions whose activity (judged by the parent-family of the ways that co-fired) never touched the way's own domain — and reports an irrelevance rate plus a flag. **mis-targeted** is a narrow way repeatedly firing into the same wrong kind of session (remedy: raise `embed_threshold`, narrow vocabulary, or change the trigger channel); **cross-cutting** is a way that fires broadly by design, e.g. meta/tracking ways (remedy: scope by trigger — never auto-narrow vocabulary). Flags: `--min-sessions` (default 5), `--flag-threshold` (default 0.5), `--project`, `--way`, `--json`.
+
+`ways tune-curves` (ADR-123 Phase E) groups `way_fired`/`way_redisclosed` events by (way, session), computes token-position deltas between consecutive fires, and suggests a `half_life` ≈ the median delta. Dry-run by default; `--apply` rewrites the `curve:` block in place via line surgery. (Vocabulary and `embed_threshold` are never auto-applied — they stay authorial.)
+
 ## State Triggers
 
 Evaluated by `check-state.sh` on every UserPromptSubmit. Unlike pattern-based ways, these fire based on session conditions.
@@ -377,6 +393,19 @@ sequenceDiagram
         Note right of CR: Topics feed into next check-prompt.sh
     end
 ```
+
+## Telemetry
+
+Firing activity is logged to `~/.claude/stats/events.jsonl` — one JSON object per line. Beyond the `way_fired`/`way_redisclosed` cadence events that `tune-curves` reads, two signals feed the precision and recall tuning above (ADR-134):
+
+- **`fire_score`** — recorded on `way_fired` events for **first-fires only** (not redisclosures): the embedding score that cleared threshold. It is the raw material for future `embed_threshold` tuning.
+- **`way_nearmiss`** — emitted when a way scored within `near_miss_margin` *below* its effective threshold but did **not** fire. Fields: `score_en`, `score_multi`, `thr_en`, `thr_multi`, `margin`, `trigger`, `query_tokens`. This is a recall signal — it measures the likely false silences a threshold drop would recover.
+
+`near_miss_margin` (default `0.05`) is a config knob, parsed from the ways config YAML alongside `default_embed_threshold` and `default_multi_embed_threshold`.
+
+The near-miss and fire-score streams grow the log faster than fires alone, so its size is **bounded**: `log_event` tail-compacts `events.jsonl` once it exceeds ~32 MiB, keeping the most recent ~24 MiB (cut at a line boundary, written atomically via temp + rename). Compaction is lossy only on the oldest events; readers are unaffected.
+
+ADR-134 ("Empirical auto-tuning from fire and near-miss telemetry") is Accepted. One slice — the gated `embed_threshold` `--apply` — is deferred until the `fire_score` population accumulates enough to validate against, tracked as GitHub issue #123.
 
 ## Macros
 

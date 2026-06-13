@@ -222,6 +222,19 @@ The `/ways-tests crowding` command distinguishes these cases. When it reports tw
 | `/ways-tests lint --all` | Validate all way frontmatter |
 | `ways tune` | Audit locale alias fidelity + discrimination (per-way, across all languages) |
 | `ways tune --way <path>` | Filter the audit to a single way or subtree |
+| `ways tune-curves` | Calibrate firing cadence: suggest `half_life` from observed fire deltas (`--apply` rewrites the `curve:` block) — ADR-123 Phase E |
+| `ways tune-precision` | Heuristic relevance audit: flag ways firing into off-domain sessions (`--min-sessions`, `--flag-threshold`, `--project`, `--way`, `--json`) — ADR-134 Decision 3 |
 | `ways siblings <path>` | Compute vocabulary overlap (Jaccard) between sibling ways |
 
 See the [ways-tests skill](/skills/ways-tests/SKILL.md) for the testing skill and [Locale Alias Audit](../../hooks/ways/meta/knowledge/optimization/tuning/tuning.md) (the `knowledge/optimization/tuning` way) for the `ways tune` workflow in depth.
+
+## Empirical Signals: Tuning From What Actually Fired
+
+The worked example above tunes a way against prompts you write by hand. But once a way ships, the firing engine itself becomes the evidence. [ADR-134](../architecture/system/ADR-134-empirical-auto-tuning-from-fire-and-near-miss-telemetry.md) extends the telemetry in `~/.claude/stats/events.jsonl` so that hand-tuning gets a record to revise from — two new signals, both report-first:
+
+- **Near-misses.** When a way scores within `near_miss_margin` (default 0.05) *below* its effective threshold but doesn't fire, the matcher logs a `way_nearmiss` event (`score_en`, `score_multi`, `thr_en`, `thr_multi`, `margin`, `trigger`, `query_tokens`). These are the false silences the precision-first discipline can't otherwise see — a way that consistently lands just under threshold on prompts whose sessions then do that way's kind of work is a candidate to lower, the recall counterpart to the 0-FP constraint. `near_miss_margin` is parsed from ways config alongside `default_embed_threshold` / `default_multi_embed_threshold`.
+- **Fire scores.** A `way_fired` event now carries `fire_score`: the embedding score that cleared threshold, recorded on first-fires only (not redisclosures). This is the population a future `embed_threshold` tuning draws on.
+
+`ways tune-precision` reads the fire stream and reports, per way, an off-class irrelevance rate — how often its fires landed in sessions whose activity (judged by the parent-family of the ways that co-fired) never touched the way's own domain. It distinguishes **mis-targeted** (a narrow way repeatedly firing into the same wrong kind of session — remedy: raise `embed_threshold`, narrow vocabulary, or change trigger channel) from **cross-cutting** (a way that fires broadly by design, e.g. `meta/tracking` — remedy: scope by trigger, *never* auto-narrow vocabulary). Like `ways tune`'s fidelity audit, these are diagnostic flags, not verdicts.
+
+A practitioner note: `events.jsonl` growth is bounded. `log_event` tail-compacts the file when it exceeds ~32 MiB, retaining the most recent ~24 MiB at a line boundary via atomic temp+rename — lossy on the oldest events, but readers always see a complete file.
