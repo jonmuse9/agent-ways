@@ -303,6 +303,24 @@ enum Commands {
         #[arg(long)]
         way: Option<String>,
     },
+    /// Audit fire relevance — flag ways landing in off-domain sessions (ADR-134 Decision 3)
+    TunePrecision {
+        /// Minimum sessions a way must have fired in before it's flagged
+        #[arg(long, default_value = "5")]
+        min_sessions: usize,
+        /// Off-class rate at or above which a way is flagged (0.0–1.0)
+        #[arg(long, default_value = "0.5")]
+        flag_threshold: f64,
+        /// Filter to events whose project path contains this substring
+        #[arg(long)]
+        project: Option<String>,
+        /// Filter to ways whose id contains this substring
+        #[arg(long)]
+        way: Option<String>,
+        /// Machine-readable JSON output
+        #[arg(long)]
+        json: bool,
+    },
     /// Permission audit — diff requires: fields against settings.json grants (ADR-116)
     Permissions {
         #[command(subcommand)]
@@ -627,6 +645,9 @@ fn main() -> Result<()> {
         }
         Commands::TuneCurves { apply, min_fires, project, way } => {
             cmd::tune_curves::run(apply, min_fires, project, way)
+        }
+        Commands::TunePrecision { min_sessions, flag_threshold, project, way, json } => {
+            cmd::tune_precision::run(min_sessions, flag_threshold, project, way, json)
         }
         Commands::Reset { session, all, confirm } => {
             cmd::reset::run(session.as_deref(), all, confirm)
