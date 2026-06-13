@@ -29,7 +29,7 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-106](./system/ADR-106-project-pulse-epoch-mapped-project-awareness.md) | Project Pulse — Epoch-Mapped Project Awareness | Accepted |
 | [ADR-107](./system/ADR-107-way-match-corpus-batch-mode-and-locale-support.md) | Corpus, Matching Pipeline, and Locale Support | Accepted |
 | [ADR-108](./system/ADR-108-embedding-based-way-matching-with-all-minilm-l6-v2.md) | Embedding-Based Way Matching with all-MiniLM-L6-v2 | Accepted |
-| [ADR-109](./system/ADR-109-project-scope-way-embedding-with-manifest-based-staleness-detection.md) | Project-Scope Way Embedding with Manifest-Based Staleness Detection | Draft |
+| [ADR-109](./system/ADR-109-project-scope-way-embedding-with-manifest-based-staleness-detection.md) | Project-Scope Way Embedding with Manifest-Based Staleness Detection | Accepted |
 | [ADR-110](./system/ADR-110-way-file-separation-and-graph-compatible-structure.md) | Way File Separation and Graph-Compatible Structure | Draft |
 | [ADR-111](./system/ADR-111-unified-ways-cli-single-binary-tool-consolidation.md) | Unified `ways` CLI — Single Binary Tool Consolidation | Accepted |
 | [ADR-112](./system/ADR-112-session-ledger-and-knowledge-graph-integration.md) | Session Ledger with Optional Knowledge Graph Enhancement | Draft |
@@ -54,7 +54,7 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-131](./system/ADR-131-project-scope-way-toggles.md) | Project-scope way toggles | Draft |
 | [ADR-132](./system/ADR-132-collaboration-ways-domain.md) | Collaboration ways domain | Accepted |
 | [ADR-133](./system/ADR-133-plugin-way-discovery.md) | Plugin Way Discovery | Proposed |
-| [ADR-134](./system/ADR-134-empirical-auto-tuning-from-fire-and-near-miss-telemetry.md) | Empirical auto-tuning from fire and near-miss telemetry | Draft |
+| [ADR-134](./system/ADR-134-empirical-auto-tuning-from-fire-and-near-miss-telemetry.md) | Empirical auto-tuning from fire and near-miss telemetry | Accepted |
 | [ADR-135](./system/ADR-135-content-aware-write-time-over-build-gate-with-a-self-extending-pattern-corpus.md) | Content-aware write-time over-build gate with a self-extending pattern corpus | Accepted |
 
 ## Documentation
