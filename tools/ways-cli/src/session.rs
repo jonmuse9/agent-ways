@@ -413,6 +413,16 @@ pub fn append_metric(session_id: &str, metric: &serde_json::Value) {
 
 // ── Event logging ───────────────────────────────────────────────
 
+/// Size at which the event log is compacted (ADR-134 task E). The near-miss and
+/// fire-score streams (tasks A/D) grow `events.jsonl` faster than fires alone,
+/// so it needs a ceiling. ~32 MiB ≈ 125k events at the observed ~260 bytes/line
+/// — over a year of history at current rates.
+const MAX_EVENTS_BYTES: u64 = 32 * 1024 * 1024;
+/// Target size kept after compaction (the most recent bytes). The gap to
+/// MAX provides hysteresis: ~8 MiB (~30k events) of new logging between
+/// compactions, so the rewrite is rare, not per-append.
+const KEEP_EVENTS_BYTES: u64 = 24 * 1024 * 1024;
+
 /// Log an event to ~/.claude/stats/events.jsonl.
 pub fn log_event(fields: &[(&str, &str)]) {
     let stats_dir = home_dir().join(".claude/stats");
@@ -436,6 +446,38 @@ pub fn log_event(fields: &[(&str, &str)]) {
                 writeln!(f, "{}", line)
             });
     }
+
+    // Amortized cap: only when the log crosses MAX do we rewrite it to the most
+    // recent KEEP bytes. A single stat() per append; the O(n) rewrite happens
+    // once per ~8 MiB of growth. Readers are unaffected — they always see a
+    // valid (smaller) events.jsonl; the atomic rename rules out torn reads.
+    if let Ok(meta) = std::fs::metadata(&events_file) {
+        if meta.len() > MAX_EVENTS_BYTES {
+            let _ = compact_log_tail(&events_file, KEEP_EVENTS_BYTES);
+        }
+    }
+}
+
+/// Rewrite `path` in place to retain only its most recent `keep_bytes`, cut at a
+/// line boundary so the first retained line is whole. Atomic via temp + rename
+/// in the same directory. Oldest events are dropped — telemetry tuning cares
+/// about recent behavior, and the cap is sized for a year-plus of history.
+fn compact_log_tail(path: &std::path::Path, keep_bytes: u64) -> std::io::Result<()> {
+    let data = std::fs::read(path)?;
+    let keep = keep_bytes as usize;
+    if data.len() <= keep {
+        return Ok(());
+    }
+    // Start `keep` bytes from the end, then advance past the next newline so we
+    // never retain a partial leading line.
+    let cut = data.len() - keep;
+    let start = match data[cut..].iter().position(|&b| b == b'\n') {
+        Some(off) => cut + off + 1,
+        None => data.len(), // single huge line / no boundary: drop it all
+    };
+    let tmp = path.with_extension("jsonl.compact.tmp");
+    std::fs::write(&tmp, &data[start..])?;
+    std::fs::rename(&tmp, path)
 }
 
 /// UTC timestamp without chrono dependency.
@@ -678,3 +720,50 @@ use crate::util::home_dir;
 // load_engagement_for_tick, FirstFire → ReFire → Suppressed) live in
 // `session::engagement`'s own test module — they moved with the code
 // they cover (issue #52).
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+
+    #[test]
+    fn compact_log_tail_keeps_recent_whole_lines() {
+        // A unique temp path (process id; no clock/random in this crate's tests).
+        let path = std::env::temp_dir().join(format!("ways-evt-{}.jsonl", std::process::id()));
+        // 1000 numbered JSON lines (~20 bytes each → ~20 KB).
+        let mut content = String::new();
+        for i in 0..1000 {
+            content.push_str(&format!("{{\"n\":{i}}}\n"));
+        }
+        std::fs::write(&path, &content).unwrap();
+        let before = std::fs::metadata(&path).unwrap().len();
+
+        // Keep ~2 KB → far below the file size, so it must compact.
+        compact_log_tail(&path, 2000).unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        let after_len = after.len() as u64;
+        assert!(after_len < before, "file should shrink");
+        assert!(after_len <= 2000 + 32, "retained ~keep_bytes (+ one boundary line)");
+
+        let lines: Vec<&str> = after.lines().collect();
+        // Every retained line is whole, parseable JSON (no partial leading line).
+        for l in &lines {
+            serde_json::from_str::<serde_json::Value>(l).expect("retained line is valid JSON");
+        }
+        // The most recent line is preserved; the oldest are dropped.
+        assert_eq!(*lines.last().unwrap(), "{\"n\":999}");
+        assert!(!after.contains("{\"n\":0}"), "oldest events dropped");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compact_log_tail_noop_when_under_keep() {
+        let path = std::env::temp_dir().join(format!("ways-evt-small-{}.jsonl", std::process::id()));
+        let content = "{\"n\":1}\n{\"n\":2}\n";
+        std::fs::write(&path, content).unwrap();
+        compact_log_tail(&path, 1024 * 1024).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        let _ = std::fs::remove_file(&path);
+    }
+}
