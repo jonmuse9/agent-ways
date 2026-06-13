@@ -160,8 +160,10 @@ fn load_fires(path: &Path, project_filter: Option<&str>) -> Result<Vec<Fire>> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        // Only first-in-session fires define where a way "landed." Redisclosures
-        // are cadence signal (tune-curves), not placement signal.
+        // Load only `way_fired` events and dedup per (session, way) downstream;
+        // `way_redisclosed` is a separate event type (cadence signal, tune-curves)
+        // and never reaches here. So each (session, way) lands once — placement,
+        // not cadence.
         if row.get("event").and_then(|v| v.as_str()) != Some("way_fired") {
             continue;
         }
@@ -313,7 +315,9 @@ fn compute_precision(
         let top_off_trigger = acc
             .off_triggers
             .iter()
-            .max_by_key(|(_, &c)| c)
+            // Explicit (count, name) tiebreak so determinism doesn't silently
+            // depend on the map's iteration order (mirrors dominant_family).
+            .max_by_key(|(t, &c)| (c, (*t).clone()))
             .map(|(t, _)| t.clone())
             .unwrap_or_else(|| "-".to_string());
 
@@ -516,5 +520,55 @@ mod tests {
         let r = compute_precision(&fires, 5, 0.5, None);
         let mig = &r[0];
         assert!(matches!(mig.flag, Flag::LowN));
+    }
+
+    /// A probe way rides off-class into `n_themes` distinctly-themed sessions
+    /// (each dominated by 6 filler ways in its own family), so spread == n_themes.
+    fn probe_into_themes(probe: &str, n_themes: usize) -> Vec<Fire> {
+        let mut fires = Vec::new();
+        for i in 0..n_themes {
+            let sid = format!("t{i}");
+            fires.extend(filler(&format!("dom{i}/area"), 6, &sid));
+            fires.push(fire(probe, &sid, "prompt"));
+        }
+        fires
+    }
+
+    #[test]
+    fn spread_boundary_gates_cross_cutting() {
+        // This boundary gates the no-auto-apply path: at/above CROSSCUT_SPREAD a
+        // way is cross-cutting (vocab-narrowing suppressed); below it is
+        // mis-targeted. Pin both sides against off-by-one drift.
+        let below = compute_precision(&probe_into_themes("probe/way", CROSSCUT_SPREAD - 1), 1, 0.5, None);
+        let b = below.iter().find(|w| w.way == "probe/way").unwrap();
+        assert_eq!(b.spread, CROSSCUT_SPREAD - 1);
+        assert!(matches!(b.flag, Flag::MisTargeted));
+
+        let at = compute_precision(&probe_into_themes("probe/way", CROSSCUT_SPREAD), 1, 0.5, None);
+        let a = at.iter().find(|w| w.way == "probe/way").unwrap();
+        assert_eq!(a.spread, CROSSCUT_SPREAD);
+        assert!(matches!(a.flag, Flag::CrossCutting));
+    }
+
+    #[test]
+    fn dominant_family_tiebreak_is_deterministic() {
+        // Two equal-count families must resolve to the lexicographically-max
+        // name regardless of map order — the determinism fix this test locks in.
+        let p = SessionProfile {
+            family_counts: HashMap::from([("a/x".to_string(), 2), ("b/x".to_string(), 2)]),
+            total: 4,
+        };
+        assert_eq!(p.dominant_family().as_deref(), Some("b/x"));
+    }
+
+    #[test]
+    fn sole_fire_in_every_session_is_never_flagged() {
+        // The load-bearing conservative property: a way that is the only fire in
+        // each session is 100%-share → always on-class → never flagged.
+        let fires: Vec<Fire> = (0..6).map(|s| fire("lonely/way", &format!("s{s}"), "prompt")).collect();
+        let r = compute_precision(&fires, 5, 0.5, None);
+        let w = r.iter().find(|w| w.way == "lonely/way").unwrap();
+        assert_eq!(w.off_class, 0);
+        assert!(matches!(w.flag, Flag::Ok));
     }
 }
