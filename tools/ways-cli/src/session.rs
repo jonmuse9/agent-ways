@@ -413,6 +413,16 @@ pub fn append_metric(session_id: &str, metric: &serde_json::Value) {
 
 // ── Event logging ───────────────────────────────────────────────
 
+/// Size at which the event log is compacted (ADR-134 task E). The near-miss and
+/// fire-score streams (tasks A/D) grow `events.jsonl` faster than fires alone,
+/// so it needs a ceiling. ~32 MiB ≈ 125k events at the observed ~260 bytes/line
+/// — over a year of history at current rates.
+const MAX_EVENTS_BYTES: u64 = 32 * 1024 * 1024;
+/// Target size kept after compaction (the most recent bytes). The gap to
+/// MAX provides hysteresis: ~8 MiB (~30k events) of new logging between
+/// compactions, so the rewrite is rare, not per-append.
+const KEEP_EVENTS_BYTES: u64 = 24 * 1024 * 1024;
+
 /// Log an event to ~/.claude/stats/events.jsonl.
 pub fn log_event(fields: &[(&str, &str)]) {
     let stats_dir = home_dir().join(".claude/stats");
@@ -436,6 +446,64 @@ pub fn log_event(fields: &[(&str, &str)]) {
                 writeln!(f, "{}", line)
             });
     }
+
+    // Amortized cap: only when the log crosses MAX do we rewrite it to the most
+    // recent KEEP bytes. A single stat() per append; the O(n) rewrite happens
+    // once per ~8 MiB of growth. Readers always see a complete file: a reader
+    // that opened the pre-compaction inode keeps reading it intact (the rename
+    // is atomic and unlinks the old name only after), and each compaction
+    // publishes a whole file via its own private temp. Concurrent compactions
+    // from parallel `ways` processes are last-writer-wins — that drops a bounded
+    // window of events, acceptable for a telemetry log, but never tears a line.
+    if let Ok(meta) = std::fs::metadata(&events_file) {
+        if meta.len() > MAX_EVENTS_BYTES {
+            let _ = compact_log_tail(&events_file, KEEP_EVENTS_BYTES);
+        }
+    }
+}
+
+/// Monotonic suffix so repeated compactions in one process never collide on the
+/// temp name (paired with the pid for cross-process uniqueness).
+static COMPACT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Rewrite `path` in place to retain only its most recent `keep_bytes`, cut at a
+/// line boundary so the first retained line is whole. The new contents are
+/// written to a per-process, per-attempt temp, synced, then atomically renamed
+/// over `path` — so a published `events.jsonl` is always a complete file even
+/// under concurrent compaction (last rename wins; a bounded window of events may
+/// be lost, but no line is ever torn). Oldest events are dropped — telemetry
+/// tuning cares about recent behavior, and the cap holds a year-plus of history.
+/// On any failure the original file is left intact and the temp is removed.
+fn compact_log_tail(path: &std::path::Path, keep_bytes: u64) -> std::io::Result<()> {
+    let data = std::fs::read(path)?;
+    let keep = keep_bytes as usize;
+    if data.len() <= keep {
+        return Ok(());
+    }
+    // Start `keep` bytes from the end, then advance past the next newline so we
+    // never retain a partial leading line.
+    let cut = data.len() - keep;
+    let start = match data[cut..].iter().position(|&b| b == b'\n') {
+        Some(off) => cut + off + 1,
+        None => data.len(), // single huge line / no boundary: drop it all
+    };
+
+    // Unique temp: pid (cross-process) + sequence (intra-process) so two
+    // concurrent compactions never write the same file and publish a torn tail.
+    let seq = COMPACT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("jsonl.compact.{}.{seq}.tmp", std::process::id()));
+    let write_then_rename = || -> std::io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(&data[start..])?;
+        f.sync_all()?; // durable before publish — no zero/partial file on crash
+        std::fs::rename(&tmp, path)
+    };
+    let res = write_then_rename();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp); // never leave a stray temp behind
+    }
+    res
 }
 
 /// UTC timestamp without chrono dependency.
@@ -678,3 +746,79 @@ use crate::util::home_dir;
 // load_engagement_for_tick, FirstFire → ReFire → Suppressed) live in
 // `session::engagement`'s own test module — they moved with the code
 // they cover (issue #52).
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+
+    #[test]
+    fn compact_log_tail_keeps_recent_whole_lines() {
+        // A unique temp path (process id; no clock/random in this crate's tests).
+        let path = std::env::temp_dir().join(format!("ways-evt-{}.jsonl", std::process::id()));
+        // 1000 numbered JSON lines (~20 bytes each → ~20 KB).
+        let mut content = String::new();
+        for i in 0..1000 {
+            content.push_str(&format!("{{\"n\":{i}}}\n"));
+        }
+        std::fs::write(&path, &content).unwrap();
+        let before = std::fs::metadata(&path).unwrap().len();
+
+        // Keep ~2 KB → far below the file size, so it must compact.
+        compact_log_tail(&path, 2000).unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        let after_len = after.len() as u64;
+        assert!(after_len < before, "file should shrink");
+        assert!(after_len <= 2000 + 32, "retained ~keep_bytes (+ one boundary line)");
+
+        let lines: Vec<&str> = after.lines().collect();
+        // Every retained line is whole, parseable JSON (no partial leading line).
+        for l in &lines {
+            serde_json::from_str::<serde_json::Value>(l).expect("retained line is valid JSON");
+        }
+        // The most recent line is preserved; the oldest are dropped.
+        assert_eq!(*lines.last().unwrap(), "{\"n\":999}");
+        assert!(!after.contains("{\"n\":0}"), "oldest events dropped");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compact_log_tail_noop_when_under_keep() {
+        let path = std::env::temp_dir().join(format!("ways-evt-small-{}.jsonl", std::process::id()));
+        let content = "{\"n\":1}\n{\"n\":2}\n";
+        std::fs::write(&path, content).unwrap();
+        compact_log_tail(&path, 1024 * 1024).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compact_log_tail_drops_oversized_unbroken_blob() {
+        // A single line larger than keep_bytes with no newline has no boundary
+        // to cut at — the intended behavior is to drop it (it is already corrupt
+        // for a line-oriented log), leaving an empty file rather than a partial.
+        let path = std::env::temp_dir().join(format!("ways-evt-blob-{}.jsonl", std::process::id()));
+        std::fs::write(&path, "x".repeat(5000)).unwrap();
+        compact_log_tail(&path, 1000).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compact_log_tail_is_idempotent() {
+        // After one compaction the file is under keep, so a second is a no-op.
+        let path = std::env::temp_dir().join(format!("ways-evt-idem-{}.jsonl", std::process::id()));
+        let mut content = String::new();
+        for i in 0..500 {
+            content.push_str(&format!("{{\"n\":{i}}}\n"));
+        }
+        std::fs::write(&path, &content).unwrap();
+        compact_log_tail(&path, 1500).unwrap();
+        let once = std::fs::read_to_string(&path).unwrap();
+        compact_log_tail(&path, 1500).unwrap();
+        let twice = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(once, twice, "second compaction is a no-op");
+        let _ = std::fs::remove_file(&path);
+    }
+}
