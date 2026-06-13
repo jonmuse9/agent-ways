@@ -26,3 +26,4 @@ pub mod template;
 pub mod tree;
 pub mod tune;
 pub mod tune_curves;
+pub mod tune_precision;
