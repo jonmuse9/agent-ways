@@ -7,8 +7,10 @@ You can't manage what you can't see. The ways system logs every firing event and
 Every time a way fires, `log-event.sh` appends a line to `~/.claude/stats/events.jsonl`:
 
 ```json
-{"ts":"2026-02-05T19:00:34Z","event":"way_fired","way":"softwaredev/delivery/commits","domain":"softwaredev","trigger":"bash","scope":"agent","project":"/home/you/myproject","session":"abc-123"}
+{"ts":"2026-02-05T19:00:34Z","event":"way_fired","way":"softwaredev/delivery/commits","domain":"softwaredev","trigger":"semantic:embedding:en","scope":"agent","project":"/home/you/myproject","session":"abc-123","fire_score":"0.4812"}
 ```
+
+The `fire_score` field is the embedding score that cleared threshold. It's recorded on first-fires only (not redisclosures), so the auto-tuning passes (ADR-134) can later learn where `embed_threshold` should sit.
 
 Session start events are also logged. For teammates, the team name is included:
 
@@ -16,7 +18,15 @@ Session start events are also logged. For teammates, the team name is included:
 {"ts":"2026-02-05T19:01:12Z","event":"way_fired","way":"collaboration/teams","domain":"collaboration","trigger":"state","scope":"teammate","project":"/home/you/myproject","session":"def-456","team":"my-refactor-team"}
 ```
 
-The log is append-only JSONL. Each line is self-contained. Nothing reads this file during normal operation — it's purely for after-the-fact analysis.
+A way that *almost* fired is logged too. When a way's score lands within `near_miss_margin` below its effective threshold but doesn't clear it, a `way_nearmiss` event records the silence:
+
+```json
+{"ts":"2026-02-05T19:02:08Z","event":"way_nearmiss","way":"softwaredev/architecture/design","corpus_id":"...","domain":"softwaredev","score_en":"0.3791","score_multi":"","thr_en":"0.4000","thr_multi":"0.5500","margin":"0.0209","trigger":"prompt","scope":"agent","project":"/home/you/myproject","session":"abc-123","query_tokens":"42"}
+```
+
+These are a recall signal — they measure the likely false silences (ADR-134 Decision 1). `score_en`/`score_multi` are the per-model scores, `thr_en`/`thr_multi` the per-model thresholds, `margin` how far under the bar the best model landed, and `query_tokens` the size of the prompt that nearly matched. An empty score field means that model didn't score.
+
+The log is JSONL — each line is self-contained, and nothing reads the file during normal operation; it's purely for after-the-fact analysis. Growth is bounded: when `events.jsonl` exceeds ~32 MiB, `log_event` tail-compacts it down to the most recent ~24 MiB (cut at a line boundary, written to a temp file and atomically renamed). This is lossy on the oldest events but leaves readers untouched.
 
 ## Reading the Stats
 
@@ -115,15 +125,33 @@ The `--json` flag returns structured data for tooling:
 
 ## What the Stats Don't Tell You
 
-The stats show *what fired*, not *whether it helped*. A way that fires 96 times isn't necessarily 96 times useful — it might be triggering too broadly. A way that never fires isn't necessarily broken — it might be waiting for a workflow you haven't hit yet.
+The stats show *what fired*, not *whether it helped*. A way that fires 96 times isn't necessarily 96 times useful — it might be triggering too broadly. A way that never fires isn't necessarily broken — it might be waiting for a workflow you haven't hit yet. `stats.sh` reports the counts; the `fire_score` and `way_nearmiss` telemetry it doesn't summarize feeds the audit commands below, which is where the precision and recall questions get answered.
 
 Use the stats to spot patterns: ways that fire too often (noisy triggers), ways that never fire (dead patterns or disabled domains), scopes that are unexpectedly empty (scope gating too aggressive), and teams that generate unusual activity (worth investigating what they were doing).
+
+## Auditing the Telemetry
+
+Two report-only commands read the event log and turn it back on the ways that produced it (ADR-134). Both write nothing — they surface a heuristic flag, not a verdict.
+
+`ways tune-precision` is a relevance audit. For each way it estimates how often its fires landed *off-class* — in sessions whose actual activity (judged by the parent-family of the ways that co-fired) never touched the way's own domain — and reports an irrelevance rate. It separates two failure modes that look identical to a naive counter: **mis-targeted** (a narrow way repeatedly firing into the same wrong kind of session — remedy: raise `embed_threshold`, narrow vocabulary, or change the trigger channel) versus **cross-cutting** (a way that fires broadly by design, like `meta/tracking` — remedy: scope by trigger, and *never* auto-narrow its vocabulary). Flags: `--min-sessions` (default 5), `--flag-threshold` (default 0.5), `--project`, `--way`, `--json`.
+
+```bash
+ways tune-precision
+```
+
+`ways tune-curves` is the cadence companion (ADR-123 Phase E). It groups `way_fired`/`way_redisclosed` by `(way, session)`, computes the token-position deltas between firings, and suggests a `half_life` near the median delta. With `--apply` it rewrites each way's `curve:` block in place; without it, the run is a dry report. Flags: `--apply`, `--min-fires` (default 3), `--project`, `--way`.
+
+```bash
+ways tune-curves
+```
+
+The width of the near-miss band these tools consume is set by the `near_miss_margin` config knob (default 0.05), parsed from the ways config YAML alongside `default_embed_threshold` and `default_multi_embed_threshold`. It's purely a logging knob — it never changes which ways fire, only how far below threshold a silence has to land before it's worth recording.
 
 ## Where the Data Lives
 
 | File | Purpose |
 |------|---------|
-| `~/.claude/stats/events.jsonl` | Append-only event log |
+| `~/.claude/stats/events.jsonl` | Event log (tail-compacted at ~32 MiB to ~24 MiB) |
 | `/tmp/.claude-config-update-state-{uid}` | Update check cache (hourly) |
 | `{SESSIONS_ROOT}/{session}/ways/{way_path}/.marker` | Way firing markers (per-session) |
 | `{SESSIONS_ROOT}/{session}/teammate` | Teammate scope marker (contains team name) |
