@@ -161,8 +161,14 @@ pub fn way_scored(
         ("token_position", token_pos.to_string()),
     ];
     // ADR-134 task D: the embedding score that fired this way, for deriving a
-    // principled embed_threshold from observed fires. Only on semantic fires.
-    if let Some(score) = fire_score {
+    // principled embed_threshold from observed fires. Recorded only on a
+    // first-fire (way_fired), never a redisclosure: threshold tuning is about
+    // what score gates a way's *entry* to a session, and a redisclosure's score
+    // reflects the re-triggering prompt — a different population that would bias
+    // the derivation. (Redisclosure dynamics are cadence signal: tune-curves.)
+    // This also aligns with how tune-precision reads placement (way_fired only)
+    // and makes the field self-documenting: its presence marks a placement event.
+    if let (false, Some(score)) = (is_redisclosure, fire_score) {
         log_fields.push(("fire_score", format!("{score:.4}")));
     }
     if let Some(ref p) = parent_id {

@@ -664,6 +664,14 @@ mod near_miss_tests {
             PromptMatch::Fired { score, .. } => assert_eq!(score, Some(0.41)),
             _ => panic!("expected Fired"),
         }
+        // multi fire (EN below) carries the multi score, not EN's.
+        match run(Some(0.20), Some(0.56), None) {
+            PromptMatch::Fired { channel, score } => {
+                assert_eq!(channel, "semantic:embedding:multi");
+                assert_eq!(score, Some(0.56));
+            }
+            _ => panic!("expected multi Fired"),
+        }
         match run(Some(0.41), None, Some("query")) {
             PromptMatch::Fired { channel, score } => {
                 assert_eq!(channel, "keyword");
