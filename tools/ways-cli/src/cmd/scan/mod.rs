@@ -105,8 +105,8 @@ pub fn prompt(query: &str, session_id: &str, project: Option<&str>) -> Result<()
             &embed_matches,
             near_miss_margin,
         ) {
-            PromptMatch::Fired(trigger) => {
-                let out = capture_show_way(&way.id, session_id, &trigger);
+            PromptMatch::Fired { channel, score } => {
+                let out = capture_show_way(&way.id, session_id, &channel, score);
                 if !out.is_empty() {
                     context.push_str(&out);
                     context.push_str("\n\n");
@@ -180,7 +180,7 @@ pub fn task(
             &embed_matches,
             near_miss_margin,
         ) {
-            PromptMatch::Fired(trigger) => matched.push((way.id.clone(), trigger)),
+            PromptMatch::Fired { channel, .. } => matched.push((way.id.clone(), channel)),
             PromptMatch::NearMiss(nm) => {
                 log_near_miss(way, &nm, "task", task_scope, &project_dir, session_id, query);
             }
@@ -263,7 +263,7 @@ pub fn command(
         }
 
         if matched {
-            let out = capture_show_way(&way.id, session_id, "bash");
+            let out = capture_show_way(&way.id, session_id, "bash", None);
             if !out.is_empty() {
                 context.push_str(&out);
             }
@@ -349,7 +349,7 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
 
         if let Some(ref files_pattern) = way.files {
             if regex_matches(files_pattern, filepath) {
-                let out = capture_show_way(&way.id, session_id, "file");
+                let out = capture_show_way(&way.id, session_id, "file", None);
                 if !out.is_empty() {
                     context.push_str(&out);
                 }
@@ -408,8 +408,10 @@ pub fn file(filepath: &str, session_id: &str, project: Option<&str>) -> Result<(
 
 /// Outcome of matching a prompt against one way.
 enum PromptMatch {
-    /// The way fired; the payload is the trigger channel.
-    Fired(String),
+    /// The way fired. `channel` is the trigger channel; `score` is the
+    /// embedding score that cleared threshold (`None` for deterministic keyword
+    /// fires) — logged onto `way_fired` for embed_threshold tuning (ADR-134 D).
+    Fired { channel: String, score: Option<f64> },
     /// The way did NOT fire, but at least one model scored within
     /// `near_miss_margin` below its effective threshold (ADR-134). Carries the
     /// already-computed scores for telemetry — no new embedding is done.
@@ -441,7 +443,7 @@ fn match_prompt(
     // never a near-miss (there is no margin to be near).
     if let Some(ref pat) = pattern {
         if regex_matches(pat, query) {
-            return PromptMatch::Fired("keyword".to_string());
+            return PromptMatch::Fired { channel: "keyword".to_string(), score: None };
         }
     }
 
@@ -455,10 +457,10 @@ fn match_prompt(
     let score_multi = scores.best_multi(corpus_id);
 
     if score_en.is_some_and(|s| s >= thresholds.en) {
-        return PromptMatch::Fired("semantic:embedding:en".to_string());
+        return PromptMatch::Fired { channel: "semantic:embedding:en".to_string(), score: score_en };
     }
     if score_multi.is_some_and(|s| s >= thresholds.multi) {
-        return PromptMatch::Fired("semantic:embedding:multi".to_string());
+        return PromptMatch::Fired { channel: "semantic:embedding:multi".to_string(), score: score_multi };
     }
 
     // No fire. Record a near-miss when a model landed in the band just below
@@ -651,13 +653,30 @@ mod near_miss_tests {
     #[test]
     fn en_clears_fires_en() {
         assert!(matches!(run(Some(0.41), None, None),
-            PromptMatch::Fired(c) if c == "semantic:embedding:en"));
+            PromptMatch::Fired { channel: c, .. } if c == "semantic:embedding:en"));
+    }
+
+    #[test]
+    fn semantic_fire_carries_its_score_keyword_does_not() {
+        // ADR-134 D: the firing embedding score rides on Fired for telemetry;
+        // a deterministic keyword fire carries none.
+        match run(Some(0.41), None, None) {
+            PromptMatch::Fired { score, .. } => assert_eq!(score, Some(0.41)),
+            _ => panic!("expected Fired"),
+        }
+        match run(Some(0.41), None, Some("query")) {
+            PromptMatch::Fired { channel, score } => {
+                assert_eq!(channel, "keyword");
+                assert_eq!(score, None);
+            }
+            _ => panic!("expected keyword Fired"),
+        }
     }
 
     #[test]
     fn multi_clears_when_en_below_fires_multi() {
         assert!(matches!(run(Some(0.20), Some(0.56), None),
-            PromptMatch::Fired(c) if c == "semantic:embedding:multi"));
+            PromptMatch::Fired { channel: c, .. } if c == "semantic:embedding:multi"));
     }
 
     #[test]
@@ -690,7 +709,7 @@ mod near_miss_tests {
     fn pattern_match_preempts_near_miss() {
         // Scores would be a near-miss, but a keyword hit is a deterministic fire.
         assert!(matches!(run(Some(0.37), None, Some("query")),
-            PromptMatch::Fired(c) if c == "keyword"));
+            PromptMatch::Fired { channel: c, .. } if c == "keyword"));
     }
 
     #[test]
@@ -704,12 +723,12 @@ mod near_miss_tests {
         // guard must agree: a score equal to the threshold fires, it is never
         // a (zero-shortfall) near-miss.
         assert!(matches!(run(Some(0.40), None, None),
-            PromptMatch::Fired(c) if c == "semantic:embedding:en"));
+            PromptMatch::Fired { channel: c, .. } if c == "semantic:embedding:en"));
     }
 
     fn discriminant(m: &PromptMatch) -> &'static str {
         match m {
-            PromptMatch::Fired(_) => "Fired",
+            PromptMatch::Fired { .. } => "Fired",
             PromptMatch::NearMiss(_) => "NearMiss",
             PromptMatch::NoMatch => "NoMatch",
         }

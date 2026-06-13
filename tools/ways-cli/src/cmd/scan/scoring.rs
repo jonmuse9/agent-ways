@@ -156,8 +156,13 @@ fn xdg_cache_dir() -> std::path::PathBuf {
 
 // ── In-process show capture ───────────────────────────────────
 
-pub(crate) fn capture_show_way(id: &str, session_id: &str, trigger: &str) -> String {
-    crate::cmd::show::way(id, session_id, trigger).unwrap_or_default()
+pub(crate) fn capture_show_way(
+    id: &str,
+    session_id: &str,
+    trigger: &str,
+    fire_score: Option<f64>,
+) -> String {
+    crate::cmd::show::way_scored(id, session_id, trigger, fire_score).unwrap_or_default()
 }
 
 pub(crate) fn capture_show_check(id: &str, session_id: &str, trigger: &str, score: f64) -> String {

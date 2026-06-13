@@ -16,6 +16,20 @@ use metrics::{compute_tree_metrics, count_siblings, git_version, dirty_status_te
 // ── ways show way ───────────────────────────────────────────────
 
 pub fn way(id: &str, session_id: &str, trigger: &str) -> Result<String> {
+    way_scored(id, session_id, trigger, None)
+}
+
+/// Like [`way`], but records the embedding score that caused a semantic fire
+/// onto the `way_fired` event (ADR-134 task D telemetry). `fire_score` is
+/// `Some` only for embedding-channel fires from the in-process scan path;
+/// keyword/state/CLI fires pass `None` and log no score (they have none). The
+/// firing model is already implicit in `trigger` (`semantic:embedding:en|multi`).
+pub fn way_scored(
+    id: &str,
+    session_id: &str,
+    trigger: &str,
+    fire_score: Option<f64>,
+) -> Result<String> {
     let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
         .unwrap_or_else(|_| std::env::var("PWD").unwrap_or_else(|_| ".".to_string()));
 
@@ -146,6 +160,11 @@ pub fn way(id: &str, session_id: &str, trigger: &str) -> Result<String> {
         ("session", session_id.to_string()),
         ("token_position", token_pos.to_string()),
     ];
+    // ADR-134 task D: the embedding score that fired this way, for deriving a
+    // principled embed_threshold from observed fires. Only on semantic fires.
+    if let Some(score) = fire_score {
+        log_fields.push(("fire_score", format!("{score:.4}")));
+    }
     if let Some(ref p) = parent_id {
         log_fields.push(("parent", p.clone()));
         log_fields.push(("tree_depth", tree_depth.to_string()));
