@@ -109,6 +109,8 @@ hooks/ways/.obsidian/
 !scripts/hook-fire-detector.sh
 !scripts/signal-report.py
 !scripts/audit-permissions.sh
+!scripts/sync-to-home.sh
+!scripts/quote-hook-paths.jq
 !docs/signal-analysis/
 !docs/signal-analysis/*.md
 !docs/signal-analysis/*.png
