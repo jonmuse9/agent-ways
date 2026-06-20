@@ -1,7 +1,6 @@
 ---
 description: migrating to ADR tooling, adopting ADRs, converting existing decisions, setting up adr.yaml, bootstrapping architecture records
 vocabulary: migrate adopt convert bootstrap setup greenfield legacy rename renumber frontmatter yaml scaffold import consolidate
-macro: prepend
 scope: agent, subagent
 refire: 0.15
 ---
