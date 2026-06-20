@@ -125,7 +125,7 @@ ways tune --audit --audit-threshold 0.20
 The audit shows **confusers** — which ways the ambiguous entry is being confused with:
 
 ```
-softwaredev/docs/mermaid
+documentation/mermaid
   ar — gap 0.07  (self 1.00, noise 0.93)  confused with: softwaredev/visualization/diagrams (0.93)
 ```
 

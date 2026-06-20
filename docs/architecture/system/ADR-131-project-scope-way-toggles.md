@@ -14,7 +14,7 @@ related:
 
 ## Context
 
-Ways fire across every project the user opens, but not every way is wanted in every project. A research-heavy repo doesn't need `itops/incident`; a personal scratch project doesn't want `softwaredev/architecture/adr` nagging. Today the only enable/disable knob is `disabled_domains` in user-scope `~/.claude/ways.json` — coarse (domain-level) and global (applies everywhere). The result:
+Ways fire across every project the user opens, but not every way is wanted in every project. A research-heavy repo doesn't need `itops/incident`; a personal scratch project doesn't want `documentation/adr` nagging. Today the only enable/disable knob is `disabled_domains` in user-scope `~/.claude/ways.json` — coarse (domain-level) and global (applies everywhere). The result:
 
 - Authors keep ways generic so they don't annoy users in unrelated projects, which weakens the matchers.
 - Users tolerate noise rather than disabling a domain globally, because disabling globally would also kill the way in the one project where it *is* wanted.

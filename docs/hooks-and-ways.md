@@ -417,7 +417,7 @@ macro: append    # macro output after static content
 ```
 
 Macros generate dynamic content. Examples:
-- `softwaredev/architecture/adr/macro.sh` - Tri-state detection: no tooling, tooling available, tooling installed
+- `documentation/adr/macro.sh` - Tri-state detection: no tooling, tooling available, tooling installed
 - `softwaredev/code/quality/macro.sh` - Scans for long files in the project, outputs priority list
 - `softwaredev/delivery/github/macro.sh` - Detects solo vs team project, adjusts PR guidance
 

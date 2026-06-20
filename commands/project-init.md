@@ -25,7 +25,7 @@ Mark each task `in_progress` as you start it, `completed` when done. This is you
 
 **Read these docs first** — you need the full landscape before your first question:
 
-1. Read `~/.claude/hooks/ways/softwaredev/architecture/adr/migration/migration.md` — understand the five starting states (greenfield, flat directory, inline metadata, scattered, different tool) and migration strategies
+1. Read `~/.claude/hooks/ways/documentation/adr/migration/migration.md` — understand the five starting states (greenfield, flat directory, inline metadata, scattered, different tool) and migration strategies
 2. Read `~/.claude/hooks/ways/softwaredev/delivery/github/github.md` — understand PR-always stance, repo health expectations
 3. Read `~/.claude/hooks/ways/softwaredev/docs/docs.md` — understand documentation scaling by project complexity
 
@@ -309,16 +309,17 @@ These are `subagent_type` values for the `Task` tool:
 
 ### ADR Setup
 
-Reference: `~/.claude/hooks/ways/softwaredev/architecture/adr/adr-tool` and `adr.yaml.template`
+Reference: `~/.claude/hooks/ways/documentation/adr/adr-tool` and `adr.yaml.template`
 
 1. Create directory structure:
    ```bash
    mkdir -p docs/architecture docs/scripts
    ```
 
-2. Install the ADR tool (symlink to hooks):
+2. Install the ADR tool — copy a standalone vendored copy (not a symlink, so it
+   works for collaborators and CI without `~/.claude`):
    ```bash
-   ln -s ~/.claude/hooks/ways/softwaredev/architecture/adr/adr-tool docs/scripts/adr
+   cp ~/.claude/hooks/ways/documentation/adr/adr-tool docs/scripts/adr
    chmod +x docs/scripts/adr
    ```
 

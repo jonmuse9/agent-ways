@@ -37,4 +37,4 @@ Design docs accrete like migrations. When enough of a domain's docs have drifted
 ## See Also
 
 - freshness(softwaredev) — the parent: history-age drift in derived artifacts
-- architecture/adr(softwaredev) — superseding and baselining ADRs through the proper workflow
+- adr(documentation) — superseding and baselining ADRs through the proper workflow

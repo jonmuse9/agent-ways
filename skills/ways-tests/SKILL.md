@@ -163,7 +163,7 @@ Cross-way ranking (top by cosine similarity):
   Cosine  Thr   Match  Way
   ------  ----  -----  ---
   0.5821  0.35  YES    softwaredev/environment/makefile  ← target
-  0.4102  0.35  YES    softwaredev/docs/standards
+  0.4102  0.35  YES    documentation/standards
   0.2891  0.35  no     softwaredev/environment/deps
   ...
 
@@ -219,7 +219,7 @@ Cross-way ranking:
   Score   Thr    Match  Way
   ------  -----  -----  ---
   5.2716  1.5    YES    softwaredev/environment/makefile  ← target
-  1.9580  2.0    no     softwaredev/docs/standards
+  1.9580  2.0    no     documentation/standards
   0.0000  2.0    no     softwaredev/environment/deps
   ...
 
@@ -621,7 +621,7 @@ Tree Coverage:
     → auth                        not fired
     Coverage: 3/4 (75%)
 
-  softwaredev/docs                root fired epoch 1
+  documentation                root fired epoch 1
     → readme                      fired epoch 4   (distance: 3)
     → mermaid                     fired epoch 12  (distance: 11)
     → docstrings                  not fired
