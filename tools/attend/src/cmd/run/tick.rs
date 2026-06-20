@@ -275,7 +275,7 @@ pub(super) fn tick_iteration(s: &mut TickState) {
         };
         if due {
             let base = signals_base();
-            let stats = run_cleanup(&base, s.cfg.cleanup.retention, false, false);
+            let stats = run_cleanup(&base, false, false);
             if stats.removed > 0 || stats.dirs_removed > 0 {
                 emit::log(&format!(
                     "cleanup: removed {} signal(s) ({} bytes), {} empty project dir(s)",

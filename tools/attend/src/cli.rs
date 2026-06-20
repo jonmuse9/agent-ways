@@ -125,17 +125,15 @@ pub(crate) enum Commands {
         sub: Option<PermissionsCmd>,
     },
 
-    /// Remove stale signal files from the signals base
+    /// Reap signal files whose owning project is gone, and prune empty
+    /// project dirs. Messages are never removed by age — lifetime is bound
+    /// to project liveness (ADR-136).
     Cleanup {
-        /// Age cutoff (e.g. 5m, 1h, 30s) — defaults to cleanup.retention from config
-        #[arg(long, value_name = "DUR")]
-        older_than: Option<String>,
-
         /// List what would be removed without deleting
         #[arg(long, short = 'n')]
         dry_run: bool,
 
-        /// Remove every signal file regardless of age
+        /// Remove every signal file regardless of project liveness
         #[arg(long)]
         all: bool,
     },

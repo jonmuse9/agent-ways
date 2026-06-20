@@ -19,6 +19,14 @@ pub(crate) fn signals_base() -> std::path::PathBuf {
         .join("signals")
 }
 
+/// Claude Code's per-project data dir. A project is "live" iff its
+/// encoded-cwd subdir exists here; message-tray lifetime is bound to it
+/// (ADR-136) rather than to a wall-clock age.
+pub(crate) fn projects_base() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home).join(".claude").join("projects")
+}
+
 /// Encode a project path the same way Claude Code does: '/', '_', '.' → '-'
 pub(crate) fn encode_project(path: &str) -> String {
     path.chars()

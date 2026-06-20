@@ -1,14 +1,14 @@
 pub mod last_inbound;
-mod salience;
+mod signal_id;
 
-use salience::{extract_re_id, signal_id_from_filename, SignalSalience};
-use sensor_trait::{epoch_secs, extract_json_u64, Focus, Sensor};
+use signal_id::signal_id_from_filename;
+use sensor_trait::{extract_json_u64, Focus, Sensor};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// Callback that returns the current set of extra signal directories
 /// (typically focus-group dirs). Called on every scan so mid-session
@@ -55,11 +55,15 @@ pub struct PeerSensor {
     /// Sliding window for per-peer engagement boost calculation.
     /// Set via `set_peer_activity_window` from attend's engagement config.
     peer_activity_window: Duration,
-    /// Per-signal presentation-layer aging (ADR-121 outward gate,
-    /// unified in ADR-123). Consulted before each signal-derived
-    /// observation leaves `read_signals`; stale backlog signals are
-    /// suppressed, threaded replies reset the parent's salience.
-    signal_salience: SignalSalience,
+    /// Set true once a checkpoint has been imported (warm restart). A
+    /// warm restart restores the seen-set, so only messages that arrived
+    /// during the down-gap surface. A cold start (this stays false) has
+    /// no seen-set, so the first scan baselines the existing backlog
+    /// instead of dumping it — see `read_signals`.
+    checkpoint_loaded: bool,
+    /// Set true after the first `read_signals`. Gates the one-time
+    /// cold-start message baseline.
+    message_baseline_done: bool,
 }
 
 #[allow(dead_code)]
@@ -116,7 +120,8 @@ impl PeerSensor {
             extra_scan_dirs_fn: None,
             peer_activity: HashMap::new(),
             peer_activity_window: Duration::from_secs(900),
-            signal_salience: SignalSalience::new(),
+            checkpoint_loaded: false,
+            message_baseline_done: false,
         }
     }
 
@@ -126,12 +131,6 @@ impl PeerSensor {
         self.peer_activity_window = window;
     }
 
-    /// Set the outward-gate salience parameters from attend's
-    /// `signals:` config block. Called by the orchestrator at startup.
-    pub fn set_salience_params(&mut self, half_life_seconds: u64, presentation_floor: f64) {
-        self.signal_salience
-            .set_params(half_life_seconds, presentation_floor);
-    }
 
     /// Compute the magnitude boost for a peer based on their recent activity.
     /// Records the current message and returns the boost multiplier.
@@ -233,11 +232,15 @@ impl PeerSensor {
             .clone()
             .unwrap_or_else(|| "---none---".to_string());
 
-        // Shared present-tick for the whole scan — every gate check and
-        // every reply-reset uses the same wall-clock second, so a reply
-        // that arrives alongside an aged parent can resurface the parent
-        // inside the same poll.
-        let now_tick = epoch_secs();
+        // Cold-start backlog baseline: on the first scan of a session
+        // that restored no checkpoint (no seen-set), mark every existing
+        // message seen WITHOUT emitting, so a fresh join doesn't dump the
+        // whole durable backlog into one turn. A warm restart skips this
+        // (the checkpoint restored the seen-set), so down-gap messages
+        // still surface as unseen. Detail is always available via
+        // `attend inbox`.
+        let baselining = !self.message_baseline_done && !self.checkpoint_loaded;
+        self.message_baseline_done = true;
 
         for dir in &scan_dirs {
             let entries = match fs::read_dir(dir) {
@@ -258,6 +261,14 @@ impl PeerSensor {
                     continue;
                 }
 
+                // Cold-start baseline: record the existing backlog as seen
+                // and emit nothing, so a fresh join is not flooded. (See
+                // `baselining` above; warm restarts skip this.)
+                if baselining {
+                    self.seen_signals.insert(key);
+                    continue;
+                }
+
                 // Read and parse: `from|project|cwd|message` (legacy) or
                 // `from|project|cwd|re:id|message` (threaded, ADR-120).
                 let content = match fs::read_to_string(&path) {
@@ -266,37 +277,14 @@ impl PeerSensor {
                 };
                 let content = content.trim();
 
-                // Re-engagement reset (ADR-120 + ADR-121): a threaded
-                // reply bumps the parent signal's salience back to 1.0
-                // at `now_tick`, regardless of whether we're going to
-                // present the reply itself. The parent may or may not
-                // still be on disk — the reset persists into the
-                // salience map either way, so future observers joining
-                // the thread see a resurfaced parent.
-                if let Some(re_id) = extract_re_id(content) {
-                    self.signal_salience.reset(re_id, now_tick);
-                }
-
-                // Outward gate: suppress aged-out backlog signals.
-                // Anchored to the file's on-disk mtime so a fresh
-                // observer joining a focus-group room sees old material
-                // as already-decayed, which is the backlog-filter
-                // behavior ADR-121 designed and ADR-123 made a
-                // cross-tool facility.
+                // The message lane bypasses the event-lane noise stack
+                // (ADR-136 Decision 1): no salience gate, no refractory, no
+                // governor. An authored message is not observation noise, so
+                // it is never aged-out or suppressed by wall-clock decay —
+                // only deduped (the seen-set) and, on a cold start, baselined
+                // (see below). Decay stays where it belongs: the event lane
+                // (git / process / peer-presence).
                 let signal_id = signal_id_from_filename(&filename).to_string();
-                let arrival_tick = fs::metadata(&path)
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(now_tick);
-                if !self.signal_salience.gate(&signal_id, arrival_tick, now_tick) {
-                    // Aged past the presentation floor — suppress the
-                    // observation, but still mark the file seen so
-                    // we don't re-check it every poll.
-                    self.seen_signals.insert(key);
-                    continue;
-                }
 
                 if let Some((from, project, source_cwd, message)) = parse_signal(content) {
                     // Skip our own signals — check the from field, not filename.
@@ -391,14 +379,14 @@ impl PeerSensor {
 
                 self.seen_signals.insert(key);
 
-                // Clean up stale signals (older than 5 minutes)
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if let Ok(modified) = metadata.modified() {
-                        if modified.elapsed().unwrap_or_default().as_secs() > 300 {
-                            fs::remove_file(&path).ok();
-                        }
-                    }
-                }
+                // Authored messages are durable: reading one marks it seen
+                // (dedup), but the file is NEVER deleted here. Destroying a
+                // signal that another peer — or this same session after a
+                // restart — has not read yet was the cross-peer shred behind
+                // ADR-136 Bug 2 (a passing colleague shredding an unread fax).
+                // Message lifetime is bound by project liveness in the cleanup
+                // sweep (a tray dies when its project is gone), not by a
+                // per-read wall-clock timer.
             }
         }
 
@@ -672,40 +660,26 @@ impl Sensor for PeerSensor {
             state.push(("seen_signal".to_string(), sig.clone()));
         }
         state.push(("reply_hint_shown".to_string(), self.reply_hint_shown.to_string()));
-        // Per-signal salience state. Each row carries "<id>\t<json>" so
-        // the single-string value slot used by the checkpoint wire
-        // format stays one field.
-        for (id, json) in self.signal_salience.export_rows() {
-            state.push(("signal_salience".to_string(), format!("{id}\t{json}")));
-        }
         state
     }
 
     fn import_state(&mut self, state: &[(String, String)]) {
-        let mut salience_restored = 0usize;
+        // Any persisted rows mean this is a warm restart: the seen-set is
+        // being restored, so the cold-start backlog baseline is skipped and
+        // down-gap messages surface as unseen.
+        self.checkpoint_loaded = !state.is_empty();
         for (key, value) in state {
             match key.as_str() {
                 "seen_signal" => { self.seen_signals.insert(value.clone()); }
                 "reply_hint_shown" => { self.reply_hint_shown = value == "true"; }
-                "signal_salience" => {
-                    if let Some((id, json)) = value.split_once('\t') {
-                        if self.signal_salience.import_row(id, json) {
-                            salience_restored += 1;
-                        }
-                    }
-                }
+                // Legacy "signal_salience" rows (from before the message
+                // lane stopped using the per-signal gate) are ignored.
                 _ => {}
             }
         }
         if !self.seen_signals.is_empty() {
             eprintln!("[attend] peers: restored {} seen signals from checkpoint",
                 self.seen_signals.len());
-        }
-        if salience_restored > 0 {
-            eprintln!(
-                "[attend] peers: restored {} signal salience entries from checkpoint",
-                salience_restored
-            );
         }
     }
 }

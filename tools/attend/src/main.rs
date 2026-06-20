@@ -75,8 +75,8 @@ fn main() {
         Commands::Permissions { sub } => match sub.unwrap_or(PermissionsCmd::Audit) {
             PermissionsCmd::Audit => cmd::permissions::cmd_permissions_audit(),
         },
-        Commands::Cleanup { older_than, dry_run, all } => {
-            cmd::cleanup::cmd_cleanup(older_than, dry_run, all);
+        Commands::Cleanup { dry_run, all } => {
+            cmd::cleanup::cmd_cleanup(dry_run, all);
         }
         Commands::Config { sub } => dispatch_config(sub.unwrap_or(ConfigCmd::Show)),
     }
