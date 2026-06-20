@@ -8,6 +8,13 @@ refire: 0.15
 <!-- epistemic: convention -->
 # ADR Migration
 
+> **Prefer the skill for greenfield scaffolding.** The `project-init` skill is the
+> canonical scaffolder — it installs this tooling *and* the surrounding GitHub
+> config, CODEOWNERS, and project ways in one pass. Reach for it first when setting
+> up a new repo. The manual steps below are the underlying contract: use them when
+> migrating an existing repo, when you only want the ADR/doc tooling, or to
+> understand what the skill automates.
+
 ## Identify Your Starting State
 
 | State | Signs | Strategy |
@@ -47,6 +54,25 @@ chmod +x docs/scripts/adr
 docs/scripts/adr domains    # Should show your configured domains
 docs/scripts/adr list       # Should show 0 ADRs
 ```
+
+5. *(Optional)* Add the documentation catalog — prose docs + ADRs as one typed
+   graph (ADR-302), sharing this same `adr.yaml`. The catalog tools are a **pair**:
+   `doc` (the librarian) does `import doclint` and shells out to a sibling
+   `doclint.py`, so the linter **must be copied as a file named `doclint.py`
+   beside `doc`**. Same copy-not-symlink rule as the ADR tool.
+```bash
+cp ~/.claude/hooks/ways/documentation/linting/doc-tool docs/scripts/doc
+cp ~/.claude/hooks/ways/documentation/linting/doclint.py docs/scripts/doclint.py
+chmod +x docs/scripts/doc docs/scripts/doclint.py
+# Optional: a relative, in-repo convenience symlink so `doclint` works as a bare
+# command. It points at a sibling that travels with the repo — NOT into ~/.claude.
+ln -s doclint.py docs/scripts/doclint
+docs/scripts/doc coverage   # empty-but-functional matrix until pages declare frontmatter
+docs/scripts/doc lint       # lints the doc+ADR graph
+```
+   Catalog membership is opt-in: a `docs/` page joins the graph only once it
+   declares `id`/`domain`/`mode` frontmatter, so un-tagged prose is never flagged.
+   To decline the catalog for this repo: `touch .claude/no-doc-tooling`.
 
 ## Flat Directory Migration
 

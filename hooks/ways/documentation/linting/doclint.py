@@ -142,7 +142,10 @@ class Node:
 
 
 def parse_frontmatter(path: Path) -> dict:
-    text = path.read_text()
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return {}   # skip unreadable/non-UTF-8 files rather than abort the run
     if not text.startswith("---"):
         return {}
     lines = text.split("\n")
@@ -163,7 +166,8 @@ def _as_ref_list(value) -> list:
     """Coerce a related/supersedes value into target strings, stripping wikilinks.
 
     ADR-302 edges are Obsidian `[[wikilinks]]`; the inside is the catalog id or
-    ADR reference. Bare strings are accepted too (pre-wikilink ADRs).
+    ADR reference. The aliased form `[[target|alias]]` keeps only `target`. Bare
+    strings are accepted too (pre-wikilink ADRs).
     """
     if not value:
         return []
@@ -172,7 +176,9 @@ def _as_ref_list(value) -> list:
     for v in items:
         s = str(v).strip()
         m = WIKILINK_RE.match(s)
-        out.append(m.group(1).strip() if m else s)
+        if m:
+            s = m.group(1).split("|", 1)[0].strip()   # [[target|alias]] -> target
+        out.append(s)
     return out
 
 

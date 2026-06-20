@@ -567,6 +567,10 @@ def cmd_rename(args):
     # Compute the new filename slug (explicit --slug wins over title-derived)
     slug_source = args.slug if args.slug else args.title
     slug = re.sub(r'[^a-z0-9]+', '-', slug_source.lower()).strip('-')
+    if not slug:
+        print(f"Error: could not derive a slug from '{slug_source}' "
+              "(no alphanumerics); pass --slug explicitly", file=sys.stderr)
+        return 1
     new_path = old_path.parent / f"{num_prefix}-{slug}.md"
 
     if new_path == old_path and content == original:
