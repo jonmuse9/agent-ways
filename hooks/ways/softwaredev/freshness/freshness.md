@@ -31,5 +31,5 @@ This is about *consistency* drift, not available upgrades. "Your dependencies ha
 
 ## See Also
 
-- docs(softwaredev) — how to author and structure documentation
+- documentation(documentation) — how to author and structure documentation
 - code/supplychain/depscan(softwaredev) — outdated dependencies are a separate concern

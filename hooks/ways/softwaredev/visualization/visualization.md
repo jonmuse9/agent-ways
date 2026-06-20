@@ -29,4 +29,4 @@ Render to the terminal with the tools in the children of this way:
 
 - visualization/charts(softwaredev) — quantitative data rendering
 - visualization/diagrams(softwaredev) — structural diagram rendering
-- docs/mermaid(softwaredev) — Mermaid syntax for diagrams
+- mermaid(documentation) — Mermaid syntax for diagrams

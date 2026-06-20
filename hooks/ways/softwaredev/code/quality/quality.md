@@ -43,4 +43,4 @@ When the file length scan (macro output) shows priority files, call them out exp
 
 - code/testing(softwaredev) — quality requires test coverage
 - code/errors(softwaredev) — error handling is a quality signal
-- docs/standards(softwaredev) — standards define quality expectations
+- standards(documentation) — standards define quality expectations
