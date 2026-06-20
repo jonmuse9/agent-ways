@@ -87,6 +87,27 @@ If INDEX.md is missing or stale (doesn't list all current ADRs), flag it.
 - Warn: INDEX.md missing (can regenerate with `adr index -y`)
 - Fail: INDEX.md exists but is stale
 
+**Check: Doc catalog (opt-in — only audit if installed).**
+
+The doc catalog (`doc`/`doclint`) treats prose docs + ADRs as one typed graph
+(ADR-302), sharing `adr.yaml`'s domains. It is optional, so absence is not a
+failure — a repo may legitimately decline it (`.claude/no-doc-tooling`).
+
+```bash
+# Installed?
+test -x docs/scripts/doc && test -f docs/scripts/doclint.py
+# If installed, does the catalog graph lint clean?
+docs/scripts/doc lint 2>/dev/null
+# Coverage — surfaces (domain × mode) gaps
+docs/scripts/doc coverage 2>/dev/null
+```
+
+- Pass: installed and `doc lint` is clean (no dangling edges, cycles, or
+  id/mode disagreement); or legitimately declined via `.claude/no-doc-tooling`
+- Warn: not installed and not declined (the catalog tooling is *available* —
+  offer to copy it in); or coverage shows a domain with ADRs but zero docs
+- Fail: installed but `doc lint` reports errors
+
 ---
 
 ### 2. GitHub Repo Health

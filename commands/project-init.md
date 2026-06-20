@@ -59,6 +59,7 @@ Check for each concern — report what exists and what's missing:
 | Concern | What to Check |
 |---------|---------------|
 | **ADR** | `docs/architecture/adr.yaml`, `docs/scripts/adr` (tool), any `ADR-*.md` files anywhere |
+| **Doc catalog** | `docs/scripts/doc` + `docs/scripts/doclint` (tools), catalog frontmatter (`id`/`domain`/`mode`) on `docs/*.md` |
 | **GitHub** | `.github/` directory, CODEOWNERS, issue/PR templates, workflows |
 | **Ways** | `.claude/ways/` directory, any `{name}.md` way files |
 | **CLAUDE.md** | `.claude/CLAUDE.md` or root `CLAUDE.md` |
@@ -236,7 +237,7 @@ After the interview, create a task for each elected concern using `TaskCreate`:
 ```
 Example task list:
 1. Create branch for scaffold work
-2. Install ADR tooling (adr-tool, adr.yaml, directory structure)
+2. Install ADR tooling (adr-tool, adr.yaml, directory structure); optionally the doc catalog (doc, doclint — shares adr.yaml)
 3. Set up GitHub configuration (templates, labels, CODEOWNERS)
 4. Create project-local ways
 5. Scaffold documentation (README structure, docs/ tree)
@@ -338,6 +339,34 @@ Reference: `~/.claude/hooks/ways/documentation/adr/adr-tool` and `adr.yaml.templ
    docs/scripts/adr domains
    docs/scripts/adr lint
    ```
+
+### Documentation Catalog Setup (optional — shares adr.yaml)
+
+The doc catalog treats prose docs and ADRs as one typed graph (ADR-302),
+classified by Diátaxis mode and sharing the ADR domain bands. Opt-in — install it
+when the project wants linted, classified documentation. Reference:
+`~/.claude/hooks/ways/documentation/linting/`.
+
+1. Install the tools — copy (project repos vendor; only `~/.claude` symlinks):
+   ```bash
+   cp ~/.claude/hooks/ways/documentation/linting/doc-tool docs/scripts/doc
+   cp ~/.claude/hooks/ways/documentation/linting/doclint.py docs/scripts/doclint.py
+   chmod +x docs/scripts/doc docs/scripts/doclint.py
+   ```
+
+2. Catalog pages carry frontmatter: `id: DD.NNN.P` (domain band · serial · mode
+   pole), `domain` (an `adr.yaml` key), `mode`
+   (tutorial/how-to/reference/explanation), and `related`/`supersedes` edges.
+   Adoption is gradual — a page joins the catalog only once it declares this
+   frontmatter, so un-tagged prose is never flagged.
+
+3. Validate:
+   ```bash
+   docs/scripts/doc coverage
+   docs/scripts/doc lint
+   ```
+
+   To decline for this project: `touch .claude/no-doc-tooling`.
 
 ### GitHub Setup
 
