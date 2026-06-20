@@ -49,8 +49,10 @@ if [[ "$SUBAGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   fi
 fi
 
-ARGS=(--query "$TASK_PROMPT" --session "$SESSION_ID" --project "$PROJECT_DIR")
-[[ -n "$TEAM_NAME" ]] && ARGS+=(--team "$TEAM_NAME")
+# --opt=value form: a value may begin with '-' (free-text prompt); the space
+# form would make clap parse it as a flag. The = form binds it unambiguously.
+ARGS=(--query="$TASK_PROMPT" --session="$SESSION_ID" --project="$PROJECT_DIR")
+[[ -n "$TEAM_NAME" ]] && ARGS+=(--team="$TEAM_NAME")
 
 "${HOME}/.claude/bin/ways" scan task "${ARGS[@]}"
 

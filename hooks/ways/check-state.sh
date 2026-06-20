@@ -16,7 +16,8 @@ HOOK_EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // "SessionStart"')
 
 export CLAUDE_PROJECT_DIR="${PROJECT_DIR}"
 
-ARGS=(--session "$SESSION_ID" --project "$PROJECT_DIR" --hook-event "$HOOK_EVENT")
-[[ -n "$TRANSCRIPT" ]] && ARGS+=(--transcript "$TRANSCRIPT")
+# --opt=value form for consistency with the other scan hooks.
+ARGS=(--session="$SESSION_ID" --project="$PROJECT_DIR" --hook-event="$HOOK_EVENT")
+[[ -n "$TRANSCRIPT" ]] && ARGS+=(--transcript="$TRANSCRIPT")
 
 "${HOME}/.claude/bin/ways" scan state "${ARGS[@]}"

@@ -23,8 +23,10 @@ AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(echo "$INPUT" | jq -r '.cwd // empty')}"
 
 export CLAUDE_PROJECT_DIR="${PROJECT_DIR}"
+# --opt=value form: $CMD/$DESC are free text that may begin with '-'; the space
+# form would make clap parse the value as a flag. The = form binds it safely.
 "${HOME}/.claude/bin/ways" scan command \
-  --command "$CMD" \
-  --description "$DESC" \
-  --session "$SESSION_ID" \
-  --project "$PROJECT_DIR"
+  --command="$CMD" \
+  --description="$DESC" \
+  --session="$SESSION_ID" \
+  --project="$PROJECT_DIR"
