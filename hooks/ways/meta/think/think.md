@@ -1,6 +1,7 @@
 ---
 description: structured reasoning, thinking frameworks, cognitive scaffolding for complex decisions
 vocabulary: explore options approaches trade-off balance alternatives stuck principle abstract reasoning framework systematic
+pattern: explore.*(option|approach|alternativ)|weigh.*(option|trade|alternativ)|trade.?off|several (option|approach|alternativ|way)|competing (objective|priorit|concern|goal)|first principle|step.?back|i'?m stuck|which (approach|option)
 scope: agent, subagent
 refire: 0.15
 ---
@@ -34,11 +35,11 @@ Most problems resolve at level 1. The strategies exist for when they don't.
 
 | Problem Shape | Strategy | Invoke |
 |---|---|---|
-| Multiple viable approaches | Tree of Thoughts | `/think-tree` |
-| Three competing objectives | Trilemma | `/think-trilemma` |
-| High-stakes, need confidence | Self-Consistency | `/think-consistency` |
-| Stuck, need first principles | Step-Back | `/think-stepback` |
-| Investigation or debugging | ReAct | `/think-react` |
+| Multiple viable approaches | Tree of Thoughts | `/think tree` |
+| Three competing objectives | Trilemma | `/think trilemma` |
+| High-stakes, need confidence | Self-Consistency | `/think consistency` |
+| Stuck, need first principles | Step-Back | `/think stepback` |
+| Investigation or debugging | ReAct | `/think react` |
 
 Each strategy is a step-by-step scaffold that surfaces your reasoning visibly.
 

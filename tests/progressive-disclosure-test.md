@@ -1,4 +1,4 @@
-# Progressive Disclosure & Think Strategy Integration Test
+# Progressive Disclosure & Structured Thinking Integration Test
 
 ## Instructions for Claude
 
@@ -131,7 +131,7 @@ The think way teaches an escalation gradient: internal check → internal reason
 >
 > Report what you actually did — the test is whether the way's guidance shaped your behavior.
 
-**Expected**: The agent should have assessed the problem direction. For this prompt ("explore different approaches... several options"), the metacognitive check should trend **unclear** (multiple viable approaches, no obvious winner). The agent MAY autonomously invoke `/think-tree` — if so, it should do so decisively without asking permission. If the agent stayed at internal reasoning, that's also valid — the test is that the check happened, not that escalation occurred.
+**Expected**: The agent should have assessed the problem direction. For this prompt ("explore different approaches... several options"), the metacognitive check should trend **unclear** (multiple viable approaches, no obvious winner). The agent MAY autonomously invoke `/think tree` — if so, it should do so decisively without asking permission. If the agent stayed at internal reasoning, that's also valid — the test is that the check happened, not that escalation occurred.
 
 ---
 
@@ -176,7 +176,7 @@ These steps test the session lifecycle when an external strategy is invoked — 
 rm -f /tmp/.claude-think-session 2>/dev/null
 ```
 
-> **USER**: Type exactly: `/think-tree`
+> **USER**: Type exactly: `/think tree`
 
 > **CLAUDE**: After the skill begins and registers, check the session file:
 
@@ -184,13 +184,13 @@ rm -f /tmp/.claude-think-session 2>/dev/null
 cat /tmp/.claude-think-session 2>/dev/null
 ```
 
-**Expected**: The file contains `tree-of-thoughts`. The skill registered its session before beginning work. Note: in normal flow the agent would invoke this autonomously during escalation — the explicit `/think-tree` here is to isolate the lifecycle test.
+**Expected**: The file contains `tree-of-thoughts`. The skill registered its session before beginning work. Note: in normal flow the agent would invoke this autonomously during escalation — the explicit `/think tree` here is to isolate the lifecycle test.
 
 ---
 
 ### Step 11 — Overlapping session is blocked
 
-> **USER**: Type exactly: `/think-stepback`
+> **USER**: Type exactly: `/think stepback`
 
 > **CLAUDE**: The step-back skill should detect the active tree-of-thoughts session and ask whether to finish or abandon it first. Report whether the skill blocked or proceeded.
 
