@@ -354,10 +354,33 @@ def check_duplicate_ids(doc_nodes: list):
                 n.issues.append(("error", f"duplicate catalog id {cid} (also on: {mates})"))
 
 
+def _retired_scan_files():
+    """Yield candidate files for the retired-range scan, respecting .gitignore.
+
+    Enumerate via `git ls-files` (tracked + untracked-but-not-ignored) so a
+    gitignored corpus, build tree, or scratch dir is never walked — without it,
+    the scan reads every ignored file in the repo (e.g. a 500MB private corpus).
+    Falls back to rglob for non-git checkouts, preserving portability.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(REPO), "ls-files", "--cached", "--others",
+             "--exclude-standard", "-z"],
+            capture_output=True, timeout=30)
+        if out.returncode == 0:
+            for raw in out.stdout.split(b"\x00"):
+                if raw:
+                    yield REPO / raw.decode("utf-8", "surrogateescape")
+            return
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    yield from REPO.rglob("*")   # non-git fallback
+
+
 def check_retired_refs(lo: int, hi: int):
     """Scan repo for references into a vacated pre-domain range (opt-in)."""
     hits = []
-    for f in REPO.rglob("*"):
+    for f in _retired_scan_files():
         if not f.is_file() or f.suffix not in RETIRED_SCAN_EXTS:
             continue
         if RETIRED_SKIP_PARTS & set(f.parts):
