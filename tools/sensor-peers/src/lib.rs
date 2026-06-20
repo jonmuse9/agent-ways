@@ -103,6 +103,26 @@ struct SessionFile {
     session_id: String,
 }
 
+/// Which room a message came from — used only for the digest breakdown.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MsgKind {
+    Directed,
+    Open,
+    Group,
+}
+
+/// A message awaiting emission for the current poll. Collected during the
+/// scan, then either emitted individually or rolled into a digest once the
+/// whole poll's volume is known.
+struct PendingMsg {
+    magnitude: f64,
+    sender: String,
+    body: String,
+    kind: MsgKind,
+    /// Wall-clock age in seconds (since the file's mtime) at scan time.
+    age_secs: u64,
+}
+
 impl PeerSensor {
     pub fn new() -> Self {
         let home = home_dir();
@@ -216,6 +236,12 @@ impl PeerSensor {
     /// focus list, and joined rooms. Returns observations for new signals.
     fn read_signals(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let mut observations = Vec::new();
+        // Unseen messages this poll are collected here, then either emitted
+        // individually (the common, timely case) or coalesced into one
+        // digest when a single poll surfaces more than DIGEST_THRESHOLD —
+        // a warm rejoin after a down-gap, or a burst from a hyperactive
+        // peer. Nothing is dropped; detail is always in `attend inbox`.
+        let mut pending: Vec<PendingMsg> = Vec::new();
         let base = signals_base();
 
         // Directories to scan: own project + broadcast + focus group + rooms
@@ -328,30 +354,28 @@ impl PeerSensor {
                     let boost = self.peer_engagement_boost(&from_owned);
                     let magnitude = base_magnitude * boost;
 
-                    // Chunk long messages at word boundaries so each event
-                    // stays under Monitor's ~400-char stdout line ceiling.
-                    // Multiple chunks arrive as separate events inside the
-                    // same 200ms batch, so Monitor groups them into one
-                    // notification for the recipient.
-                    let include_reply_hint = !self.reply_hint_shown;
-                    let chunks = chunk_message(message, MAX_CHUNK_BODY, MAX_CHUNKS);
-                    let total = chunks.len();
-                    for (i, chunk) in chunks.into_iter().enumerate() {
-                        let header = if total == 1 {
-                            format!("message from {}: ", sender)
-                        } else {
-                            format!("message from {} ({}/{}): ", sender, i + 1, total)
-                        };
-                        let body = if i == 0 && include_reply_hint {
-                            format!("{} (reply: attend send <msg>)", chunk)
-                        } else {
-                            chunk
-                        };
-                        observations.push((magnitude, format!("{}{}", header, body)));
-                    }
-                    if include_reply_hint {
-                        self.reply_hint_shown = true;
-                    }
+                    let kind = if dir_name == own_encoded {
+                        MsgKind::Directed
+                    } else if dir_name == "_broadcast" {
+                        MsgKind::Open
+                    } else {
+                        MsgKind::Group
+                    };
+                    let age_secs = fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.elapsed().ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    // Defer emission: collect now, decide individual-vs-digest
+                    // after the whole poll is scanned (see below).
+                    pending.push(PendingMsg {
+                        magnitude,
+                        sender,
+                        body: message.to_string(),
+                        kind,
+                        age_secs,
+                    });
 
                     // Track most-recent inbound for `attend reply`. We
                     // record here (after the gate passes and we've
@@ -387,6 +411,39 @@ impl PeerSensor {
                 // Message lifetime is bound by project liveness in the cleanup
                 // sweep (a tray dies when its project is gone), not by a
                 // per-read wall-clock timer.
+            }
+        }
+
+        // Coalesce or emit. Below the threshold, every message emits
+        // individually and immediately (timely — the common case). Above
+        // it, a single poll surfaced a flood (rejoin gap or hyperactive
+        // peer), so collapse to one count-led digest instead of N events.
+        if pending.len() > DIGEST_THRESHOLD {
+            observations.push(build_digest(&pending));
+        } else {
+            for m in &pending {
+                let include_reply_hint = !self.reply_hint_shown;
+                // Chunk long messages at word boundaries so each event stays
+                // under Monitor's ~400-char stdout line ceiling; chunks ride
+                // the same 200ms batch and group into one notification.
+                let chunks = chunk_message(&m.body, MAX_CHUNK_BODY, MAX_CHUNKS);
+                let total = chunks.len();
+                for (i, chunk) in chunks.into_iter().enumerate() {
+                    let header = if total == 1 {
+                        format!("message from {}: ", m.sender)
+                    } else {
+                        format!("message from {} ({}/{}): ", m.sender, i + 1, total)
+                    };
+                    let body = if i == 0 && include_reply_hint {
+                        format!("{} (reply: attend send <msg>)", chunk)
+                    } else {
+                        chunk
+                    };
+                    observations.push((m.magnitude, format!("{}{}", header, body)));
+                }
+                if include_reply_hint {
+                    self.reply_hint_shown = true;
+                }
             }
         }
 
@@ -909,6 +966,66 @@ const MAX_CHUNK_BODY: usize = 260;
 /// per-notification safety ceiling.
 const MAX_CHUNKS: usize = 3;
 
+/// A single poll surfacing more than this many messages is a flood — a
+/// warm rejoin after a down-gap, or a hyperactive peer. Above it, the poll
+/// coalesces into one count-led digest rather than N events. ~8 is the
+/// uninvited-interrupt ceiling agreed for the re-entry digest.
+const DIGEST_THRESHOLD: usize = 8;
+
+/// Roll a flood of pending messages into one count-led digest line: counts
+/// per room, the age of the newest, and the span back to the oldest.
+/// Magnitude is the loudest of the batch so the digest still surfaces.
+fn build_digest(pending: &[PendingMsg]) -> (f64, String) {
+    let (mut directed, mut open, mut group) = (0usize, 0usize, 0usize);
+    let mut max_mag = 0.0f64;
+    let mut newest = u64::MAX;
+    let mut oldest = 0u64;
+    for m in pending {
+        match m.kind {
+            MsgKind::Directed => directed += 1,
+            MsgKind::Open => open += 1,
+            MsgKind::Group => group += 1,
+        }
+        if m.magnitude > max_mag {
+            max_mag = m.magnitude;
+        }
+        newest = newest.min(m.age_secs);
+        oldest = oldest.max(m.age_secs);
+    }
+    let mut parts = Vec::new();
+    if directed > 0 {
+        parts.push(format!("{directed} to you"));
+    }
+    if open > 0 {
+        parts.push(format!("{open} on #open"));
+    }
+    if group > 0 {
+        parts.push(format!("{group} in groups"));
+    }
+    let body = format!(
+        "{} new messages: {} (newest {} ago, over {}) — attend inbox for detail",
+        pending.len(),
+        parts.join(", "),
+        fmt_ago(newest),
+        fmt_ago(oldest),
+    );
+    (max_mag, body)
+}
+
+/// Compact relative age: seconds under 90s, then minutes / hours / days,
+/// each rounded to nearest.
+fn fmt_ago(secs: u64) -> String {
+    if secs < 90 {
+        format!("{secs}s")
+    } else if secs < 5400 {
+        format!("{}m", (secs + 30) / 60)
+    } else if secs < 129_600 {
+        format!("{}h", (secs + 1800) / 3600)
+    } else {
+        format!("{}d", (secs + 43_200) / 86_400)
+    }
+}
+
 /// Split a message into word-boundary chunks, each ≤ `chunk_size` characters,
 /// capped at `max_chunks`. Long messages get their tail replaced with an
 /// overflow hint on the final kept chunk.
@@ -1028,6 +1145,54 @@ mod tests {
     fn short_message_single_chunk() {
         let chunks = chunk_message("hello there", 100, 3);
         assert_eq!(chunks, vec!["hello there"]);
+    }
+
+    fn pmsg(kind: MsgKind, age_secs: u64, magnitude: f64) -> PendingMsg {
+        PendingMsg {
+            magnitude,
+            sender: "claude/x".to_string(),
+            body: "hi".to_string(),
+            kind,
+            age_secs,
+        }
+    }
+
+    #[test]
+    fn fmt_ago_scales_units() {
+        assert_eq!(fmt_ago(5), "5s");
+        assert_eq!(fmt_ago(120), "2m");
+        // Minutes band runs to 90m for precision, so 60m stays "60m".
+        assert_eq!(fmt_ago(3600), "60m");
+        assert_eq!(fmt_ago(7200), "2h");
+        assert_eq!(fmt_ago(2 * 86_400), "2d");
+    }
+
+    #[test]
+    fn digest_breaks_down_by_room_and_span() {
+        let pending = vec![
+            pmsg(MsgKind::Directed, 120, 7.0),
+            pmsg(MsgKind::Directed, 600, 7.0),
+            pmsg(MsgKind::Open, 1260, 4.0),
+        ];
+        let (mag, body) = build_digest(&pending);
+        // Loudest of the batch surfaces the digest.
+        assert_eq!(mag, 7.0);
+        assert!(body.starts_with("3 new messages: "), "{body}");
+        assert!(body.contains("2 to you"), "{body}");
+        assert!(body.contains("1 on #open"), "{body}");
+        // Newest is 120s (2m); span back to the oldest is 1260s (21m).
+        assert!(body.contains("newest 2m ago"), "{body}");
+        assert!(body.contains("over 21m"), "{body}");
+        assert!(body.contains("attend inbox"), "{body}");
+    }
+
+    #[test]
+    fn digest_omits_empty_rooms() {
+        let pending = vec![pmsg(MsgKind::Open, 60, 4.0), pmsg(MsgKind::Open, 30, 4.0)];
+        let (_, body) = build_digest(&pending);
+        assert!(body.contains("2 on #open"), "{body}");
+        assert!(!body.contains("to you"), "{body}");
+        assert!(!body.contains("in groups"), "{body}");
     }
 
     #[test]
