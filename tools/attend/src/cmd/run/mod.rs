@@ -180,6 +180,15 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
         cfg.governor.max_per_window,
         cfg.governor.rate_window,
     );
+    // Permissive governor for the message lane (ADR-136 Decision 1):
+    // a flat 3s cooldown and a generous 30/window cap so authored
+    // messages flow at normal cadence and a coalesced burst discloses
+    // promptly, instead of being starved by the event-lane back-off.
+    let mut msg_governor = DisclosureGovernor::new_permissive(
+        Duration::from_secs(3),
+        30,
+        Duration::from_secs(60),
+    );
 
     let mut queue: BinaryHeap<ScheduledSensor> = BinaryHeap::new();
     for (i, slot) in slots.iter().enumerate() {
@@ -252,6 +261,7 @@ pub(crate) fn cmd_run_with_catchup(catchup: bool) {
             slots: &mut slots,
             queue: &mut queue,
             governor: &mut governor,
+            msg_governor: &mut msg_governor,
             last_checkpoint: &mut last_checkpoint,
             last_instance_touch: &mut last_instance_touch,
             last_cleanup: &mut last_cleanup,

@@ -15,6 +15,12 @@ pub(super) struct DisclosureGovernor {
     rate_window: Duration,
     total_events: u32,
     total_events_start: Instant,
+    /// When true (the event lane), the cooldown grows with the aggregate
+    /// event rate — sustained noise backs off harder. When false (the
+    /// message lane, ADR-136 Decision 1), the cooldown stays flat: a rapid
+    /// burst is bundled by the digest, not starved by a ballooning
+    /// back-off. Conversation must always disclose within a bounded time.
+    rate_sensitive: bool,
 }
 
 impl DisclosureGovernor {
@@ -33,6 +39,23 @@ impl DisclosureGovernor {
             rate_window,
             total_events: 0,
             total_events_start: now,
+            rate_sensitive: true,
+        }
+    }
+
+    /// A permissive governor for the message lane: a flat (non-ballooning)
+    /// cooldown and a generous window cap, so authored messages flow at
+    /// normal cadence and a burst — already coalesced into one digest —
+    /// discloses promptly rather than being held for minutes behind the
+    /// event-lane back-off.
+    pub(super) fn new_permissive(
+        base_cooldown: Duration,
+        max_per_window: u32,
+        rate_window: Duration,
+    ) -> Self {
+        Self {
+            rate_sensitive: false,
+            ..Self::new(base_cooldown, max_per_window, rate_window)
         }
     }
 
@@ -49,6 +72,9 @@ impl DisclosureGovernor {
     }
 
     pub(super) fn cooldown(&self) -> Duration {
+        if !self.rate_sensitive {
+            return self.base_cooldown;
+        }
         let rate = self.aggregate_rate();
         let multiplier = 1.0 + rate.sqrt() * 3.0;
         self.base_cooldown.mul_f64(multiplier)

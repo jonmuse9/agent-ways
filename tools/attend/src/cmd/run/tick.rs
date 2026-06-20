@@ -31,6 +31,9 @@ pub(super) struct TickState<'a> {
     pub(super) slots: &'a mut Vec<SensorSlot>,
     pub(super) queue: &'a mut BinaryHeap<ScheduledSensor>,
     pub(super) governor: &'a mut DisclosureGovernor,
+    /// Permissive governor for the message lane (the peers sensor). The
+    /// event lane keeps `governor`; messages must not be starved by it.
+    pub(super) msg_governor: &'a mut DisclosureGovernor,
     pub(super) last_checkpoint: &'a mut Instant,
     pub(super) last_instance_touch: &'a mut Instant,
     pub(super) last_cleanup: &'a mut Option<Instant>,
@@ -174,7 +177,17 @@ pub(super) fn tick_iteration(s: &mut TickState) {
             ));
         }
 
-        if s.slots[i].ready_to_disclose() {
+        // The message lane (peers) bypasses the action-potential
+        // refractory (ADR-136 Decision 1): an authored message is not
+        // observation noise, so it must surface whenever there is
+        // anything accumulated, never held by a refractory built for
+        // throttling git/process churn. It still rides the permissive
+        // message governor downstream. The event lane keeps the
+        // refractory gate unchanged.
+        let is_message_lane = s.slots[i].name() == "peers";
+        if (is_message_lane && s.slots[i].accumulator.magnitude > 0.0)
+            || s.slots[i].ready_to_disclose()
+        {
             ready_indices.push(i);
         } else if s.slots[i].accumulator.magnitude > 0.0 && changed {
             // Accumulated but blocked by refractory — log it so we
@@ -195,57 +208,19 @@ pub(super) fn tick_iteration(s: &mut TickState) {
         });
     }
 
-    // Batch disclosure
-    if !ready_indices.is_empty() && s.governor.can_disclose() {
-        let mut batch = Vec::new();
-        for &i in &ready_indices {
-            let slot = &s.slots[i];
-            let priority = if slot.accumulator.magnitude >= 5.0 {
-                "high"
-            } else if slot.accumulator.magnitude >= 3.0 {
-                "medium"
-            } else {
-                "low"
-            };
-
-            batch.push((
-                slot.name().to_string(),
-                priority.to_string(),
-                slot.accumulator.drain_events(),
-            ));
-        }
-
-        emit::log(&format!(
-            "disclosing batch of {} sensors (cooldown was {:.1}s)",
-            batch.len(),
-            s.governor.cooldown().as_secs_f64(),
-        ));
-        let emitted = emit::emit_batch(&batch);
-        if emitted {
-            s.governor.record_disclosure();
-            // Record engagement only for sensors whose events actually
-            // fired (not the quiet ones that got suppressed). Action
-            // potential refractory is per-sensor.
-            let tick = sensor_trait::epoch_secs();
-            for &i in &ready_indices {
-                let was_actionable = s.slots[i].accumulator.magnitude >= 3.0;
-                if was_actionable {
-                    s.slots[i].engagement.record_fire(tick, 1.0);
-                }
-            }
-        }
-
-        for &i in &ready_indices {
-            s.slots[i].accumulator.reset();
-        }
-    } else if !ready_indices.is_empty() {
-        emit::log(&format!(
-            "{} sensors ready but governor holding ({}/{} in window)",
-            ready_indices.len(),
-            s.governor.window_disclosures,
-            s.governor.max_disclosures_per_window,
-        ));
-    }
+    // Batch disclosure, split by lane (ADR-136 Decision 1). The event
+    // lane (git/process) keeps the strict, rate-ballooning governor that
+    // suppresses observation noise. The message lane (the peers sensor)
+    // rides a permissive governor: authored messages flow at normal
+    // cadence and a burst — already coalesced into one digest by
+    // sensor-peers — discloses promptly instead of being starved.
+    let (msg_ready, evt_ready): (Vec<usize>, Vec<usize>) = ready_indices
+        .iter()
+        .partition(|&&i| s.slots[i].name() == "peers");
+    try_disclose(s.slots, &evt_ready, s.governor, true);
+    // Message lane: do not record engagement, so it never builds the
+    // action-potential refractory that would later hold conversation.
+    try_disclose(s.slots, &msg_ready, s.msg_governor, false);
 
     // Periodic checkpoint
     if s.last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL {
@@ -284,6 +259,72 @@ pub(super) fn tick_iteration(s: &mut TickState) {
             }
             *s.last_cleanup = Some(Instant::now());
         }
+    }
+}
+
+/// Disclose a batch of ready sensors through `governor`, or log a hold if
+/// the governor is closed. Shared by the event lane and the (permissive)
+/// message lane so both get identical batching, priority, and engagement
+/// bookkeeping — only the governing policy differs.
+fn try_disclose(
+    slots: &mut [SensorSlot],
+    ready: &[usize],
+    governor: &mut DisclosureGovernor,
+    record_engagement: bool,
+) {
+    if ready.is_empty() {
+        return;
+    }
+    if !governor.can_disclose() {
+        emit::log(&format!(
+            "{} sensors ready but governor holding ({}/{} in window)",
+            ready.len(),
+            governor.window_disclosures,
+            governor.max_disclosures_per_window,
+        ));
+        return;
+    }
+
+    let mut batch = Vec::new();
+    for &i in ready {
+        let slot = &slots[i];
+        let priority = if slot.accumulator.magnitude >= 5.0 {
+            "high"
+        } else if slot.accumulator.magnitude >= 3.0 {
+            "medium"
+        } else {
+            "low"
+        };
+        batch.push((
+            slot.name().to_string(),
+            priority.to_string(),
+            slot.accumulator.drain_events(),
+        ));
+    }
+
+    emit::log(&format!(
+        "disclosing batch of {} sensors (cooldown was {:.1}s)",
+        batch.len(),
+        governor.cooldown().as_secs_f64(),
+    ));
+    let emitted = emit::emit_batch(&batch);
+    if emitted {
+        governor.record_disclosure();
+        // Record engagement only for the event lane (refractory is its
+        // noise-control). The message lane skips it so conversation never
+        // builds a refractory that would later hold it.
+        if record_engagement {
+            let tick = sensor_trait::epoch_secs();
+            for &i in ready {
+                if slots[i].accumulator.magnitude >= 3.0 {
+                    slots[i].engagement.record_fire(tick, 1.0);
+                }
+            }
+        }
+    }
+
+    for &i in ready {
+        slots[i].accumulator.reset();
     }
 }
 
