@@ -95,8 +95,7 @@ pub fn handle_enter(input_value: &str, signals: &[Signal]) -> EnterAction {
             Some(dir) if live_peer_count(name) > 0 => {
                 write_signal(&dir, &msg).map(|n| format!("sent → #{name}: {n}"))
             }
-            Some(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Some(_) => Err(std::io::Error::other(
                 format!(
                     "#{name}: no live peers — message would not be read. \
                      Try #open to broadcast."
