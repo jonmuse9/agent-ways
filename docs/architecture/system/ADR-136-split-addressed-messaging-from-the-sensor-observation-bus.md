@@ -1,5 +1,5 @@
 ---
-status: Draft
+status: Accepted
 date: 2026-06-20
 deciders:
   - aaronsb
@@ -13,6 +13,11 @@ related:
 ---
 
 # ADR-136: Split addressed messaging from the sensor-observation bus
+
+> **Implemented and live-validated 2026-06-20** on branch
+> `fix/attend-message-durability`. The decisions below are reconciled to
+> what was actually built — see [Validation](#validation). Multi-recipient
+> addressing (Bug 1) shipped separately in PR #137.
 
 ## Context
 
@@ -182,28 +187,55 @@ workflow, not a durability tier.
 
 **1. The message lane bypasses the noise-control stack.** Addressed
 messages (directed `@`, group `#`, and `#open` broadcast) skip the
-salience gate, the action-potential refractory, and the disclosure
-governor. Those exist to suppress ambient observation *noise*; a
-composed message is not noise. The lane keeps only **dedup** (deliver
-once) — never magnitude-aging or rate-limiting.
+event-lane gates that exist to suppress ambient observation *noise*; a
+composed message is not noise. As built, this is **three distinct
+mechanisms**, and live peer testing found them one at a time — each fix
+exposed the next:
 
-**2. Each recipient has their own durable tray.** A message waits in the
-recipient's own inbox until *that* recipient has processed it — i.e. its
-own seen-set marks it, persisted across restarts. Not a wall-clock
-retention timer, and not a shared tray. A session that starts or
-restarts drains its pending tray as part of catch-up, so a brief
-down-gap no longer drops messages. This is deliberately *lighter* than a
-cross-party acknowledgement protocol: GC is "you processed your own
-fax," not a handshake among peers. The durable thing is each recipient's
-unread queue, owned by that recipient.
+- the per-signal **salience gate** (an mtime-seeded backlog filter) is
+  *removed* from the message path, so unread mail is never aged-out — the
+  "peers don't hear" half of Bug 2;
+- the per-sensor **action-potential refractory** is *bypassed* for the
+  message lane (it surfaces whenever anything is accumulated and records
+  no engagement, so it can never build a refractory that holds
+  conversation);
+- the shared **disclosure governor** is replaced with a *separate
+  permissive* governor for the message lane (flat 3 s cooldown, generous
+  window, no rate-ballooning). This is permissive, **not** a full bypass:
+  normal cadence flows, a true rapid burst coalesces into one digest
+  (Decision 5) and discloses promptly, and nothing is ever starved or
+  dropped.
 
-**3. Nothing wipes an unprocessed item, and no co-worker shreds your
-tray.** Cleanup may remove a message from a recipient's tray only after
-*that* recipient has observed it. One peer's scan must never delete a
-message another peer hasn't seen — the destructive-on-shared cleanup
-that caused Bug 2 is removed outright. Conversation state (a session's
-seen-set and thread context, [[ADR-120]]) is likewise never wiped as a
-side effect of handling or ignoring an event.
+The lane keeps only **dedup** (deliver once). The neuron-decay model
+(`sensor_trait` engagement/curve) stays fully intact for the *event*
+lane — git, process, and a future external-chat sensor (e.g. Slack).
+
+**2. Each recipient owns its own seen-set; rooms stay shared.** A
+directed multi-`@` message fans out one durable write per recipient
+(all-or-nothing resolution + dedup — Bug 1, PR #137). Shared rooms
+(`#open`'s `_broadcast`, focus groups) remain *shared directories* rather
+than copying a broadcast into every inbox. Durability there comes from
+three things together: nothing is reaped by age (Decision 3), each
+session's own **persisted seen-set** (checkpointed) dedups across
+restarts, and a **cold-start backlog baseline** keeps a fresh join from
+dumping history. So the realized form of "each recipient has their own
+tray" is *each recipient owns its own seen-set* — lighter than a
+cross-party ack protocol, and lighter than fanning every broadcast out N
+times. A restarting session restores its seen-set and surfaces only the
+messages that arrived during the gap.
+
+**3. Nothing is reaped by age; lifetime is bound to project liveness.**
+The destructive in-read 5-minute shred that caused Bug 2 — one peer's
+scan deleting a file another peer (or a returning session) hadn't read —
+is removed outright. Messages are *never* removed by wall-clock age.
+Instead, lifetime mirrors Claude Code's own model: a tray dies when its
+project is gone. `run_cleanup` reaps a directed tray when its project is
+no longer tracked in `~/.claude/projects/`, and reaps a shared-room
+signal when its *sender's* project is gone (sender cwd read from the wire
+format). The age-based machinery (`--older-than`, duration parsing,
+`cleanup.retention`) was removed; `--dry-run` / `--all` remain.
+Conversation state (a session's seen-set and thread context, [[ADR-120]])
+is never wiped as a side effect of handling an event.
 
 **4. Addressing is multi-recipient.** `parse_addressed` becomes
 "parse the leading run of `@`/`#` tokens" and returns a *set* of
@@ -212,17 +244,20 @@ targets; `handle_enter` and `attend send` build a multi-element
 direct fix for Bug 1 and falls out naturally once messages are
 first-class — the write layer already loops.
 
-**5. Re-entry is a wall-clock digest, not a replay.** When a session was
-down and comes back, it does not get every missed message re-injected.
-It gets a coalesced notice — *"while away: 2 addressed to you (newest 2m
-ago), 6 on `#open` over 21m"* — and pulls detail on demand. This is the
-many-in-wall-clock → one-in-turns impedance match at the notification
-bridge. The pull surface **already exists**: `attend inbox`
-(`tools/attend/src/cmd/inbox.rs`) scans the same trays the sensor does
-and renders them **chronologically by mtime** — it is already the durable
-ledger, and already treats wall-clock as first-class. The work is to stop
-shredding it (Decision 3) and to add the re-entry digest, not to build a
-new store.
+**5. Re-entry is a count-led digest, not a replay.** A single poll that
+surfaces more than a small cap (8) of unseen messages coalesces into one
+digest line — *"12 new messages: 3 to you, 9 on #open (newest 2m ago,
+over 21m) — attend inbox for detail"* — instead of flooding the turn.
+One mechanism covers both a warm-rejoin gap and a live burst from a
+hyperactive peer: many-in-wall-clock → one-in-turns at the notification
+bridge. Detail pulls from `attend inbox`
+(`tools/attend/src/cmd/inbox.rs`), now **paged** (`--limit` / `--page` /
+`--before <ts>`) over the never-reaped, chronological ledger. A live
+finding: a real peer rarely triggers the digest end-to-end, because its
+*own* auto-mode classifier spaces rapid sends into a 1–2-per-poll trickle
+(under the cap) — which is the correct "spread-out = individual, prompt"
+behavior. So the digest is the backstop for genuine bursts (a workflow, a
+long down-gap rejoin); that path is covered by unit tests.
 
 **Wall-clock is first-class in both lanes; the lanes differ only in how
 they _use_ it.** The event lane uses time to **decay and drop** (a stale
@@ -299,6 +334,32 @@ sequenceDiagram
     Note over Rx: lossy BY DESIGN — the phone may ring unanswered
 ```
 
+## Validation
+
+**Live-validated 2026-06-20** with two real sessions: a receiver
+("Thaddeus", this repo) on the rebuilt binary and a peer ("Urban-beta",
+`~/temp`). The test compared wall-clock send time against the message
+path and drove a 12-message burst. Confirmed:
+
+- **Single send/reply lane** clean both directions, ~36 s round-trip
+  (≈ one sensor poll each way); ACKs surfaced reliably.
+- **Permissive governor** discloses at a flat ~3 s cooldown — no more
+  multi-minute starvation (pre-fix, a coalesced digest sat unshown for
+  minutes behind the rate-ballooning event governor).
+- **Refractory bypass** keeps the peers lane flowing after heavy prior
+  traffic (pre-fix it hit `ABSOLUTE REFRACTORY` and held the digest).
+- **Cold-start / warm-restart** surfaced no flood — the existing backlog
+  stayed baselined.
+- **Emergent safety**: a peer cannot be instructed by *another* peer to
+  flood `#open` — the auto-mode classifier keys on *who* asks
+  (operator-authorized bursts allowed, peer-instructed bursts refused).
+
+The test is what surfaced the three-gate stack in Decision 1 — each fix
+exposed the next gate, something unit tests alone would not have caught.
+It also showed the digest's end-to-end path is hard to trigger from a
+real peer (its own classifier spaces sends), so that path leans on unit
+tests while the live lane behavior is exercised directly.
+
 ## Consequences
 
 ### Positive
@@ -317,12 +378,12 @@ sequenceDiagram
 - Two lanes is more surface than one pipeline. The win is that each lane
   has a single, honest contract; the cost is that "it's all just
   signals" stops being true.
-- Per-recipient trays mean a message may be stored once per intended
-  recipient rather than once in a shared dir, and an unread tray must be
-  bounded somehow (e.g. cap depth, or expire only items old enough that
-  no reconnect is plausible) so a permanently-gone recipient doesn't
-  accumulate forever. Lighter than a cross-party ack protocol, but still
-  real state to design and test.
+- Never reaping by age means the on-disk ledger grows until a project is
+  removed. This is bounded by **project-liveness** reaping (a tray's, or a
+  sender's, signals go when its `~/.claude/projects/` entry does) rather
+  than a wall-clock timer. The constraint that actually matters is
+  *context* — how much gets rehydrated, capped by the count-led digest and
+  inbox paging — not disk.
 
 ### Neutral
 
