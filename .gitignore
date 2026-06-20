@@ -70,6 +70,16 @@
 !docs/reference/*/
 !docs/reference/**/*.md
 !docs/reference/**/*.png
+# Diátaxis catalog dirs that `doc new` writes to (reference is above).
+!docs/explanation/
+!docs/explanation/**/
+!docs/explanation/**/*.md
+!docs/tutorials/
+!docs/tutorials/**/
+!docs/tutorials/**/*.md
+!docs/how-to/
+!docs/how-to/**/
+!docs/how-to/**/*.md
 
 # Hooks and ways
 !hooks/
