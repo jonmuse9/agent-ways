@@ -35,7 +35,7 @@ refire: 0.15
 
 ```
 docs/
-├── scripts/adr              # CLI tool (symlink to hooks/ways/softwaredev/architecture/adr/adr-tool)
+├── scripts/adr              # CLI tool (symlink to hooks/ways/documentation/adr/adr-tool)
 └── architecture/
     ├── adr.yaml              # Domain config: number ranges, statuses, defaults
     ├── INDEX.md              # Auto-generated index (adr index -y)
@@ -107,6 +107,6 @@ The linter detects:
 
 ## See Also
 
-- architecture/adr-context(softwaredev) — read existing ADRs before building
-- architecture/adr/migration(softwaredev) — adopting ADR tooling in existing projects
+- adr-context(documentation) — read existing ADRs before building
+- adr/migration(documentation) — adopting ADR tooling in existing projects
 - delivery/implement(softwaredev) — ADRs feed implementation planning

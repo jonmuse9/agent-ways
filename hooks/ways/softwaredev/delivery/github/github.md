@@ -88,4 +88,4 @@ The macro checks repository configuration (README, license, templates, branch pr
 ## See Also
 
 - delivery/commits(softwaredev) — PR quality depends on commit quality
-- architecture/adr(softwaredev) — reference ADRs in PR descriptions
+- adr(documentation) — reference ADRs in PR descriptions

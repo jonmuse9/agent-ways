@@ -44,5 +44,5 @@ RFCs are the "before" to an ADR's "after" — they capture deliberation while th
 
 ## See Also
 
-- architecture/adr(softwaredev) — escalate design trade-offs to ADRs
+- adr(documentation) — escalate design trade-offs to ADRs
 - architecture/threat-modeling(softwaredev) — security considerations during design

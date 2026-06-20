@@ -36,7 +36,10 @@ fi
 COMBINED="${PROMPT} ${RESPONSE_TOPICS}"
 
 export CLAUDE_PROJECT_DIR="${PROJECT_DIR}"
+# Use --opt=value (not --opt value): a prompt may begin with '-' (e.g. the user
+# pastes "-spawn ..."), and the space form makes clap parse that as a flag.
+# The = form binds the value unambiguously even when it starts with a dash.
 "${HOME}/.claude/bin/ways" scan prompt \
-  --query "$COMBINED" \
-  --session "$SESSION_ID" \
-  --project "$PROJECT_DIR"
+  --query="$COMBINED" \
+  --session="$SESSION_ID" \
+  --project="$PROJECT_DIR"

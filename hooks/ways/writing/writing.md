@@ -64,5 +64,5 @@ If the format doesn't fit the content (a slide deck for something that needs a d
 
 ## See Also
 
-- docs(softwaredev) — code documentation is a specialized form of writing
+- documentation(documentation) — code documentation is a specialized form of writing
 - trust/voice(meta) — voice and tone in written communication

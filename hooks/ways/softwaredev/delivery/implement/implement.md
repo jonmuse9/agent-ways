@@ -44,5 +44,5 @@ Once the human approves (or you adjust based on their feedback), create tasks us
 
 ## See Also
 
-- architecture/adr(softwaredev) — implementation follows ADR decisions
+- adr(documentation) — implementation follows ADR decisions
 - subagents(meta) — parallelization uses subagents

@@ -16,7 +16,9 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(echo "$INPUT" | jq -r '.cwd // empty')}"
 [[ -z "$FP" ]] && exit 0
 
 export CLAUDE_PROJECT_DIR="${PROJECT_DIR}"
+# --opt=value form for consistency with the other scan hooks (binds values that
+# could begin with '-' unambiguously).
 "${HOME}/.claude/bin/ways" scan file \
-  --path "$FP" \
-  --session "$SESSION_ID" \
-  --project "$PROJECT_DIR"
+  --path="$FP" \
+  --session="$SESSION_ID" \
+  --project="$PROJECT_DIR"

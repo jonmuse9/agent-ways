@@ -12,12 +12,14 @@ Children of this way cover structural thinking about software:
 
 | Aspect | Way |
 |--------|-----|
-| Decision records | `architecture/adr` |
 | System design | `architecture/design` |
 | Threat modeling | `architecture/threat-modeling` |
 
+Architecture *decisions* are recorded as ADRs, which now live in the documentation
+graph as a node type — see `adr(documentation)`.
+
 ## See Also
 
-- architecture/adr(softwaredev) — record decisions as ADRs
+- adr(documentation) — architectural decisions are recorded as ADRs (a node type in the documentation graph)
 - architecture/design(softwaredev) — design discussion before implementation
 - architecture/threat-modeling(softwaredev) — security design review

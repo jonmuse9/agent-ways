@@ -1,6 +1,8 @@
 # ADR Configuration
 # Defines domain numbering and validation rules.
-# Used by: docs/scripts/adr
+# Used by: docs/scripts/adr  — and, if the doc catalog is installed,
+#          docs/scripts/{doc,doclint}: prose docs share these same domain bands
+#          (the "shared first octet"; catalog ids are DD.NNN.P). See ADR-302.
 #
 # Customize domains for your project. Each domain reserves a number range.
 # New ADRs get the next available number in their domain.
@@ -51,6 +53,10 @@ defaults:
 legacy:
   range: [1, 99]
   label: "Legacy"
+  # retired: true   # Uncomment ONLY if the legacy range is VACATED (its ADRs
+  #                 # were renumbered into domains). doclint then fails on any
+  #                 # reference into the range. Leave off if the project still
+  #                 # uses its legacy numbers (the common case).
 
 # Viewer command for `adr view` (use {file} as placeholder)
 # Options: cat {file}, glow {file}, bat {file}

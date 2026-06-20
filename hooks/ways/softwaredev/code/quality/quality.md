@@ -39,8 +39,22 @@ When the file length scan (macro output) shows priority files, call them out exp
 | "There's no good place to split" | Can't find a split point = coupling problem worth solving. |
 | "I'll refactor later" | The file will only grow. Split it now while the logic is fresh. |
 
+## What to Enforce
+
+A validation — a lint rule, an assertion, a schema constraint, a CI check —
+**earns its place only if its violation is a real defect** someone would
+eventually hit. The good ones track genuine failure: a dangling reference, a
+state that can't be reached, a contract that's silently broken. The trap is the
+internally-consistent invariant that tracks *nothing* real ("every page must have
+exactly three links") — it passes, it feels rigorous, and it costs maintenance
+forever while catching no bug. This matters more, not less, when an agent
+sustains the checks: an agent will happily maintain a pointless invariant
+indefinitely, so nothing surfaces that it was never worth adding. Before adding a
+check, name the defect its failure would represent. If you can't, don't add it.
+
 ## See Also
 
 - code/testing(softwaredev) — quality requires test coverage
 - code/errors(softwaredev) — error handling is a quality signal
-- docs/standards(softwaredev) — standards define quality expectations
+- tooling(softwaredev) — encode enforced conventions in tools, not manual process
+- standards(documentation) — standards define quality expectations

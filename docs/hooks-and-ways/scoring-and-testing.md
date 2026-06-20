@@ -145,11 +145,11 @@ The final check: does this way compete with other ways for the same prompts?
   Score   Thr   Match  Way
   ──────  ────  ─────  ───
   7.0523  2.5   YES    meta/project-health  ← target
-  1.8705  2.5   no     softwaredev/docs/docstrings
+  1.8705  2.5   no     documentation/docstrings
   1.7988  2.0   no     softwaredev/code/quality
   1.7500  2.0   no     softwaredev/code/supplychain/sourceaudit
   1.4922  1.8   no     softwaredev/code/security
-  1.3589  2.0   no     softwaredev/docs/standards
+  1.3589  2.0   no     documentation/standards
   1.3396  2.0   no     softwaredev/delivery/github
   ...
 ```
