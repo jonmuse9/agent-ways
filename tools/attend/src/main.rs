@@ -55,9 +55,9 @@ fn main() {
     match command {
         Commands::Run { catchup } => cmd::run::cmd_run_with_catchup(catchup),
         Commands::Peers => cmd::peers::cmd_peers(),
-        Commands::Inbox { msg_id } => match msg_id {
+        Commands::Inbox { msg_id, limit, page, before } => match msg_id {
             Some(id) => cmd::inbox::cmd_inbox_read(&id),
-            None => cmd::inbox::cmd_inbox(),
+            None => cmd::inbox::cmd_inbox(limit, page, before),
         },
         Commands::Status => cmd::status::cmd_status(),
         Commands::Sensors => cmd::sensors::cmd_sensors(),

@@ -40,6 +40,18 @@ pub(crate) enum Commands {
     Inbox {
         /// Specific message id to read in detail (omit to list inbox)
         msg_id: Option<String>,
+
+        /// Max messages per page, newest first
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+
+        /// Page number; 1 = newest. Higher numbers walk back into history.
+        #[arg(long, default_value_t = 1)]
+        page: usize,
+
+        /// Cursor: only show messages older than this unix timestamp
+        #[arg(long, value_name = "TS")]
+        before: Option<u64>,
     },
 
     /// Show running instances, signals, and focus state

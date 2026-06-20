@@ -122,7 +122,7 @@ pub(crate) fn cmd_inbox_read(msg_id: &str) {
     println!("(no message by that id — already consumed or expired)");
 }
 
-pub(crate) fn cmd_inbox() {
+pub(crate) fn cmd_inbox(limit: usize, page: usize, before: Option<u64>) {
     let base = signals_base();
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
@@ -220,10 +220,34 @@ pub(crate) fn cmd_inbox() {
     // Sort chronologically — oldest first (ledger order)
     entries.sort_by_key(|e| e.mtime);
 
+    // Cursor filter: keep only entries strictly older than `before`.
+    if let Some(ts) = before {
+        entries.retain(|e| mtime_secs(e.mtime) < ts);
+    }
+
     if entries.is_empty() {
         println!("no messages");
         return;
     }
+
+    // Page over the oldest-first ledger; page 1 = the newest `limit`, and
+    // higher page numbers walk back into history. The never-reaped ledger
+    // can be long, so a bounded page keeps `attend inbox` (and the digest's
+    // "attend inbox for detail" pull) usable.
+    let limit = limit.max(1);
+    let page = page.max(1);
+    let total = entries.len();
+    let end = total.saturating_sub((page - 1) * limit);
+    let start = end.saturating_sub(limit);
+    if start >= end {
+        let pages = total.div_ceil(limit);
+        println!("no messages on page {page} ({total} total, {pages} page(s))");
+        return;
+    }
+    let older = start; // entries older than this page's oldest
+    let page_entries = &entries[start..end];
+    // Cursor for the next-older page = the oldest entry shown here.
+    let cursor_ts = mtime_secs(page_entries[0].mtime);
 
     // Pipe-aware output: when stdout is a real terminal, render the
     // compact 6-column table (nice at-a-glance scan for humans). When
@@ -238,7 +262,7 @@ pub(crate) fn cmd_inbox() {
         t.max_width(1, 24);
         t.max_width(2, 20);
         t.max_width(3, 20);
-        for entry in &entries {
+        for entry in page_entries {
             t.add(vec![
                 &entry.scope,
                 &entry.sender,
@@ -249,10 +273,10 @@ pub(crate) fn cmd_inbox() {
             ]);
         }
         t.print();
-        println!("  {} message(s)", entries.len());
+        print_inbox_footer(page, total, page_entries.len(), older, cursor_ts);
     } else {
         // Non-TTY: one block per message, full-width fields.
-        for entry in &entries {
+        for entry in page_entries {
             println!("[{}] {}", entry.scope, entry.sender);
             println!("  id:      {}", entry.id);
             if !entry.re.is_empty() {
@@ -262,6 +286,24 @@ pub(crate) fn cmd_inbox() {
             println!("  message: {}", entry.message);
             println!();
         }
-        println!("{} message(s)", entries.len());
+        print_inbox_footer(page, total, page_entries.len(), older, cursor_ts);
+    }
+}
+
+/// Seconds since the epoch for a file mtime (0 if before the epoch).
+fn mtime_secs(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Pagination footer: what page this is, and how to walk further back.
+fn print_inbox_footer(page: usize, total: usize, shown: usize, older: usize, cursor_ts: u64) {
+    println!("page {page} · showing {shown} of {total} message(s)");
+    if older > 0 {
+        println!(
+            "  ↑ {older} older — attend inbox --page {} (or --before {cursor_ts})",
+            page + 1
+        );
     }
 }
