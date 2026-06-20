@@ -40,6 +40,17 @@ except ImportError:
     sys.exit(1)
 
 
+# Diátaxis mode -> conventional directory under docs/ for `doc new`.
+# Catalog membership is by frontmatter, not path, so this is only a default
+# landing spot; --dir overrides (and may nest, e.g. explanation/attend-messaging).
+MODE_DIR = {
+    "tutorial": "tutorials",
+    "how-to": "how-to",
+    "reference": "reference",
+    "explanation": "explanation",
+}
+
+
 # ============================================================================
 # Loading
 # ============================================================================
@@ -231,6 +242,93 @@ def cmd_lint(args) -> int:
     return subprocess.run(cmd).returncode
 
 
+def _next_serial(domain: str, digits: dict) -> int:
+    """Next free 3-digit serial within a domain's band, scanning the catalog.
+
+    Mirrors `adr new`'s next-number logic, but over catalog ids (DD.NNN.P)
+    rather than ADR numbers — so authors never compute an id by hand.
+    """
+    band = digits[domain]
+    used = set()
+    for p in doclint.iter_catalog_pages():
+        node = doclint.build_doc_node(p, digits)
+        if node is None or node.domain != domain:
+            continue
+        m = doclint.ID_RE.match(node.key or "")
+        if m and int(m.group(1)) == band:
+            used.add(int(m.group(2)))
+    n = 1
+    while n in used:
+        n += 1
+    return n
+
+
+def cmd_new(args) -> int:
+    """Scaffold a catalog page with a correct, lint-clean id — no hand-edited
+    frontmatter. `doc new <domain> <mode> "<title>"`."""
+    digits = _digits()
+    domain = args.domain.lower()
+    mode = args.mode.lower()
+
+    if domain not in digits:
+        print(f"Error: unknown domain '{domain}'. Valid: {', '.join(digits)} "
+              "(see `doc domains`).", file=sys.stderr)
+        return 1
+    if mode not in doclint.MODE_LETTER:
+        print(f"Error: unknown mode '{mode}'. Valid: "
+              f"{', '.join(doclint.MODE_LETTER)}.", file=sys.stderr)
+        return 1
+
+    band, pole = digits[domain], doclint.MODE_LETTER[mode]
+    serial = _next_serial(domain, digits)
+    cid = f"{band:02d}.{serial:03d}.{pole}"
+
+    slug_source = args.slug if args.slug else args.title
+    slug = re.sub(r"[^a-z0-9]+", "-", slug_source.lower()).strip("-")
+    if not slug:
+        print(f"Error: could not derive a slug from '{slug_source}' "
+              "(no alphanumerics); pass --slug explicitly.", file=sys.stderr)
+        return 1
+
+    subdir = args.dir if args.dir else MODE_DIR[mode]
+    parts = Path(subdir).parts
+    if parts and parts[0] in doclint.SKIP_DIR_PARTS:
+        print(f"Error: '{subdir}' is under a non-catalog subtree "
+              f"('{parts[0]}' is excluded from the catalog); choose another --dir.",
+              file=sys.stderr)
+        return 1
+
+    dest_dir = doclint.DOCS / subdir
+    path = dest_dir / f"{slug}.md"
+    if path.exists():
+        print(f"Error: file already exists: {path}", file=sys.stderr)
+        return 1
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    related = "".join(f'\n  - "[[{r}]]"' for r in (args.related or []))
+    related_block = related if related else " []"
+    path.write_text(
+        f"---\n"
+        f"id: {cid}\n"
+        f"domain: {domain}\n"
+        f"mode: {mode}\n"
+        f"related:{related_block}\n"
+        f"aliases: []\n"
+        f"---\n\n"
+        f"# {args.title}\n\n"
+    )
+
+    try:
+        shown = path.relative_to(doclint.REPO)
+    except ValueError:
+        shown = path
+    print(f"Created: {shown}")
+    print(f"  id:     {cid}  (domain '{domain}' band {band:02d} · "
+          f"mode '{mode}' pole {pole})")
+    print(f"  Lint:   docs/scripts/doc lint")
+    return 0
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -255,6 +353,17 @@ def main() -> int:
     p_lint.add_argument("--strict", action="store_true",
                         help="enforce ADR issues too (--enforce-adrs)")
 
+    p_new = sub.add_parser("new", help="scaffold a new catalog page (correct id)")
+    p_new.add_argument("domain", help="domain key (see `doc domains`)")
+    p_new.add_argument("mode", help="Diátaxis mode: "
+                       + " / ".join(doclint.MODE_LETTER))
+    p_new.add_argument("title", help="page title (becomes the H1 and slug)")
+    p_new.add_argument("--dir", help="subdir under docs/ (default: by mode; "
+                       "may nest, e.g. explanation/attend-messaging)")
+    p_new.add_argument("--slug", help="override the filename slug")
+    p_new.add_argument("--related", action="append", metavar="REF",
+                       help="add a related edge (ADR-NNN or DD.NNN.P); repeatable")
+
     args = parser.parse_args()
     return {
         None: cmd_coverage,
@@ -263,6 +372,7 @@ def main() -> int:
         "gaps": cmd_gaps,
         "domains": cmd_domains,
         "lint": cmd_lint,
+        "new": cmd_new,
     }[args.command](args)
 
 
