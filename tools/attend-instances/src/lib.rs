@@ -289,7 +289,7 @@ impl Default for Registry {
 ///
 /// PR #77 review: the previous render path called
 /// `Registry::new().lookup(cwd, sid)` once per chip — N file reads
-/// + N parses every render even when most chips share a cwd. This
+/// plus N parses every render even when most chips share a cwd. This
 /// cache collapses that to one read per distinct cwd per render.
 ///
 /// **Lifetime is exactly one render.** Construct fresh; do not

@@ -99,17 +99,13 @@
       "Bash(./dotfiles deploy:*)",
       "Bash(./dotfiles capture:*)",
       "Bash(~/.dotfiles/dotfiles status *)",
-      "Bash(~/.dotfiles/dotfiles diff *)",
       "Bash(~/.dotfiles/dotfiles list *)",
       "Bash(~/.dotfiles/dotfiles deploy *)",
       "Bash(~/.dotfiles/dotfiles help *)",
       "Bash(~/.dotfiles/dotfiles capture *)",
-      "Bash(/home/aaron/.dotfiles/dotfiles help *)",
-      "Bash(/home/aaron/.dotfiles/dotfiles status *)",
       "Read(//usr/share/oh-my-posh/themes/**)",
-      "Read(//home/aaron/**)",
-      "Bash(/home/aaron/.dotfiles/dotfiles add *)",
-      "Bash(/home/aaron/.dotfiles/dotfiles deploy *)",
+      "Read(~/**)",
+      "Bash(~/.dotfiles/dotfiles add *)",
       "Bash(posh-theme help *)",
       "Bash(posh-theme list *)",
       "Bash(posh-theme current *)",
@@ -121,8 +117,6 @@
       "Bash(oh-my-posh debug *)",
       "Bash(oh-my-posh config *)",
       "Bash(posh-theme fetch *)",
-      "Bash(/home/aaron/.dotfiles/dotfiles diff *)",
-      "Bash(/home/aaron/.dotfiles/dotfiles push *)",
       "Bash(posh-theme preview-all *)",
       "Bash(zsh *)",
       "Bash(oh-my-posh init *)",
@@ -130,8 +124,7 @@
       "Bash(/bin/cat -A)",
       "Bash(ssh *)",
       "Bash(sshpass -V)",
-      "Bash(glow --version)",
-      "Bash(/home/aaron/.dotfiles/dotfiles)"
+      "Bash(glow --version)"
     ],
     "deny": [],
     "defaultMode": "auto"
@@ -322,6 +315,7 @@
       }
     }
   },
+  "skipWorkflowUsageWarning": true,
   "autoCompactEnabled": false,
   "teammateMode": "auto"
 }

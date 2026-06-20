@@ -441,7 +441,7 @@ impl PeerSensor {
             }
 
             let project_name = sf.cwd
-                .rsplit(|c| c == '/' || c == '\\')
+                .rsplit(['/', '\\'])
                 .next()
                 .unwrap_or("?")
                 .to_string();

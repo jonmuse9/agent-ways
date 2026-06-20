@@ -116,6 +116,7 @@ pub fn clear(session_id: &str) -> io::Result<()> {
 ///   file's fd.
 /// - Windows: exclusive `share_mode(0)` on a sibling `<id>.lock` file,
 ///   so the heartbeat file itself remains freely openable by `touch`.
+///
 /// In both cases we keep the `File` open for the lock's lifetime, and
 /// even a panicking attend releases on process exit.
 pub struct SessionLock {
