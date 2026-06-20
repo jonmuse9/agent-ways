@@ -40,7 +40,7 @@ if [[ -n "$DOC_SCRIPT" ]]; then
   echo "| \`$DOC_SCRIPT lint [--strict]\` | Lint the catalog graph (doclint) |"
   echo "| \`$DOC_SCRIPT domains\` | Show domain bands |"
   echo ""
-  echo "Catalog pages carry frontmatter \`id: DD.NNN.P\`, \`domain\`, \`mode\` (Diátaxis: tutorial/how-to/reference/explanation), and \`related\`/\`supersedes\` edges. See ADR-302."
+  echo "Catalog pages carry frontmatter \`id: DD.NNN.P\`, \`domain\`, \`mode\` (Diátaxis: tutorial/how-to/reference/explanation), and \`related\`/\`supersedes\` edges. See this project's documentation-catalog ADR for the model."
   exit 0
 fi
 
