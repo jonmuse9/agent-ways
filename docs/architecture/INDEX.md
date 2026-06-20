@@ -64,7 +64,7 @@ _Documentation structure, tooling, coherence_
 |-----|-------|--------|
 | [ADR-300](./documentation/ADR-300-documentation-structure.md) | Documentation Structure | Accepted |
 | [ADR-301](./documentation/ADR-301-situated-socialization-as-canonical-framing-and-documentation-prose-refactor.md) | Situated socialization as canonical framing and documentation prose refactor | Accepted |
-| [ADR-302](./documentation/ADR-302-unified-documentation-model.md) | A unified documentation model — typed graph, ways packaging, cross-repo convergence | Draft |
+| [ADR-302](./documentation/ADR-302-unified-documentation-model.md) | A unified documentation model — typed graph, ways packaging, cross-repo convergence | Accepted |
 
 ## Legacy (Pre-Domain Numbering)
 
