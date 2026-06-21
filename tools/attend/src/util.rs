@@ -27,11 +27,15 @@ pub(crate) fn projects_base() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".claude").join("projects")
 }
 
-/// Encode a project path the same way Claude Code does: '/', '_', '.' → '-'
+/// Encode a project path the same way Claude Code does: '/', '_', '.' →
+/// '-' (and, on Windows, '\' and ':'). Kept in lockstep with
+/// sensor-peers' `encode_cwd` so tray creation and the project-liveness
+/// lookup that reaps trays can never disagree on a path's encoded name
+/// (ADR-136 Decision 3).
 pub(crate) fn encode_project(path: &str) -> String {
     path.chars()
         .map(|c| match c {
-            '/' | '_' | '.' => '-',
+            '/' | '_' | '.' | '\\' | ':' => '-',
             _ => c,
         })
         .collect()

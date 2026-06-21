@@ -394,6 +394,13 @@ tests while the live lane behavior is exercised directly.
 - `#open` broadcast keeps its semantics ([[ADR-124]] base channel); only
   its delivery guarantee changes from best-effort to durable.
 - Threaded replies ([[ADR-120]]) ride the message lane unchanged.
+- **Known limitation (follow-up).** The lane is selected per *sensor*
+  (`peers`), but that sensor also emits peer-presence *events*, which
+  therefore currently ride the message lane — skipping the refractory and
+  neuron-decay the event lane gives git/process. No message loss; only
+  presence-noise control is relaxed. The clean fix is to split message
+  scanning into its own sensor so the lane is chosen per *observation* —
+  also the seam a future external-chat (event) sensor wants.
 
 ## Alternatives Considered
 

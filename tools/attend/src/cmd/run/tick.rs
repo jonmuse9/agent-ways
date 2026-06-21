@@ -214,6 +214,14 @@ pub(super) fn tick_iteration(s: &mut TickState) {
     // rides a permissive governor: authored messages flow at normal
     // cadence and a burst — already coalesced into one digest by
     // sensor-peers — discloses promptly instead of being starved.
+    // KNOWN LIMITATION (ADR-136 follow-up): the lane is chosen per
+    // *sensor*, but the `peers` sensor emits BOTH authored messages and
+    // peer-presence *events* (peer started/exited, status). Today all of
+    // it rides the message lane, so peer-presence skips the refractory and
+    // neuron-decay the event lane gives git/process. No message loss —
+    // only presence-noise control is relaxed. The clean fix is to split
+    // message scanning into its own sensor so the lane is chosen per
+    // observation (also the seam a future Slack event-sensor wants).
     let (msg_ready, evt_ready): (Vec<usize>, Vec<usize>) = ready_indices
         .iter()
         .partition(|&&i| s.slots[i].name() == "peers");
