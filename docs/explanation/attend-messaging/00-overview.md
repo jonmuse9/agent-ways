@@ -79,3 +79,4 @@ Both lanes timestamp everything; they *use* time oppositely:
 | [[01.005.E]] | Different dimensions | Code work and "office" work as related but distinct dimensions |
 | [[01.006.E]] | The crowd | 3–5 Claudes — convene on `#open`, split to focus groups, digests |
 | [[01.007.E]] | The human on the surface | attend-chat — the human as a co-equal peer |
+| [[01.008.E]] | The lane gate | The mechanism under the scenarios — one fork, two state machines |
