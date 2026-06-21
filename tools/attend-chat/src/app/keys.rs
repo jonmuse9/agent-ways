@@ -8,7 +8,7 @@
 
 use agent_identity::TermCaps;
 
-use crate::chip::{known_identities, resolve_nickname};
+use crate::chip::{known_identities, resolve_nickname, KnownIdentity};
 use crate::groups::{channels, live_peer_count, resolve_group_dir};
 use crate::legend::{
     all_completions, all_group_completions, apply_completion, find_trailing_mention,
@@ -75,43 +75,89 @@ pub fn handle_enter(input_value: &str, signals: &[Signal]) -> EnterAction {
     // against the current registry state.
     let instance_cache = attend_instances::SnapshotCache::new();
     let agents = known_identities(signals, &seeds, caps, &instance_cache);
-    let result = match parse_addressed(&msg) {
-        Some(Addressed::Agent(name)) => match resolve_nickname(name, &agents) {
-            Some(target_cwd) => write_signal(&cwd_dir(&target_cwd), &msg)
-                .map(|n| format!("sent → @{name}: {n}")),
-            None => Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("@{name}: unknown nickname"),
-            )),
-        },
-        // Empty-group rejection (ADR-129 follow-up). Mirrors
-        // `attend send --focus` discipline: a `#groupname` send
-        // to a group with zero live members would land in
-        // `@<name>/` and sit unread, with the chat reporting
-        // "sent" so the user assumes delivery. The base channel
-        // (`#open`) bypasses the check — it rides `_broadcast/`,
-        // where every attend scans regardless of group membership.
-        Some(Addressed::Group(name)) => match resolve_group_dir(name) {
-            Some(dir) if live_peer_count(name) > 0 => {
-                write_signal(&dir, &msg).map(|n| format!("sent → #{name}: {n}"))
+    // A message can address several recipients at once
+    // (`@Tamsin @Cleo …`). Parse the whole leading run; an empty run
+    // means broadcast. Resolve every recipient up front and reject the
+    // entire send if any address is bad, so one typo doesn't
+    // half-deliver and the user can edit + retry the original line.
+    let recipients = parse_addressed(&msg);
+    let result = if recipients.is_empty() {
+        write_broadcast(&msg).map(|n| format!("sent: {n}"))
+    } else {
+        resolve_recipients(&recipients, &agents).and_then(|dests| {
+            for dir in &dests {
+                write_signal(dir, &msg)?;
             }
-            Some(_) => Err(std::io::Error::other(
-                format!(
-                    "#{name}: no live peers — message would not be read. \
-                     Try #open to broadcast."
-                ),
-            )),
-            None => Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("#{name}: unknown group"),
-            )),
-        },
-        None => write_broadcast(&msg).map(|n| format!("sent: {n}")),
+            Ok(format!("sent → {}", recipient_labels(&recipients).join(" ")))
+        })
     };
     match result {
         Ok(s) => EnterAction::ClearWithStatus(s),
         Err(e) => EnterAction::StatusOnly(format!("send failed: {}", e)),
     }
+}
+
+/// Render the addressed recipients back as their `@name` / `#group`
+/// labels for the "sent → …" status line.
+fn recipient_labels(recipients: &[Addressed<'_>]) -> Vec<String> {
+    recipients
+        .iter()
+        .map(|r| match r {
+            Addressed::Agent(name) => format!("@{name}"),
+            Addressed::Group(name) => format!("#{name}"),
+        })
+        .collect()
+}
+
+/// Resolve every addressed recipient to its destination inbox dir, or
+/// return the first addressing error. All-or-nothing on purpose: the
+/// caller writes only when *every* recipient resolves, so a single bad
+/// `@name`/`#group` rejects the whole multi-address send instead of
+/// partially delivering. Adjacent or repeated addresses that resolve to
+/// the same dir are deduped so a message is delivered once per inbox.
+///
+/// The empty-group rejection (ADR-129 follow-up) mirrors
+/// `attend send --focus` discipline: a `#groupname` send to a group
+/// with zero live members would land in `@<name>/` and sit unread while
+/// the chat reports "sent". The base channel (`#open`) bypasses the
+/// check — it rides `_broadcast/`, scanned regardless of membership.
+fn resolve_recipients(
+    recipients: &[Addressed<'_>],
+    agents: &[KnownIdentity],
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut dests = Vec::with_capacity(recipients.len());
+    let mut seen = std::collections::HashSet::new();
+    for r in recipients {
+        let dir = match r {
+            Addressed::Agent(name) => resolve_nickname(name, agents)
+                .map(|cwd| cwd_dir(&cwd))
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("@{name}: unknown nickname"),
+                    )
+                })?,
+            Addressed::Group(name) => match resolve_group_dir(name) {
+                Some(dir) if live_peer_count(name) > 0 => dir,
+                Some(_) => {
+                    return Err(std::io::Error::other(format!(
+                        "#{name}: no live peers — message would not be read. \
+                         Try #open to broadcast."
+                    )))
+                }
+                None => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("#{name}: unknown group"),
+                    ))
+                }
+            },
+        };
+        if seen.insert(dir.clone()) {
+            dests.push(dir);
+        }
+    }
+    Ok(dests)
 }
 
 /// Result of a Tab keypress. Always returns the next buffer +

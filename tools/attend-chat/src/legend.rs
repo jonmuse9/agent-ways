@@ -166,44 +166,64 @@ pub enum Addressed<'a> {
     Group(&'a str),
 }
 
-/// If `msg` starts with an addressing sigil + name, return the kind and
-/// name (without the sigil). Both `@Name` and `#Name` work. Keeps the
-/// original token in the outgoing body so receivers still see the
-/// address they were matched on.
-pub fn parse_addressed(msg: &str) -> Option<Addressed<'_>> {
-    let trimmed = msg.trim_start();
-    let mut chars = trimmed.chars();
-    let sigil = chars.next()?;
-    let kind = match sigil {
-        '@' => Sigil::Agent,
-        '#' => Sigil::Group,
-        _ => return None,
-    };
-    let rest = &trimmed[sigil.len_utf8()..];
-    // First alnum + `-` run is the name; anything after must be
-    // whitespace or nothing. Groups allow `-`; nicknames don't use
-    // it today but accepting it in both keeps the grammar uniform
-    // (and worst case the resolver just returns None).
-    let end = rest
-        .char_indices()
-        .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '-'))
-        .map(|(i, _)| i)
-        .unwrap_or(rest.len());
-    if end == 0 {
-        return None;
-    }
-    let name = &rest[..end];
-    let after = &rest[end..];
-    // Allow sigil-plus-name alone (a bare ping), otherwise require a
-    // space so `@Nick,` or `#group.` don't route.
-    if after.is_empty() || after.starts_with(char::is_whitespace) {
-        Some(match kind {
+/// Parse the **leading run** of addressing sigils from `msg`.
+///
+/// A single message can address several recipients at once —
+/// `@Tamsin @Cleo #infra sync up` addresses two agents and a group.
+/// Every `@Name` / `#group` token at the very start of the message
+/// (separated only by whitespace) is a recipient; the run ends at the
+/// first token that isn't a clean mention, and everything from there
+/// on is the body. The original tokens stay in the message so each
+/// receiver sees who else was addressed.
+///
+/// Returns an empty `Vec` when the message doesn't begin with a
+/// mention at all — the caller treats that as a broadcast. Order is
+/// left-to-right as written; the caller dedups by resolved
+/// destination, so a repeated address delivers once.
+///
+/// Grammar per token: sigil + an alnum/`-` name, then whitespace or
+/// end-of-input. Trailing punctuation (`@Nick,`) means "referring",
+/// not "addressing", and ends the run. Groups allow `-`; nicknames
+/// don't use it today but accepting it in both keeps the grammar
+/// uniform (and worst case the resolver just returns None).
+pub fn parse_addressed(msg: &str) -> Vec<Addressed<'_>> {
+    let mut rest = msg.trim_start();
+    let mut out = Vec::new();
+    while let Some(sigil) = rest.chars().next() {
+        let kind = match sigil {
+            '@' => Sigil::Agent,
+            '#' => Sigil::Group,
+            _ => break,
+        };
+        let after_sigil = &rest[sigil.len_utf8()..];
+        let end = after_sigil
+            .char_indices()
+            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '-'))
+            .map(|(i, _)| i)
+            .unwrap_or(after_sigil.len());
+        // `end == 0` is a bare sigil or a sigil glued to punctuation
+        // (`@`, `@ hi`, `#,`) — not a mention; stop the run.
+        if end == 0 {
+            break;
+        }
+        let name = &after_sigil[..end];
+        let tail = &after_sigil[end..];
+        // The name must be followed by whitespace or end-of-input.
+        // `@Nick,` is a reference, not an address — end the run so the
+        // whole message falls through to broadcast (matching the old
+        // single-recipient behavior).
+        if !tail.is_empty() && !tail.starts_with(char::is_whitespace) {
+            break;
+        }
+        out.push(match kind {
             Sigil::Agent => Addressed::Agent(name),
             Sigil::Group => Addressed::Group(name),
-        })
-    } else {
-        None
+        });
+        // Advance past this token's trailing whitespace to the next
+        // candidate mention.
+        rest = tail.trim_start();
     }
+    out
 }
 
 /// Render the **agent** legend row: `@Name @Name ...` across the
@@ -513,55 +533,93 @@ mod tests {
 
     #[test]
     fn addressed_at_start_with_body() {
-        assert_eq!(parse_addressed("@Tamsin hello"), Some(Addressed::Agent("Tamsin")));
+        assert_eq!(parse_addressed("@Tamsin hello"), vec![Addressed::Agent("Tamsin")]);
     }
 
     #[test]
     fn addressed_bare_ping() {
         // `@Nick` with nothing after is a valid addressed ping.
-        assert_eq!(parse_addressed("@Urban"), Some(Addressed::Agent("Urban")));
+        assert_eq!(parse_addressed("@Urban"), vec![Addressed::Agent("Urban")]);
     }
 
     #[test]
     fn addressed_with_leading_whitespace() {
-        assert_eq!(parse_addressed("   @Tamsin hello"), Some(Addressed::Agent("Tamsin")));
+        assert_eq!(parse_addressed("   @Tamsin hello"), vec![Addressed::Agent("Tamsin")]);
     }
 
     #[test]
     fn not_addressed_if_not_at_start() {
-        assert_eq!(parse_addressed("hi @Tamsin"), None);
+        assert!(parse_addressed("hi @Tamsin").is_empty());
     }
 
     #[test]
     fn not_addressed_if_trailing_punctuation() {
         // `@Tamsin,` — punctuation immediately after the name means
         // the user isn't really addressing, just referring.
-        assert_eq!(parse_addressed("@Tamsin, hi"), None);
+        assert!(parse_addressed("@Tamsin, hi").is_empty());
     }
 
     #[test]
     fn not_addressed_on_bare_at_sign() {
-        assert_eq!(parse_addressed("@ hi"), None);
-        assert_eq!(parse_addressed("@"), None);
+        assert!(parse_addressed("@ hi").is_empty());
+        assert!(parse_addressed("@").is_empty());
     }
 
     #[test]
     fn addressed_group_with_body() {
-        assert_eq!(parse_addressed("#deploy rollout at 3pm"), Some(Addressed::Group("deploy")));
+        assert_eq!(parse_addressed("#deploy rollout at 3pm"), vec![Addressed::Group("deploy")]);
     }
 
     #[test]
     fn addressed_group_with_dash() {
-        assert_eq!(parse_addressed("#my-team ping"), Some(Addressed::Group("my-team")));
+        assert_eq!(parse_addressed("#my-team ping"), vec![Addressed::Group("my-team")]);
     }
 
     #[test]
     fn addressed_group_bare_ping() {
-        assert_eq!(parse_addressed("#infra"), Some(Addressed::Group("infra")));
+        assert_eq!(parse_addressed("#infra"), vec![Addressed::Group("infra")]);
     }
 
     #[test]
     fn addressed_group_rejects_punctuation() {
-        assert_eq!(parse_addressed("#deploy, now"), None);
+        assert!(parse_addressed("#deploy, now").is_empty());
+    }
+
+    #[test]
+    fn addressed_multiple_agents() {
+        // The headline multi-address case: both `@`s become recipients,
+        // not just the first (the bug ADR-136 fixes).
+        assert_eq!(
+            parse_addressed("@Tamsin @Cleo sync on the contract"),
+            vec![Addressed::Agent("Tamsin"), Addressed::Agent("Cleo")],
+        );
+    }
+
+    #[test]
+    fn addressed_mixed_agent_and_group() {
+        // A run can mix sigils: address an agent and a group together.
+        assert_eq!(
+            parse_addressed("@Tamsin #infra heads up"),
+            vec![Addressed::Agent("Tamsin"), Addressed::Group("infra")],
+        );
+    }
+
+    #[test]
+    fn addressed_run_with_no_body() {
+        // Pure address line, no trailing message — still all recipients.
+        assert_eq!(
+            parse_addressed("@Tamsin @Cleo"),
+            vec![Addressed::Agent("Tamsin"), Addressed::Agent("Cleo")],
+        );
+    }
+
+    #[test]
+    fn addressed_run_stops_at_body() {
+        // Only the *leading* run addresses. A `@Cleo` after body text is
+        // a reference inside the message, not a second recipient.
+        assert_eq!(
+            parse_addressed("@Tamsin hello @Cleo"),
+            vec![Addressed::Agent("Tamsin")],
+        );
     }
 }
