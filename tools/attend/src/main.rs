@@ -55,9 +55,9 @@ fn main() {
     match command {
         Commands::Run { catchup } => cmd::run::cmd_run_with_catchup(catchup),
         Commands::Peers => cmd::peers::cmd_peers(),
-        Commands::Inbox { msg_id } => match msg_id {
+        Commands::Inbox { msg_id, limit, page, before } => match msg_id {
             Some(id) => cmd::inbox::cmd_inbox_read(&id),
-            None => cmd::inbox::cmd_inbox(),
+            None => cmd::inbox::cmd_inbox(limit, page, before),
         },
         Commands::Status => cmd::status::cmd_status(),
         Commands::Sensors => cmd::sensors::cmd_sensors(),
@@ -75,8 +75,8 @@ fn main() {
         Commands::Permissions { sub } => match sub.unwrap_or(PermissionsCmd::Audit) {
             PermissionsCmd::Audit => cmd::permissions::cmd_permissions_audit(),
         },
-        Commands::Cleanup { older_than, dry_run, all } => {
-            cmd::cleanup::cmd_cleanup(older_than, dry_run, all);
+        Commands::Cleanup { dry_run, all } => {
+            cmd::cleanup::cmd_cleanup(dry_run, all);
         }
         Commands::Config { sub } => dispatch_config(sub.unwrap_or(ConfigCmd::Show)),
     }

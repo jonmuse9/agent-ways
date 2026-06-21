@@ -19,11 +19,23 @@ pub(crate) fn signals_base() -> std::path::PathBuf {
         .join("signals")
 }
 
-/// Encode a project path the same way Claude Code does: '/', '_', '.' → '-'
+/// Claude Code's per-project data dir. A project is "live" iff its
+/// encoded-cwd subdir exists here; message-tray lifetime is bound to it
+/// (ADR-136) rather than to a wall-clock age.
+pub(crate) fn projects_base() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home).join(".claude").join("projects")
+}
+
+/// Encode a project path the same way Claude Code does: '/', '_', '.' →
+/// '-' (and, on Windows, '\' and ':'). Kept in lockstep with
+/// sensor-peers' `encode_cwd` so tray creation and the project-liveness
+/// lookup that reaps trays can never disagree on a path's encoded name
+/// (ADR-136 Decision 3).
 pub(crate) fn encode_project(path: &str) -> String {
     path.chars()
         .map(|c| match c {
-            '/' | '_' | '.' => '-',
+            '/' | '_' | '.' | '\\' | ':' => '-',
             _ => c,
         })
         .collect()

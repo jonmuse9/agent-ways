@@ -40,6 +40,18 @@ pub(crate) enum Commands {
     Inbox {
         /// Specific message id to read in detail (omit to list inbox)
         msg_id: Option<String>,
+
+        /// Max messages per page, newest first
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+
+        /// Page number; 1 = newest. Higher numbers walk back into history.
+        #[arg(long, default_value_t = 1)]
+        page: usize,
+
+        /// Cursor: only show messages older than this unix timestamp
+        #[arg(long, value_name = "TS")]
+        before: Option<u64>,
     },
 
     /// Show running instances, signals, and focus state
@@ -125,17 +137,15 @@ pub(crate) enum Commands {
         sub: Option<PermissionsCmd>,
     },
 
-    /// Remove stale signal files from the signals base
+    /// Reap signal files whose owning project is gone, and prune empty
+    /// project dirs. Messages are never removed by age — lifetime is bound
+    /// to project liveness (ADR-136).
     Cleanup {
-        /// Age cutoff (e.g. 5m, 1h, 30s) — defaults to cleanup.retention from config
-        #[arg(long, value_name = "DUR")]
-        older_than: Option<String>,
-
         /// List what would be removed without deleting
         #[arg(long, short = 'n')]
         dry_run: bool,
 
-        /// Remove every signal file regardless of age
+        /// Remove every signal file regardless of project liveness
         #[arg(long)]
         all: bool,
     },

@@ -1,14 +1,14 @@
 pub mod last_inbound;
-mod salience;
+mod signal_id;
 
-use salience::{extract_re_id, signal_id_from_filename, SignalSalience};
-use sensor_trait::{epoch_secs, extract_json_u64, Focus, Sensor};
+use signal_id::signal_id_from_filename;
+use sensor_trait::{extract_json_u64, Focus, Sensor};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// Callback that returns the current set of extra signal directories
 /// (typically focus-group dirs). Called on every scan so mid-session
@@ -55,11 +55,15 @@ pub struct PeerSensor {
     /// Sliding window for per-peer engagement boost calculation.
     /// Set via `set_peer_activity_window` from attend's engagement config.
     peer_activity_window: Duration,
-    /// Per-signal presentation-layer aging (ADR-121 outward gate,
-    /// unified in ADR-123). Consulted before each signal-derived
-    /// observation leaves `read_signals`; stale backlog signals are
-    /// suppressed, threaded replies reset the parent's salience.
-    signal_salience: SignalSalience,
+    /// Set true once a checkpoint has been imported (warm restart). A
+    /// warm restart restores the seen-set, so only messages that arrived
+    /// during the down-gap surface. A cold start (this stays false) has
+    /// no seen-set, so the first scan baselines the existing backlog
+    /// instead of dumping it — see `read_signals`.
+    checkpoint_loaded: bool,
+    /// Set true after the first `read_signals`. Gates the one-time
+    /// cold-start message baseline.
+    message_baseline_done: bool,
 }
 
 #[allow(dead_code)]
@@ -99,6 +103,26 @@ struct SessionFile {
     session_id: String,
 }
 
+/// Which room a message came from — used only for the digest breakdown.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MsgKind {
+    Directed,
+    Open,
+    Group,
+}
+
+/// A message awaiting emission for the current poll. Collected during the
+/// scan, then either emitted individually or rolled into a digest once the
+/// whole poll's volume is known.
+struct PendingMsg {
+    magnitude: f64,
+    sender: String,
+    body: String,
+    kind: MsgKind,
+    /// Wall-clock age in seconds (since the file's mtime) at scan time.
+    age_secs: u64,
+}
+
 impl PeerSensor {
     pub fn new() -> Self {
         let home = home_dir();
@@ -116,7 +140,8 @@ impl PeerSensor {
             extra_scan_dirs_fn: None,
             peer_activity: HashMap::new(),
             peer_activity_window: Duration::from_secs(900),
-            signal_salience: SignalSalience::new(),
+            checkpoint_loaded: false,
+            message_baseline_done: false,
         }
     }
 
@@ -126,12 +151,6 @@ impl PeerSensor {
         self.peer_activity_window = window;
     }
 
-    /// Set the outward-gate salience parameters from attend's
-    /// `signals:` config block. Called by the orchestrator at startup.
-    pub fn set_salience_params(&mut self, half_life_seconds: u64, presentation_floor: f64) {
-        self.signal_salience
-            .set_params(half_life_seconds, presentation_floor);
-    }
 
     /// Compute the magnitude boost for a peer based on their recent activity.
     /// Records the current message and returns the boost multiplier.
@@ -217,6 +236,12 @@ impl PeerSensor {
     /// focus list, and joined rooms. Returns observations for new signals.
     fn read_signals(&mut self, focus: &Focus) -> Vec<(f64, String)> {
         let mut observations = Vec::new();
+        // Unseen messages this poll are collected here, then either emitted
+        // individually (the common, timely case) or coalesced into one
+        // digest when a single poll surfaces more than DIGEST_THRESHOLD —
+        // a warm rejoin after a down-gap, or a burst from a hyperactive
+        // peer. Nothing is dropped; detail is always in `attend inbox`.
+        let mut pending: Vec<PendingMsg> = Vec::new();
         let base = signals_base();
 
         // Directories to scan: own project + broadcast + focus group + rooms
@@ -233,11 +258,15 @@ impl PeerSensor {
             .clone()
             .unwrap_or_else(|| "---none---".to_string());
 
-        // Shared present-tick for the whole scan — every gate check and
-        // every reply-reset uses the same wall-clock second, so a reply
-        // that arrives alongside an aged parent can resurface the parent
-        // inside the same poll.
-        let now_tick = epoch_secs();
+        // Cold-start backlog baseline: on the first scan of a session
+        // that restored no checkpoint (no seen-set), mark every existing
+        // message seen WITHOUT emitting, so a fresh join doesn't dump the
+        // whole durable backlog into one turn. A warm restart skips this
+        // (the checkpoint restored the seen-set), so down-gap messages
+        // still surface as unseen. Detail is always available via
+        // `attend inbox`.
+        let baselining = !self.message_baseline_done && !self.checkpoint_loaded;
+        self.message_baseline_done = true;
 
         for dir in &scan_dirs {
             let entries = match fs::read_dir(dir) {
@@ -258,6 +287,14 @@ impl PeerSensor {
                     continue;
                 }
 
+                // Cold-start baseline: record the existing backlog as seen
+                // and emit nothing, so a fresh join is not flooded. (See
+                // `baselining` above; warm restarts skip this.)
+                if baselining {
+                    self.seen_signals.insert(key);
+                    continue;
+                }
+
                 // Read and parse: `from|project|cwd|message` (legacy) or
                 // `from|project|cwd|re:id|message` (threaded, ADR-120).
                 let content = match fs::read_to_string(&path) {
@@ -266,37 +303,14 @@ impl PeerSensor {
                 };
                 let content = content.trim();
 
-                // Re-engagement reset (ADR-120 + ADR-121): a threaded
-                // reply bumps the parent signal's salience back to 1.0
-                // at `now_tick`, regardless of whether we're going to
-                // present the reply itself. The parent may or may not
-                // still be on disk — the reset persists into the
-                // salience map either way, so future observers joining
-                // the thread see a resurfaced parent.
-                if let Some(re_id) = extract_re_id(content) {
-                    self.signal_salience.reset(re_id, now_tick);
-                }
-
-                // Outward gate: suppress aged-out backlog signals.
-                // Anchored to the file's on-disk mtime so a fresh
-                // observer joining a focus-group room sees old material
-                // as already-decayed, which is the backlog-filter
-                // behavior ADR-121 designed and ADR-123 made a
-                // cross-tool facility.
+                // The message lane bypasses the event-lane noise stack
+                // (ADR-136 Decision 1): no salience gate, no refractory, no
+                // governor. An authored message is not observation noise, so
+                // it is never aged-out or suppressed by wall-clock decay —
+                // only deduped (the seen-set) and, on a cold start, baselined
+                // (see below). Decay stays where it belongs: the event lane
+                // (git / process / peer-presence).
                 let signal_id = signal_id_from_filename(&filename).to_string();
-                let arrival_tick = fs::metadata(&path)
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(now_tick);
-                if !self.signal_salience.gate(&signal_id, arrival_tick, now_tick) {
-                    // Aged past the presentation floor — suppress the
-                    // observation, but still mark the file seen so
-                    // we don't re-check it every poll.
-                    self.seen_signals.insert(key);
-                    continue;
-                }
 
                 if let Some((from, project, source_cwd, message)) = parse_signal(content) {
                     // Skip our own signals — check the from field, not filename.
@@ -340,30 +354,28 @@ impl PeerSensor {
                     let boost = self.peer_engagement_boost(&from_owned);
                     let magnitude = base_magnitude * boost;
 
-                    // Chunk long messages at word boundaries so each event
-                    // stays under Monitor's ~400-char stdout line ceiling.
-                    // Multiple chunks arrive as separate events inside the
-                    // same 200ms batch, so Monitor groups them into one
-                    // notification for the recipient.
-                    let include_reply_hint = !self.reply_hint_shown;
-                    let chunks = chunk_message(message, MAX_CHUNK_BODY, MAX_CHUNKS);
-                    let total = chunks.len();
-                    for (i, chunk) in chunks.into_iter().enumerate() {
-                        let header = if total == 1 {
-                            format!("message from {}: ", sender)
-                        } else {
-                            format!("message from {} ({}/{}): ", sender, i + 1, total)
-                        };
-                        let body = if i == 0 && include_reply_hint {
-                            format!("{} (reply: attend send <msg>)", chunk)
-                        } else {
-                            chunk
-                        };
-                        observations.push((magnitude, format!("{}{}", header, body)));
-                    }
-                    if include_reply_hint {
-                        self.reply_hint_shown = true;
-                    }
+                    let kind = if dir_name == own_encoded {
+                        MsgKind::Directed
+                    } else if dir_name == "_broadcast" {
+                        MsgKind::Open
+                    } else {
+                        MsgKind::Group
+                    };
+                    let age_secs = fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.elapsed().ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    // Defer emission: collect now, decide individual-vs-digest
+                    // after the whole poll is scanned (see below).
+                    pending.push(PendingMsg {
+                        magnitude,
+                        sender,
+                        body: message.to_string(),
+                        kind,
+                        age_secs,
+                    });
 
                     // Track most-recent inbound for `attend reply`. We
                     // record here (after the gate passes and we've
@@ -391,13 +403,46 @@ impl PeerSensor {
 
                 self.seen_signals.insert(key);
 
-                // Clean up stale signals (older than 5 minutes)
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if let Ok(modified) = metadata.modified() {
-                        if modified.elapsed().unwrap_or_default().as_secs() > 300 {
-                            fs::remove_file(&path).ok();
-                        }
-                    }
+                // Authored messages are durable: reading one marks it seen
+                // (dedup), but the file is NEVER deleted here. Destroying a
+                // signal that another peer — or this same session after a
+                // restart — has not read yet was the cross-peer shred behind
+                // ADR-136 Bug 2 (a passing colleague shredding an unread fax).
+                // Message lifetime is bound by project liveness in the cleanup
+                // sweep (a tray dies when its project is gone), not by a
+                // per-read wall-clock timer.
+            }
+        }
+
+        // Coalesce or emit. Below the threshold, every message emits
+        // individually and immediately (timely — the common case). Above
+        // it, a single poll surfaced a flood (rejoin gap or hyperactive
+        // peer), so collapse to one count-led digest instead of N events.
+        if pending.len() > DIGEST_THRESHOLD {
+            observations.push(build_digest(&pending));
+        } else {
+            for m in &pending {
+                let include_reply_hint = !self.reply_hint_shown;
+                // Chunk long messages at word boundaries so each event stays
+                // under Monitor's ~400-char stdout line ceiling; chunks ride
+                // the same 200ms batch and group into one notification.
+                let chunks = chunk_message(&m.body, MAX_CHUNK_BODY, MAX_CHUNKS);
+                let total = chunks.len();
+                for (i, chunk) in chunks.into_iter().enumerate() {
+                    let header = if total == 1 {
+                        format!("message from {}: ", m.sender)
+                    } else {
+                        format!("message from {} ({}/{}): ", m.sender, i + 1, total)
+                    };
+                    let body = if i == 0 && include_reply_hint {
+                        format!("{} (reply: attend send <msg>)", chunk)
+                    } else {
+                        chunk
+                    };
+                    observations.push((m.magnitude, format!("{}{}", header, body)));
+                }
+                if include_reply_hint {
+                    self.reply_hint_shown = true;
                 }
             }
         }
@@ -672,40 +717,26 @@ impl Sensor for PeerSensor {
             state.push(("seen_signal".to_string(), sig.clone()));
         }
         state.push(("reply_hint_shown".to_string(), self.reply_hint_shown.to_string()));
-        // Per-signal salience state. Each row carries "<id>\t<json>" so
-        // the single-string value slot used by the checkpoint wire
-        // format stays one field.
-        for (id, json) in self.signal_salience.export_rows() {
-            state.push(("signal_salience".to_string(), format!("{id}\t{json}")));
-        }
         state
     }
 
     fn import_state(&mut self, state: &[(String, String)]) {
-        let mut salience_restored = 0usize;
+        // Any persisted rows mean this is a warm restart: the seen-set is
+        // being restored, so the cold-start backlog baseline is skipped and
+        // down-gap messages surface as unseen.
+        self.checkpoint_loaded = !state.is_empty();
         for (key, value) in state {
             match key.as_str() {
                 "seen_signal" => { self.seen_signals.insert(value.clone()); }
                 "reply_hint_shown" => { self.reply_hint_shown = value == "true"; }
-                "signal_salience" => {
-                    if let Some((id, json)) = value.split_once('\t') {
-                        if self.signal_salience.import_row(id, json) {
-                            salience_restored += 1;
-                        }
-                    }
-                }
+                // Legacy "signal_salience" rows (from before the message
+                // lane stopped using the per-signal gate) are ignored.
                 _ => {}
             }
         }
         if !self.seen_signals.is_empty() {
             eprintln!("[attend] peers: restored {} seen signals from checkpoint",
                 self.seen_signals.len());
-        }
-        if salience_restored > 0 {
-            eprintln!(
-                "[attend] peers: restored {} signal salience entries from checkpoint",
-                salience_restored
-            );
         }
     }
 }
@@ -935,6 +966,66 @@ const MAX_CHUNK_BODY: usize = 260;
 /// per-notification safety ceiling.
 const MAX_CHUNKS: usize = 3;
 
+/// A single poll surfacing more than this many messages is a flood — a
+/// warm rejoin after a down-gap, or a hyperactive peer. Above it, the poll
+/// coalesces into one count-led digest rather than N events. ~8 is the
+/// uninvited-interrupt ceiling agreed for the re-entry digest.
+const DIGEST_THRESHOLD: usize = 8;
+
+/// Roll a flood of pending messages into one count-led digest line: counts
+/// per room, the age of the newest, and the span back to the oldest.
+/// Magnitude is the loudest of the batch so the digest still surfaces.
+fn build_digest(pending: &[PendingMsg]) -> (f64, String) {
+    let (mut directed, mut open, mut group) = (0usize, 0usize, 0usize);
+    let mut max_mag = 0.0f64;
+    let mut newest = u64::MAX;
+    let mut oldest = 0u64;
+    for m in pending {
+        match m.kind {
+            MsgKind::Directed => directed += 1,
+            MsgKind::Open => open += 1,
+            MsgKind::Group => group += 1,
+        }
+        if m.magnitude > max_mag {
+            max_mag = m.magnitude;
+        }
+        newest = newest.min(m.age_secs);
+        oldest = oldest.max(m.age_secs);
+    }
+    let mut parts = Vec::new();
+    if directed > 0 {
+        parts.push(format!("{directed} to you"));
+    }
+    if open > 0 {
+        parts.push(format!("{open} on #open"));
+    }
+    if group > 0 {
+        parts.push(format!("{group} in groups"));
+    }
+    let body = format!(
+        "{} new messages: {} (newest {} ago, over {}) — attend inbox for detail",
+        pending.len(),
+        parts.join(", "),
+        fmt_ago(newest),
+        fmt_ago(oldest),
+    );
+    (max_mag, body)
+}
+
+/// Compact relative age: seconds under 90s, then minutes / hours / days,
+/// each rounded to nearest.
+fn fmt_ago(secs: u64) -> String {
+    if secs < 90 {
+        format!("{secs}s")
+    } else if secs < 5400 {
+        format!("{}m", (secs + 30) / 60)
+    } else if secs < 129_600 {
+        format!("{}h", (secs + 1800) / 3600)
+    } else {
+        format!("{}d", (secs + 43_200) / 86_400)
+    }
+}
+
 /// Split a message into word-boundary chunks, each ≤ `chunk_size` characters,
 /// capped at `max_chunks`. Long messages get their tail replaced with an
 /// overflow hint on the final kept chunk.
@@ -1054,6 +1145,54 @@ mod tests {
     fn short_message_single_chunk() {
         let chunks = chunk_message("hello there", 100, 3);
         assert_eq!(chunks, vec!["hello there"]);
+    }
+
+    fn pmsg(kind: MsgKind, age_secs: u64, magnitude: f64) -> PendingMsg {
+        PendingMsg {
+            magnitude,
+            sender: "claude/x".to_string(),
+            body: "hi".to_string(),
+            kind,
+            age_secs,
+        }
+    }
+
+    #[test]
+    fn fmt_ago_scales_units() {
+        assert_eq!(fmt_ago(5), "5s");
+        assert_eq!(fmt_ago(120), "2m");
+        // Minutes band runs to 90m for precision, so 60m stays "60m".
+        assert_eq!(fmt_ago(3600), "60m");
+        assert_eq!(fmt_ago(7200), "2h");
+        assert_eq!(fmt_ago(2 * 86_400), "2d");
+    }
+
+    #[test]
+    fn digest_breaks_down_by_room_and_span() {
+        let pending = vec![
+            pmsg(MsgKind::Directed, 120, 7.0),
+            pmsg(MsgKind::Directed, 600, 7.0),
+            pmsg(MsgKind::Open, 1260, 4.0),
+        ];
+        let (mag, body) = build_digest(&pending);
+        // Loudest of the batch surfaces the digest.
+        assert_eq!(mag, 7.0);
+        assert!(body.starts_with("3 new messages: "), "{body}");
+        assert!(body.contains("2 to you"), "{body}");
+        assert!(body.contains("1 on #open"), "{body}");
+        // Newest is 120s (2m); span back to the oldest is 1260s (21m).
+        assert!(body.contains("newest 2m ago"), "{body}");
+        assert!(body.contains("over 21m"), "{body}");
+        assert!(body.contains("attend inbox"), "{body}");
+    }
+
+    #[test]
+    fn digest_omits_empty_rooms() {
+        let pending = vec![pmsg(MsgKind::Open, 60, 4.0), pmsg(MsgKind::Open, 30, 4.0)];
+        let (_, body) = build_digest(&pending);
+        assert!(body.contains("2 on #open"), "{body}");
+        assert!(!body.contains("to you"), "{body}");
+        assert!(!body.contains("in groups"), "{body}");
     }
 
     #[test]
