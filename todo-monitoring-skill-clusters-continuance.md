@@ -90,3 +90,81 @@ it merges.
   implies a parent concept (monitoring) with GitHub as the first member, leaving
   room for others (CI systems, deploys, queues). Design for that shape.
 - Whether the proactive nudge-way ships now or later.
+
+---
+
+# Proposed skill specs — the starting point (build and critique these)
+
+This is a draft to react to, not a finished design. Read the principle above
+first, then critique/refine these before writing any `SKILL.md`.
+
+## Shape: one `gh-monitor` skill with modes
+
+Recommend a **single skill** `skills/gh-monitor/` invoked as `/gh-monitor <mode>`,
+not three separate skills — the modes share the Monitor-launching boilerplate and
+the "correct invocation" rules, and one entry point is more discoverable. The
+parent **"monitoring"** concept stays conceptual for now (a naming convention:
+`gh-monitor`, later `deploy-monitor`, `queue-monitor`) — don't build a parent
+abstraction until a second type exists.
+
+`SKILL.md` frontmatter: `name: gh-monitor`; `description` keyed on intent ("watch
+a PR's CI / your GitHub notifications / a thread for replies — launch a persistent
+Monitor instead of polling by hand or stopping to check"); `allowed-tools` must
+include the Monitor tool (load via ToolSearch) + Bash. Body: a pre-flight `gh auth
+status` check, then per-mode launch instructions, then the **correct-invocation
+rules** from this doc (flush every pipe stage, cover all terminal states, 30s+
+remote intervals / honor `X-Poll-Interval`, since-marker or ETag, `|| true` guards).
+
+## Mode `ci` — watch the current PR's checks until they resolve
+
+- **Lifecycle: until-terminal, NOT persistent.** It's bounded to *this push's* CI —
+  it ends when checks resolve. That boundedness is the whole point (ADR-137).
+- Launch a Monitor over a `gh pr checks` poll loop that emits each check as it
+  lands and a final terminal line, then exits:
+  ```bash
+  prev=""
+  while true; do
+    s=$(gh pr checks --json name,bucket 2>/dev/null || echo '[]')
+    cur=$(jq -r '[.[]|select(.bucket!="pending")|"\(.name): \(.bucket)"]|sort|.[]' <<<"$s")
+    comm -13 <(echo "$prev") <(echo "$cur")          # new terminal results since last poll
+    prev=$cur
+    jq -e 'length>0 and all(.[]; .bucket!="pending")' <<<"$s" >/dev/null \
+      && { echo "CI complete"; break; }
+    sleep 30
+  done
+  ```
+- Recover the richer rollup logic (FAILURE set, `conclusion // state // "PENDING"`
+  coalesce, terminal-first-run rule) from the retired script if wanted:
+  `git show 78028f3~1:tools/attend/examples/gh-pr-checks.sh`.
+
+## Mode `inbox` — watch notifications while working
+
+- **Lifecycle: persistent** (session-length); stop with TaskStop.
+- Reuse `gh-notifications.sh`'s `reason`→tier filtering (drop `subscribed` /
+  `ci_activity`). Conditional-poll over the inbox:
+  ```bash
+  last=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  while true; do
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    gh api "notifications?since=$last" 2>/dev/null \
+      | jq -r '.[]|select(.unread)|"\(.reason): \(.subject.type) — \(.subject.title) [\(.repository.full_name)]"' || true
+    last=$now; sleep 60     # matches the server's X-Poll-Interval
+  done
+  ```
+- **Upgrade**: swap `since=` for `If-None-Match` + the stored `ETag` → `304` when
+  idle (verified supported). Free idle polls.
+
+## Mode `comments <pr|issue>` — watch one thread for replies
+
+- **Lifecycle: persistent** until stopped. The Monitor tool's own docs ship this
+  exact pattern (`repos/{o}/{r}/issues/{n}/comments?since=`). Lowest-priority mode.
+
+## Critique points to settle when building
+
+- One skill with modes vs three skills (recommend one).
+- `ci` until-terminal vs persistent (recommend until-terminal — task-bounded).
+- Retire `gh-notifications.sh` once `inbox` exists? (same antipattern — likely yes).
+- Ship the proactive nudge-way (on `git push` → "watch CI?") now or later?
+- Does `gh-monitor` live as a skill *or* should the launch-pattern be a way that
+  fires on PR/CI context? (Per Knowledge Way: it gives Claude something to *run* →
+  skill; a thin way can nudge toward it.)
