@@ -137,32 +137,14 @@ fn evaluate_context_threshold(threshold_pct: u64, transcript: Option<&str>) -> b
         _ => return false,
     };
 
-    // Detect model for context window size
-    let window_chars: u64 = detect_window_chars(transcript);
-    let limit = window_chars * threshold_pct / 100;
-    let size = transcript_size_since_summary(transcript);
-
-    size > limit
-}
-
-fn detect_window_chars(transcript: &str) -> u64 {
-    let content = match std::fs::read_to_string(transcript) {
-        Ok(c) => c,
-        Err(_) => return 620_000,
-    };
-    for line in content.lines().rev() {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-            if val.get("type").and_then(|t| t.as_str()) == Some("assistant") {
-                if let Some(model) = val.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str()) {
-                    if model.contains("opus-4") {
-                        return 3_800_000;
-                    }
-                }
-                break;
-            }
-        }
-    }
-    620_000 // default: ~155K tokens × 4 chars/token
+    // Single source of truth with `ways context`: accurate API token counts ÷
+    // model window — NOT a transcript-byte heuristic, which over-counts the
+    // full transcript file (out-of-context tool output, persisted blobs, JSON
+    // envelope) and fires thresholds far too early.
+    matches!(
+        crate::cmd::context::pct_used_from_transcript(transcript),
+        Some(pct) if pct >= threshold_pct
+    )
 }
 
 fn transcript_size_since_summary(transcript: &str) -> u64 {
