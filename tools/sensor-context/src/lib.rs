@@ -138,15 +138,14 @@ impl Sensor for ContextSensor {
         let mut observations = Vec::new();
 
         // Attend handles trajectory awareness. Ways handles threshold
-        // actions (todos@75%, memory@80%, checkpoint@95%).
+        // actions (todos@75%, memory@80%, checkpoint@85%).
         // Attend's thresholds are early warnings *before* ways fires,
         // plus velocity context that ways can't provide.
         let thresholds: &[(u8, f64, &str)] = &[
-            (40, 1.5, "approaching midpoint — plan wrap-up scope"),
-            (50, 2.0, "midpoint — wrap-up window opening"),
-            (65, 3.0, "ways will fire todos checkpoint at 75%"),
-            (85, 4.0, "ways fired memory save at 80% — verify it happened"),
-            (92, 5.0, "compaction checkpoint at 95% — finish current task"),
+            (50, 1.5, "halfway through the context window — if the work's on track, keep going; if you've barely started, this is a calm moment to scope the next stages"),
+            (65, 3.0, "ways will capture todos (75%) and memory (80%) shortly"),
+            (83, 4.0, "compaction checkpoint fires at 85% — finish the current task and sync"),
+            (90, 5.0, "stop or compact right now — quality degrades past here, and auto-compact is off"),
         ];
 
         for &(pct, magnitude, label) in thresholds {
@@ -161,8 +160,8 @@ impl Sensor for ContextSensor {
                 if let Some(vel) = self.velocity() {
                     if vel > 0.1 {
                         msg.push_str(&format!(" (burning {:.1}%/min", vel));
-                        if pct < 95 {
-                            if let Some(mins) = self.project_minutes_to(95.0, current.pct_used) {
+                        if pct < 90 {
+                            if let Some(mins) = self.project_minutes_to(90.0, current.pct_used) {
                                 if mins < 60.0 {
                                     msg.push_str(&format!(", ~{:.0} min to critical", mins));
                                 }
