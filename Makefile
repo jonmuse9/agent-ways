@@ -77,7 +77,14 @@ install: hooks-executable setup hooks-install
 	@$(LINK) "$(CURDIR)/$(ATTEND_BIN)" "$(XDG_BIN)/attend"
 	@$(LINK) "$(CURDIR)/$(ATTEND_CHAT_BIN)" "$(XDG_BIN)/attend-chat"
 	@mkdir -p "$(CLAUDE_BIN)"
-	@$(LINK) "$(CURDIR)/$(WAY_EMBED_BIN)" "$(CLAUDE_BIN)/way-embed"
+	@# When the repo IS ~/.claude, $(CURDIR)/bin/way-embed already equals
+	@# $(CLAUDE_BIN)/way-embed — linking a file to itself errors ("same file").
+	@# Skip the link in that case; the binary is already where tools look for it.
+	@if [ "$(CURDIR)/$(WAY_EMBED_BIN)" -ef "$(CLAUDE_BIN)/way-embed" ]; then \
+		echo "  way-embed: already in place ($(CLAUDE_BIN)/way-embed) — no link needed"; \
+	else \
+		$(LINK) "$(CURDIR)/$(WAY_EMBED_BIN)" "$(CLAUDE_BIN)/way-embed"; \
+	fi
 	@echo ""
 	@echo "Install complete."
 	@echo "  ways binary:        $(XDG_BIN)/ways → $(CURDIR)/$(WAYS_BIN)"
