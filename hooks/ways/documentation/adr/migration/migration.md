@@ -28,56 +28,27 @@ refire: 0.15
 
 No existing ADRs. Scaffold the full structure.
 
-1. Create the directory tree:
-```bash
-mkdir -p docs/architecture docs/scripts
-```
+1. **Vendor the tooling.** The install steps (copy-not-symlink, `adr.yaml` setup)
+   live in the **adr** skill — that's the canonical *how*. For the optional doc
+   catalog (prose + ADRs as one typed graph, ADR-302, sharing this `adr.yaml`),
+   use the **docs** skill. To scaffold tooling *and* the surrounding repo health
+   in one pass, prefer `project-init`.
 
-2. Create `docs/architecture/adr.yaml` from the template:
-```bash
-cp hooks/ways/documentation/adr/adr.yaml.template docs/architecture/adr.yaml
-# Edit: set project_name, define domains for your project
-```
-
-3. Copy the ADR tool into the project — a standalone vendored copy. Project repos
-   **copy** (not symlink): a symlink into `~/.claude` breaks for collaborators and
-   CI, who don't have that directory. Only `~/.claude` itself symlinks to the live
-   source.
-```bash
-cp ~/.claude/hooks/ways/documentation/adr/adr-tool docs/scripts/adr
-chmod +x docs/scripts/adr
-```
-
-4. Verify:
+2. Verify:
 ```bash
 docs/scripts/adr domains    # Should show your configured domains
 docs/scripts/adr list       # Should show 0 ADRs
 ```
 
-5. *(Optional)* Add the documentation catalog — prose docs + ADRs as one typed
-   graph (ADR-302), sharing this same `adr.yaml`. The catalog tools are a **pair**:
-   `doc` (the librarian) does `import doclint` and shells out to a sibling
-   `doclint.py`, so the linter **must be copied as a file named `doclint.py`
-   beside `doc`**. Same copy-not-symlink rule as the ADR tool.
-```bash
-cp ~/.claude/hooks/ways/documentation/linting/doc-tool docs/scripts/doc
-cp ~/.claude/hooks/ways/documentation/linting/doclint.py docs/scripts/doclint.py
-chmod +x docs/scripts/doc docs/scripts/doclint.py
-# Optional: a relative, in-repo convenience symlink so `doclint` works as a bare
-# command. It points at a sibling that travels with the repo — NOT into ~/.claude.
-ln -s doclint.py docs/scripts/doclint
-docs/scripts/doc coverage   # empty-but-functional matrix until pages declare frontmatter
-docs/scripts/doc lint       # lints the doc+ADR graph
-```
-   Catalog membership is opt-in: a `docs/` page joins the graph only once it
-   declares `id`/`domain`/`mode` frontmatter, so un-tagged prose is never flagged.
-   To decline the catalog for this repo: `touch .claude/no-doc-tooling`.
+The rest of this way is the migration-specific *why/when/what* the skill doesn't
+cover: which starting state you're in, and how to get existing decisions into the
+tooling without losing history.
 
 ## Flat Directory Migration
 
 Existing ADRs like `docs/adr/0001-use-postgres.md` with sequential numbering.
 
-1. **Scaffold the tooling** (greenfield steps 1-3 above)
+1. **Vendor the tooling** (greenfield step 1 — use the **adr** skill)
 
 2. **Park existing ADRs as legacy** — don't renumber:
 ```bash
