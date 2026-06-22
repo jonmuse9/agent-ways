@@ -304,7 +304,6 @@
     "code-simplifier@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
-    "ralph-loop@claude-plugins-official": false,
     "gopls-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
@@ -317,5 +316,8 @@
   },
   "skipWorkflowUsageWarning": true,
   "autoCompactEnabled": false,
-  "teammateMode": "auto"
+  "teammateMode": "auto",
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
 }
