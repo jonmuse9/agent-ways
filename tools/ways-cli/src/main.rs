@@ -276,6 +276,9 @@ enum Commands {
         /// Filter to ways matching this substring (e.g., "security", "ea/")
         #[arg(long)]
         way: Option<String>,
+        /// Audit only this language code (default: the active localized language)
+        #[arg(long)]
+        lang: Option<String>,
         /// Minimum cross-lingual cosine to accept for fidelity (default: 0.60)
         #[arg(long, default_value = "0.60")]
         fidelity_threshold: f64,
@@ -640,8 +643,8 @@ fn main() -> Result<()> {
         }
         Commands::Enable { name } => cmd::disable::enable(&name),
         Commands::Suggest { file, min_freq } => cmd::suggest::run(file, min_freq),
-        Commands::Tune { ways_dir, way, fidelity_threshold, discrimination_threshold, json } => {
-            cmd::tune::run(ways_dir, way, fidelity_threshold, discrimination_threshold, json)
+        Commands::Tune { ways_dir, way, lang, fidelity_threshold, discrimination_threshold, json } => {
+            cmd::tune::run(ways_dir, way, lang, fidelity_threshold, discrimination_threshold, json)
         }
         Commands::TuneCurves { apply, min_fires, project, way } => {
             cmd::tune_curves::run(apply, min_fires, project, way)

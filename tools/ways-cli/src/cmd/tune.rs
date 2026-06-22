@@ -3,10 +3,11 @@
 //! Two measurements per locale entry, run on the same query (the locale's
 //! own description + vocabulary):
 //!
-//! **Fidelity** — min cosine against peer aliases on the *same* way.
-//! Tightest cross-lingual positive; if a peer disagrees, fidelity drops.
-//! Low fidelity → stub is a poor translation of the same intent; fix by
-//! re-authoring.
+//! **Fidelity** — cosine alignment to the English root (ADR-139). The English
+//! frontmatter is embedded into the multilingual corpus as the per-way anchor,
+//! so for a single localized language an alias's only same-way peer IS the root:
+//! `min_peer` measures how well the translation tracks the source of truth.
+//! Low fidelity → the stub drifted from the English meaning; fix by re-authoring.
 //!
 //! **Discrimination** — best score against any *other* way's alias,
 //! minus the stub's own self-match. If another way scores higher than
@@ -18,7 +19,7 @@
 //!
 //! Parallelized: one way per thread, n_cores - 4 workers.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -53,10 +54,25 @@ struct Confuser {
 pub fn run(
     ways_dir: Option<String>,
     way_filter: Option<String>,
+    lang: Option<String>,
     fidelity_threshold: f64,
     discrimination_threshold: f64,
     json_output: bool,
 ) -> Result<()> {
+    // Mode gate (ADR-139): tune is a localized-mode concern. The target language is
+    // the explicit --lang, else the active localized language. English mode (en /
+    // auto) has nothing to audit — return clean, not an error.
+    let target_lang = match lang.or_else(|| {
+        crate::config::global().localized_language().map(|s| s.to_string())
+    }) {
+        Some(l) => l,
+        None => {
+            eprintln!("English mode (output_language = en / auto): no localized language to audit.");
+            eprintln!("Localize first via the ways-localize skill; `ways tune` then audits the result.");
+            return Ok(());
+        }
+    };
+
     let global_dir = ways_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir().join(".claude/hooks/ways"));
@@ -66,10 +82,12 @@ pub fn run(
     let multi_model = xdg_way.join("multilingual-minilm-l12-v2-q8.gguf");
 
     if !multi_corpus.is_file() {
-        bail!("Multilingual corpus not found. Run `ways corpus` first.");
+        eprintln!("No multilingual corpus to audit — run `ways corpus` (localized mode) first.");
+        return Ok(());
     }
     if !multi_model.is_file() {
-        bail!("Multilingual model not found. Run `make setup` first.");
+        eprintln!("Multilingual model not installed — run `make -C tools/way-embed model-multilingual`.");
+        return Ok(());
     }
 
     let embed_bin = find_way_embed()
@@ -77,6 +95,10 @@ pub fn run(
 
     let excluded = crate::util::load_excluded_segments();
     let locale_files = collect_locale_files(&global_dir, way_filter.as_deref(), &excluded)?;
+    if locale_files.is_empty() {
+        eprintln!("No localized stubs found for '{target_lang}'. Run the ways-localize workflow.");
+        return Ok(());
+    }
 
     let n_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let n_workers = n_cores.saturating_sub(4).max(1);
@@ -102,6 +124,7 @@ pub fn run(
         let embed_bin = embed_bin.clone();
         let multi_corpus = multi_corpus.clone();
         let multi_model = multi_model.clone();
+        let target_lang = target_lang.clone();
 
         handles.push(std::thread::spawn(move || loop {
             let item = { queue.lock().unwrap().pop() };
@@ -110,7 +133,7 @@ pub fn run(
                 None => break,
             };
 
-            match measure_way(&way_id, &locale_path, &embed_bin, &multi_corpus, &multi_model) {
+            match measure_way(&way_id, &locale_path, &embed_bin, &multi_corpus, &multi_model, &target_lang) {
                 Ok(mut ws) => {
                     let mut r = results.lock().unwrap();
                     r.append(&mut ws);
@@ -186,12 +209,7 @@ fn collect_locale_files(
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    if files.is_empty() {
-        if way_filter.is_some() {
-            bail!("No .locales.jsonl files matched filter");
-        }
-        bail!("No .locales.jsonl files found");
-    }
+    // Empty is a clean state (English mode / not yet localized); the caller decides.
     Ok(files)
 }
 
@@ -202,10 +220,11 @@ fn measure_way(
     embed_bin: &Path,
     multi_corpus: &Path,
     multi_model: &Path,
+    target_lang: &str,
 ) -> Result<Vec<FidelityResult>> {
     let entries: Vec<frontmatter::LocaleEntry> = frontmatter::parse_locales_jsonl(locale_path)?
         .into_iter()
-        .filter(|e| crate::agents::is_language_active(&e.lang))
+        .filter(|e| e.lang == target_lang)
         .collect();
 
     let mut out = Vec::with_capacity(entries.len());
@@ -312,7 +331,7 @@ fn emit_report(results: &[FidelityResult], fidelity_threshold: f64, discriminati
         discrimination_threshold
     );
     println!();
-    println!("Fidelity     = min cosine vs peer aliases on same way (how well translations agree).");
+    println!("Fidelity     = cosine alignment to the English root anchor (how well the translation tracks the source of truth).");
     println!("Discrimination = min_peer − top_confuser.score (how clearly this stub outranks other ways).");
     println!("A negative discrimination gap means another way outranks this locale's own peers.");
     println!();
