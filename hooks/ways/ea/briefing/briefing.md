@@ -7,52 +7,34 @@ refire: 0.15
 <!-- epistemic: convention -->
 # Catch-Me-Up Briefing
 
-Unified morning briefing using parallel data gathering for speed. This is the most comprehensive EA workflow — it combines email triage, calendar review, task status, and chat scanning into a single synthesized brief.
+A unified briefing across inboxes, calendar, tasks, and chat — the most
+comprehensive EA workflow. The runnable procedure (parallel scouts, the priority
+structure, suggested task mutations) lives in the **briefing** skill. This way is
+*when* to reach for it, and when a lighter query serves better.
 
-## When to Use Agent Teams
+## When to brief
 
-For multi-account, multi-service briefings, spawn parallel agents to work simultaneously. Each agent handles a domain and shares cross-reference-worthy findings with others in real-time.
+Reach for a full briefing at the start of the day, after time away, or whenever the
+user asks "catch me up / what did I miss" across accounts. The point is synthesis
+across sources — not a dump of each inbox, but the cross-referenced picture of what
+deserves attention now.
 
-**Use a team when:** workflow spans multiple accounts AND services AND benefits from cross-referencing.
+## When to use a team (vs. a single query)
 
-**Skip teams for:** single-account lookups, interactive workflows (drafting, scheduling), quick queries.
+The briefing skill can gather with parallel scout subagents or directly. Use the
+**team** when the briefing spans multiple accounts AND services AND benefits from
+cross-referencing — the parallelism hides slow I/O and keeps raw fetches out of the
+lead's context. **Skip the team** for a single account or service, an interactive
+task (drafting, scheduling), or a quick lookup — there the orchestration overhead
+costs more than it saves.
 
-## Standard Roles
+## Surface, don't act
 
-| Role | Domain | Responsibility |
-|------|--------|----------------|
-| **inbox-scout** | Email (all accounts) | Fetch, classify, filter; share people/topics with ops-scout |
-| **ops-scout** | Calendar + Tasks | Schedule, task status, cross-reference against inbox findings |
-| **Lead (you)** | Synthesis | Combine reports, present to user, suggest actions |
+A briefing ends in *suggestions* — a ranked action list and proposed task mutations
+the user approves, modifies, or dismisses. It never sends, schedules, or mutates on
+its own. Acting is a separate, approved step.
 
-For workflows involving additional platforms (chat, file storage, meeting recaps), add specialist scouts. Keep total to 3-5.
+## See also
 
-## Communication Rules
-
-- Scouts proactively share cross-reference-worthy findings as they work — don't wait until done.
-- Each scout sends a structured final report to the lead.
-- Lead does NOT start synthesis until all scouts have reported.
-
-## Briefing Structure
-
-Present the synthesized briefing in priority order:
-
-1. **Overdue** — Tasks past due, ranked by priority. Broken commitments come first.
-2. **Today's Schedule** — Calendar events with related task count and email context per meeting.
-3. **Due Today** — Tasks due today not yet complete.
-4. **Action Required** — Emails awaiting response, ranked by urgency. Note task/calendar cross-refs.
-5. **Already Addressed** — Messages already responded to. Flag any that resolve open tasks.
-6. **Open Tasks in Play** — Pending tasks with connections to today's emails and calendar.
-7. **Eisenhower Snapshot** — One-line summary (X do-first, Y to schedule, Z in inbox).
-8. **Cross-References** — Key connections found between emails, tasks, and calendar.
-9. **Suggested Actions** — Prioritized list of what to tackle first, considering calendar constraints.
-
-## After the Briefing
-
-Surface suggested task mutations based on cross-reference findings:
-- **Create:** New obligations from emails not yet tracked
-- **Complete:** Tasks that sent emails appear to resolve
-- **Update:** Tasks whose priority or due date changed
-- **Stale?** Tasks not referenced in recent communications
-
-Present as a numbered list the user can approve, modify, or dismiss.
+- the **briefing** skill — the runnable procedure
+- ea / email / calendar / tasks / comms(ea) — per-domain judgment
