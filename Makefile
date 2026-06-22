@@ -224,7 +224,7 @@ way-embed-rebuild:
 
 # --- Test ---
 
-test: lint test-smoke test-unit test-sim test-lang test-locales test-multilingual
+test: lint test-smoke test-unit test-sim
 	@echo "All tests passed."
 
 lint:

@@ -111,7 +111,7 @@ The legacy `curve:` block (ADR-123) is no longer part of the schema. Writing `cu
 
 ## Creating a New Way
 
-Use `ways template` to scaffold the way file and locale stubs in one step:
+Use `ways template` to scaffold the way file in one step:
 
 ```bash
 # Project-local (default)
@@ -127,9 +127,10 @@ ways template meta/newway \
 
 This creates:
 - `{wayname}/{wayname}.md` — frontmatter + body template with guidance placeholders
-- `{wayname}/{wayname}.locales.jsonl` — locale entries for all covered languages (needs translation)
 
-Then: translate locale descriptions, run `ways corpus && ways tune --apply`, and `ways lint`.
+Ways are authored **English-only** (ADR-139): localization is adopter-run, not
+authored per-way — there is no translation step here. Then: run `ways corpus` and
+`ways lint`.
 
 **Manual creation** also works: create `{domain}/{wayname}/{wayname}.md` with frontmatter + guidance. No config files to update. Project ways override global ways with the same path. Ways can nest arbitrarily: `{domain}/{parent}/{child}/{child}.md`.
 

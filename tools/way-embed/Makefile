@@ -74,11 +74,12 @@ model-multilingual:
 model-upstream:
 	bash $(SRCDIR)download-model.sh --upstream
 
-# Full setup: download (or build) binary + both models, regenerate corpus
+# Full setup: download (or build) binary + English model, regenerate corpus.
 # Tries pre-built binary from GitHub Releases first, builds from source if unavailable.
+# The multilingual model (127MB) is on-demand per ADR-139 — fetched via
+# `make model-multilingual` by the ways-localize skill, not at default setup.
 setup: setup-binary
 	@[ -f "$(MODEL_EN)" ] || bash "$(SRCDIR)download-model.sh"
-	@[ -f "$(MODEL_MULTI)" ] || bash "$(SRCDIR)download-model.sh" --multilingual
 	@echo "Regenerating corpus with embeddings..."
 	../../bin/ways corpus --quiet
 	@echo ""
@@ -86,7 +87,7 @@ setup: setup-binary
 	bash "$(SRCDIR)test-embedding.sh"
 	@echo ""
 	@echo "To compare against BM25: bash $(SRCDIR)compare-engines.sh"
-	@echo "To test multilingual: bash $(SRCDIR)test-multilingual.sh"
+	@echo "To localize ways into another language: invoke the ways-localize skill"
 
 # Try download, fall back to build
 setup-binary:

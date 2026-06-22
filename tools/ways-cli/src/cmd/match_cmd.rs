@@ -12,8 +12,11 @@ type Row = (String, ScorePair);
 ///
 /// Shows both EN and multi-model scores when each way is present in the
 /// results, so users diagnosing a match can see which model carried the
-/// signal. Rows are sorted by the best score of whichever column is
-/// appropriate for the session language.
+/// signal. Rows are ranked by the **EN score** — the English anchor every
+/// way has — so an English-only way is never buried by a slightly higher
+/// multi score on another way (ADR-139). The multi column is a diagnostic
+/// display, dormant on English installs (all "—"), populated only when an
+/// adopter has localized via ways-localize.
 pub fn run(query: String, _corpus: Option<String>) -> Result<()> {
     let scores = super::scan::batch_embed_score(&query);
 
@@ -43,18 +46,14 @@ pub fn run(query: String, _corpus: Option<String>) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Display order: max of the two model scores per way. This is a display
-    // choice only (matchers gate each model independently). For English
-    // queries the EN column usually wins; for non-English queries the
-    // multi column does. Either way, the user sees the strongest signal
-    // first and both columns let them judge per-model confidence.
+    // Display order: rank by the EN score, the anchor every way has. The
+    // multi column is shown for diagnostics but does not rank the list, so
+    // an English-only way is never buried by a slightly higher multi score
+    // on another way (ADR-139). Falls back to multi only if a way somehow
+    // lacks an EN score (e.g. a locale alias with no English corpus entry).
     let mut sorted: Vec<Row> = rows.into_iter().collect();
     sorted.sort_by(|a, b| {
-        let key = |pair: &ScorePair| {
-            let e = pair.0.unwrap_or(f64::NEG_INFINITY);
-            let m = pair.1.unwrap_or(f64::NEG_INFINITY);
-            e.max(m)
-        };
+        let key = |pair: &ScorePair| pair.0.or(pair.1).unwrap_or(f64::NEG_INFINITY);
         key(&b.1).partial_cmp(&key(&a.1)).unwrap_or(std::cmp::Ordering::Equal)
     });
 
