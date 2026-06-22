@@ -24,9 +24,9 @@ AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')
 [[ -n "$AGENT_ID" ]] && export CLAUDE_AGENT_ID="$AGENT_ID"
 
 # Read response topics from Stop hook (if available).
-# Compute path inline (ways response-topics-path removed in v0.6.0).
-source "$(dirname "$0")/sessions-root.sh"
-RESPONSE_STATE="${SESSIONS_ROOT}/${SESSION_ID}/response-topics.json"
+# Path resolves through the binary so the writer (check-response.sh),
+# the consumer (here), and `ways reset` cannot drift.
+RESPONSE_STATE=$("${HOME}/.claude/bin/ways" response-topics-path "$SESSION_ID")
 RESPONSE_TOPICS=""
 if [[ -f "$RESPONSE_STATE" ]]; then
   RESPONSE_TOPICS=$(jq -r '.topics // empty' "$RESPONSE_STATE" 2>/dev/null)
