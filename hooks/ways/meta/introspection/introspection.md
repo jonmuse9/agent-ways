@@ -11,7 +11,7 @@ refire: 0.15
 <!-- epistemic: heuristic -->
 # Introspection Way
 
-A pull request is a natural boundary of work — a moment to pause and reflect before closing the loop. Regardless of what the PR contains (code, config, docs, process), this is the right time to ask: did we learn something this session that should become a way?
+A pull request is a natural boundary of work — a moment to pause and reflect before closing the loop. Regardless of what the PR contains (code, config, docs, process), this is the right time to ask: did we learn something this session that should become a **way, a skill, or a workflow**?
 
 ## The Surprise Test
 
@@ -21,7 +21,7 @@ The threshold is surprise: something the next session would also get wrong witho
 
 ## Two-Part Flow
 
-If something *did* surprise, this splits between you (the main agent) and a subagent. You hold the session history — only you can identify what the human taught. The subagent gets a fresh context window to review existing ways and draft proposals without burning your remaining tokens.
+If something *did* surprise, this splits between you (the main agent) and a subagent. You hold the session history — only you can identify what the human taught. The subagent gets a fresh context window to review existing ways, skills, and workflows and draft proposals without burning your remaining tokens.
 
 ### Part 1: You Summarize (main agent)
 
@@ -39,7 +39,7 @@ If something did stand out, compile a concise summary. For each signal, capture:
 - **Why** they said it (if they gave a reason)
 - **When** it would apply again (what kind of work would hit this)
 
-### Part 2: Subagent Reviews Ways and Proposes
+### Part 2: Subagent Reviews Existing Artifacts and Proposes
 
 Spawn a subagent (`subagent_type: "general-purpose"`) with:
 1. Your summary of human signals from Part 1
@@ -48,7 +48,7 @@ Spawn a subagent (`subagent_type: "general-purpose"`) with:
 
 **Subagent prompt template:**
 
-> Review project-local ways and propose new ones based on session learnings.
+> Review project-local ways, skills, and workflows and propose new artifacts based on session learnings.
 >
 > **Project path:** [path]
 >
@@ -57,34 +57,37 @@ Spawn a subagent (`subagent_type: "general-purpose"`) with:
 >
 > **Your tasks:**
 >
-> 1. **Enumerate existing project-local ways** — list what's in `$PROJECT/.claude/ways/`. Note if none exist.
+> 1. **Enumerate existing project-local artifacts** — ways (`$PROJECT/.claude/ways/`), skills (`$PROJECT/.claude/skills/`), and workflows (`$PROJECT/.claude/workflows/`). Note what's absent.
 >
 > 2. **Check for overlap** — do any existing ways already cover the signals above? If so, note whether they need updating or are sufficient.
 >
-> 3. **Propose new ways** for uncovered signals. For each proposal, specify:
->    - File path: `$PROJECT/.claude/ways/{domain}/{topic}/{topic}.md`
->    - Trigger type and pattern (keyword, command, or file pattern)
->    - A draft of the way content in collaborative voice
+> 3. **Propose new artifacts** for uncovered signals, each classified to the right type (ADR-138):
+>    - **way** — recurring behavior/context (the 5W), disclosed just-in-time. Path `$PROJECT/.claude/ways/{domain}/{topic}/{topic}.md`; give trigger type + pattern.
+>    - **skill** — a concrete procedure to *run* on demand. Path `$PROJECT/.claude/skills/{name}/SKILL.md`; give a tight description + a "Not for" lane.
+>    - **workflow** — deterministic multi-agent orchestration (fan-out / verify / synthesize). Path `$PROJECT/.claude/workflows/{name}`; describe the stages.
+>
+>    Rule of thumb: recurring *guidance* → way; a repeated *procedure* → skill; a multi-stage *orchestration* → workflow. Draft each in collaborative voice.
 >
 > 4. **Skip anything that's:**
 >    - A one-off decision that won't recur
 >    - Already covered by an existing way (global or project-local)
 >    - So specific it applies to exactly one file
 >
-> Follow the Knowledge Way format: YAML frontmatter with match/pattern/files/commands, then concise guidance written as a collaborator, not a directive. Place ways in project scope.
+> Follow the Knowledge Way format for ways (YAML frontmatter + collaborative guidance) and the Skills Way for skills (tight description, scoped allowed-tools, a "Not for" lane). Place all artifacts in project scope.
 >
 > Return: a summary of existing ways, and any proposed new ways with their full content. Do NOT create the files — just return the proposals.
 
 ### Part 3: Present to the Human
 
-Take the subagent's proposals and present them. Don't silently create ways.
+Take the subagent's proposals and present them. Don't silently create artifacts.
 
-> "During this session, you [corrected/explained/guided] me about [X]. I had a subagent review our project ways — here's what it found and proposes:
+> "During this session, you [corrected/explained/guided] me about [X]. I had a subagent review our project ways, skills, and workflows — here's what it found and proposes:
 >
-> **Existing ways:** [list or "none yet"]
+> **Existing artifacts:** [list or "none yet"]
 >
-> **Proposed new ways:**
-> - `project/domain/topic/{topic}.md` — triggered by [pattern], covering [what]
+> **Proposed additions (ways / skills / workflows):**
+> - [way] `project/domain/topic/{topic}.md` — triggered by [pattern], covering [what]
+> - [skill] `skills/{name}/SKILL.md` — invoked for [task]; not for [lane]
 > - ...
 >
 > Want me to create any of these?"
@@ -93,4 +96,4 @@ Let the human decide what's worth keeping. Their judgment about what's a real co
 
 ## Why This Matters
 
-Every session starts cold. The agent that arrives next has no memory of corrections made today. If a convention lives only in the conversation history, it dies when the session ends. Ways are how we carry forward what the human teaches us.
+Every session starts cold. The agent that arrives next has no memory of corrections made today. If a learning lives only in the conversation history, it dies when the session ends. Ways, skills, and workflows are how we carry forward what the human teaches us.
