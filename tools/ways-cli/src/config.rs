@@ -80,6 +80,21 @@ pub struct Config {
     pub refire_presets: HashMap<String, f64>,
 }
 
+impl Config {
+    /// The active non-English localization language, or `None` in English mode.
+    ///
+    /// English mode (`en` / `auto` / unset — the default) keeps the intl pipeline
+    /// dormant: no multilingual corpus, no multilingual matching, no locale tuning
+    /// (ADR-139). A specific non-English code (set by the `ways-localize` skill)
+    /// switches the build, matcher, and tuner into localized mode.
+    pub fn localized_language(&self) -> Option<&str> {
+        match self.language.as_str() {
+            "en" | "auto" | "" => None,
+            other => Some(other),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let mut refire_presets = HashMap::new();
@@ -440,5 +455,20 @@ mod tests {
         let mut cfg = Config::default();
         cfg.apply_yaml("ways:\n  itops/incident: false\n");
         assert!(cfg.disabled_ways.is_empty());
+    }
+
+    #[test]
+    fn localized_language_gates_on_mode() {
+        let mut cfg = Config::default();
+        // English mode — en / auto / empty are all dormant (ADR-139).
+        cfg.language = "auto".to_string();
+        assert_eq!(cfg.localized_language(), None);
+        cfg.language = "en".to_string();
+        assert_eq!(cfg.localized_language(), None);
+        cfg.language = String::new();
+        assert_eq!(cfg.localized_language(), None);
+        // Localized mode — a specific non-English code.
+        cfg.language = "es".to_string();
+        assert_eq!(cfg.localized_language(), Some("es"));
     }
 }

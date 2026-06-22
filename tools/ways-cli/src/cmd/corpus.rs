@@ -283,6 +283,8 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
 
     // Pass 1: process .md files (including any external locale override .lang.md files)
     let presets = &crate::config::global().refire_presets;
+    // English roots captured here become the multilingual anchor in Pass 2 (localized mode).
+    let mut en_roots: HashMap<String, (String, String)> = HashMap::new();
     for path in &md_files {
         let fm = match frontmatter::parse(path) {
             Ok(fm) => fm,
@@ -309,6 +311,12 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
         let id_body = crate::util::path_to_id(relpath.parent().unwrap_or(Path::new("")));
         let id = format!("{id_prefix}{id_body}");
 
+        // Capture the English root for the multilingual anchor (Pass 2, localized mode).
+        en_roots.insert(
+            id.clone(),
+            (fm.description.clone(), fm.vocabulary.clone().unwrap_or_default()),
+        );
+
         // .md ways always use EN model (locale stubs use multilingual)
         let entry = json!({
             "id": id,
@@ -323,37 +331,61 @@ fn scan_ways_dir(dir: &Path, id_prefix: &str, excluded: &[String], w: &mut impl 
         count += 1;
     }
 
-    // Pass 2: process .locales.jsonl files
-    for path in &locale_files {
-        let parent = path.parent().unwrap_or(Path::new(""));
-        let relparent = parent.strip_prefix(dir).unwrap_or(parent);
-        let id = format!("{}{}", id_prefix, crate::util::path_to_id(relparent));
+    // Pass 2: locale aliases + the English-root anchor — localized mode only (ADR-139).
+    // The English frontmatter, embedded with the multilingual model, is the anchor every
+    // localized alias is matched and tuned against: the source of truth in multilingual
+    // space. English mode builds no multilingual entries at all.
+    if crate::config::global().localized_language().is_some() {
+        let mut anchored: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for path in &locale_files {
+            let parent = path.parent().unwrap_or(Path::new(""));
+            let relparent = parent.strip_prefix(dir).unwrap_or(parent);
+            let id = format!("{}{}", id_prefix, crate::util::path_to_id(relparent));
 
-        let entries = match frontmatter::parse_locales_jsonl(path) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+            let entries = match frontmatter::parse_locales_jsonl(path) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
 
-        for le in entries {
-            // Skip inactive languages
-            if !crate::agents::is_language_active(&le.lang) {
-                continue;
+            // English-root anchor: once per way, emit its English text as a multilingual
+            // entry (lang "en") so localized aliases score against the source of truth.
+            if anchored.insert(id.clone()) {
+                if let Some((desc, vocab)) = en_roots.get(&id) {
+                    let anchor = json!({
+                        "id": id,
+                        "description": desc.as_str(),
+                        "vocabulary": vocab.as_str(),
+                        "embed_model": "multilingual",
+                        "lang": "en",
+                    });
+                    serde_json::to_writer(&mut *w, &anchor)?;
+                    w.write_all(b"\n")?;
+                    count += 1;
+                }
             }
-            // Skip if an external .lang.md override exists
-            if locale_overrides.contains(&(parent.to_path_buf(), le.lang.clone())) {
-                continue;
+
+            for le in entries {
+                // Skip inactive languages
+                if !crate::agents::is_language_active(&le.lang) {
+                    continue;
+                }
+                // Skip if an external .lang.md override exists
+                if locale_overrides.contains(&(parent.to_path_buf(), le.lang.clone())) {
+                    continue;
+                }
+
+                let entry = json!({
+                    "id": id,
+                    "description": le.description,
+                    "vocabulary": le.vocabulary.unwrap_or_default(),
+                    "embed_model": "multilingual",
+                    "lang": le.lang,
+                });
+
+                serde_json::to_writer(&mut *w, &entry)?;
+                w.write_all(b"\n")?;
+                count += 1;
             }
-
-            let entry = json!({
-                "id": id,
-                "description": le.description,
-                "vocabulary": le.vocabulary.unwrap_or_default(),
-                "embed_model": "multilingual",
-            });
-
-            serde_json::to_writer(&mut *w, &entry)?;
-            w.write_all(b"\n")?;
-            count += 1;
         }
     }
 
