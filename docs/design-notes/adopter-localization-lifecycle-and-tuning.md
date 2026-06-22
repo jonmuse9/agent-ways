@@ -86,10 +86,12 @@ every localization is measured against it.
 ## Decision
 
 1. **The agent-ways config is the mode switch that routes the whole intl pipeline.**
-   The flag is `output_language` in `~/.claude/ways.json` (already present; read into
-   `Config.language`). It is `ways-localize` that writes it — flipping it from `en` to a
-   target language is what *activates* intl. Read once, upstream — not sniffed for
-   per-component.
+   The switch is the resolved `Config.language`, which is *layered*: `output_language`
+   in `~/.claude/ways.json` (Layer 1) is **overridden** by `language` in the user-scope
+   `~/.config/ways/config.yaml` (Layer 2, default `auto`). So the *effective* switch is
+   the user-scope `language` — and that is the layer **`ways-localize` writes** to
+   activate intl (writing `ways.json` alone would be masked by the `auto` default).
+   Read once, upstream — not sniffed for per-component.
    - **English mode** (`output_language: en` / `auto` — the default): the *intl* pipeline
      is not engaged. No multilingual corpus is built, **the matcher never loads the
      768-dim multilingual model** (see §5), no English-root anchoring in a multi corpus,
