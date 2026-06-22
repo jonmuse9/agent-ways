@@ -102,12 +102,18 @@ ok "commands/ refreshed"
 
 # --- 4. Hooks (ways tree + top-level scripts referenced by settings) ---
 info "Syncing hooks/"
-mkdir -p "$DEST/hooks/ways"
-cp -r "$SRC/hooks/ways/." "$DEST/hooks/ways/"
-# Top-level hook scripts the wired settings reference by absolute path.
-for h in check-config-updates.sh refresh-claude-md.sh; do
-  [[ -f "$SRC/hooks/$h" ]] && cp -f "$SRC/hooks/$h" "$DEST/hooks/$h"
-done
+_src_hooks_real="$(cd "$SRC/hooks" 2>/dev/null && pwd -P || true)"
+_dst_hooks_real="$(cd "$DEST/hooks" 2>/dev/null && pwd -P || true)"
+if [[ -n "$_dst_hooks_real" && "$_dst_hooks_real" == "$_src_hooks_real" ]]; then
+  ok "hooks/ already linked to source — skipping copy"
+else
+  mkdir -p "$DEST/hooks/ways"
+  cp -r "$SRC/hooks/ways/." "$DEST/hooks/ways/"
+  # Top-level hook scripts the wired settings reference by absolute path.
+  for h in check-config-updates.sh refresh-claude-md.sh; do
+    [[ -f "$SRC/hooks/$h" ]] && cp -f "$SRC/hooks/$h" "$DEST/hooks/$h"
+  done
+fi
 # Make every hook executable (matters on macOS/Linux).
 find "$DEST/hooks" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 ok "hooks/ synced"
@@ -123,7 +129,13 @@ info "Copying binaries → $DEST/bin"
 mkdir -p "$DEST/bin"
 for b in ways attend attend-chat way-embed; do
   if [[ -f "$SRC/bin/$b" ]]; then
-    cp -f "$SRC/bin/$b" "$DEST/bin/$b"
+    # Skip copy if the destination is a symlink pointing directly to the source file.
+    # readlink (without -f) gives the raw target and is portable across macOS/Linux.
+    if [[ -L "$DEST/bin/$b" ]] && [[ "$(readlink "$DEST/bin/$b")" == "$SRC/bin/$b" ]]; then
+      ok "$b already linked to source — skipping copy"
+      continue
+    fi
+    cp -f "$SRC/bin/$b" "$DEST/bin/$b" || warn "could not copy $b (may already be identical)"
     chmod +x "$DEST/bin/$b" 2>/dev/null || true
   fi
 done
