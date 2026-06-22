@@ -144,3 +144,9 @@ wormhole receive --accept-file --hide-progress -o <target-dir> <code>
 - **Show before acting** (interactive) — display file sizes, paths, and commands before executing
 - **Surface the code prominently** — the wormhole code is the whole point of the send flow
 - **Always use `--accept-file` and `--hide-progress`** — the non-TTY environment can't handle interactive prompts or progress bars
+
+## Not for
+
+- Recurring transfers where SSH is already set up — use `scp`/`rsync`.
+- Same-machine or shared-filesystem/LAN copies — use `cp`/`rsync`.
+- Cloud storage transfers — use the provider CLI (`aws s3`, `gsutil`, …). Wormhole is for ad-hoc peer-to-peer transfers with no prior setup.

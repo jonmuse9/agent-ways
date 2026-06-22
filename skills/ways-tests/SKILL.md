@@ -32,6 +32,12 @@ Test how well a way matches sample prompts, analyze vocabulary for gaps, and val
 /ways-tests embed-score-all "prompt"     # Cosine similarity ranking across all ways
 ```
 
+## Not for
+
+- Authoring or editing ways themselves — that's the **ways** skill (`/ways`).
+- Updating the agent-ways install — that's **ways-update**.
+- This skill only *measures and validates*: scoring, vocabulary analysis, frontmatter and tree lint.
+
 ## Engine
 
 The matching pipeline uses embedding-based semantic scoring as the sole retrieval tier. The embedding model is a hard dependency of `ways`.
@@ -213,21 +219,21 @@ Present as:
 === "add a make target for linting" ===
 
 Target: softwaredev/environment/makefile
-  Score: 5.2716  Threshold: 1.5  Result: MATCH
+  Score: 0.6213  Threshold: 0.35  Result: MATCH
 
 Cross-way ranking:
   Score   Thr    Match  Way
   ------  -----  -----  ---
-  5.2716  1.5    YES    softwaredev/environment/makefile  ← target
-  1.9580  2.0    no     documentation/standards
-  0.0000  2.0    no     softwaredev/environment/deps
+  0.6213  0.35   YES    softwaredev/environment/makefile  ← target
+  0.2904  0.35   no     documentation/standards
+  0.1102  0.35   no     softwaredev/environment/deps
   ...
 
 Assessment: Clean win. No competing ways above threshold.
 ```
 
 Flag these patterns:
-- **Overlap**: Two ways both match with scores within 20% of each other → potential conflict
+- **Overlap**: Two ways both match with scores within 0.05 cosine of each other → potential conflict
 - **False dominance**: Another way scores higher than the target → the target may need vocabulary tuning
 - **Healthy co-fire**: Both match but serve complementary purposes → note as expected
 
@@ -369,18 +375,18 @@ Structure:
   Total ways: 8 ways + 1 check = 9 files
 
 Threshold Progression:
-  Level 0  supplychain.md  threshold=1.8  ✓
-  Level 1  repoaudit       threshold=2.0  ✓
-  Level 1  sourceaudit     threshold=2.0  ✓
-  Level 1  depscan         threshold=1.8  ⚠ same as parent
-  Level 1  automation      threshold=2.0  ✓
-  Level 1  historysever    threshold=2.0  ✓
-  Level 2  depscan/python  threshold=2.5  ✓
-  Level 2  depscan/node    threshold=2.5  ✓
-  Level 2  depscan/go      threshold=2.5  ✓
-  Level 2  depscan/rust    threshold=2.5  ✓
+  Level 0  supplychain.md  threshold=0.35  ✓
+  Level 1  repoaudit       threshold=0.42  ✓
+  Level 1  sourceaudit     threshold=0.42  ✓
+  Level 1  depscan         threshold=0.35  ⚠ same as parent
+  Level 1  automation      threshold=0.42  ✓
+  Level 1  historysever    threshold=0.42  ✓
+  Level 2  depscan/python  threshold=0.50  ✓
+  Level 2  depscan/node    threshold=0.50  ✓
+  Level 2  depscan/go      threshold=0.50  ✓
+  Level 2  depscan/rust    threshold=0.50  ✓
 
-Assessment: Thresholds increase with depth (1.8→2.0→2.5). Good.
+Assessment: Thresholds increase with depth (0.35→0.42→0.50). Good.
 ```
 
 ### What to Flag
@@ -530,16 +536,16 @@ Detect vocabulary overlap and semantic crowding across the entire ways corpus. T
 === Vocabulary Crowding Analysis ===
 Prompt: "check the npm dependencies for vulnerabilities"
 
-Score Clusters (ways within 20% of each other):
-  Cluster 1: 4.23-5.01
-    supplychain         4.87  threshold=1.8  MATCH
-    supplychain/depscan 5.01  threshold=1.8  MATCH
-    deps                4.23  threshold=2.0  MATCH
+Score Clusters (ways within 0.05 cosine of each other):
+  Cluster 1: 0.58-0.62
+    supplychain         0.60  threshold=0.35  MATCH
+    supplychain/depscan 0.62  threshold=0.35  MATCH
+    deps                0.58  threshold=0.42  MATCH
   → Assessment: Expected co-fire (supplychain tree + deps are complementary)
 
-  Cluster 2: 1.80-2.10
-    security            2.10  threshold=2.0  MATCH
-    supplychain/node    1.80  threshold=2.5  no
+  Cluster 2: 0.40-0.44
+    security            0.44  threshold=0.42  MATCH
+    supplychain/node    0.40  threshold=0.50  no
   → Assessment: Security fires marginally. Node misses (good — prompt is generic npm, not node-specific)
 
 Vocabulary Overlap (Jaccard > 0.15):
@@ -581,8 +587,8 @@ Side-by-side comparison of two way trees. Useful for evaluating whether a refact
                     supplychain     testing
 Depth               3               2
 Total ways          9               3
-Threshold range     1.8 - 2.5      1.8 - 2.5
-Avg threshold       2.08            2.07
+Threshold range     0.35 - 0.50    0.35 - 0.50
+Avg threshold       0.42            0.41
 Worst-case tokens   ~3840           ~1100
 Avg path tokens     ~940            ~680
 Max sibling Jaccard 0.08            0.05
@@ -630,8 +636,8 @@ Tree Coverage:
     Coverage: 3/6 (50%)
 
 Parent-Activated Threshold Lowering:
-  injection scored 1.8 (below normal threshold 2.0)
-    → Parent "security" was active → effective threshold 1.6 → MATCH
+  injection scored 0.40 (below normal threshold 0.42)
+    → Parent "security" was active → effective threshold 0.34 → MATCH
     Without parent: would have been a miss
 
 Epoch Distance Distribution:

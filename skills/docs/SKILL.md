@@ -103,6 +103,12 @@ scaffold, run `/project-init`. To decline the catalog for a project:
   move/rename freely, the `id` is what the graph keys on.
 - **Lint before commit** — `docs/scripts/doc lint` is the catalog's test.
 
+## Not for
+
+- Architecture Decision Records — that's the **adr** skill (the decisions half of the same catalog).
+- Hand-authoring `id`/`domain`/`mode` frontmatter — the CLI computes it.
+- Prose that isn't joining the catalog — untagged docs need no tool and are never linted.
+
 ## See also
 
 - the **diataxis** way — picking the mode (the 2×2)

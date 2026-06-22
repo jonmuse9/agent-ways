@@ -1,6 +1,6 @@
 ---
 name: context-status
-description: Check how much context window remains in this session. Use when you want to know token budget, context usage, or how much room is left before compaction. Also use proactively when working on long tasks to gauge remaining capacity.
+description: Check how much context window remains in this session — token budget, usage, and room left before compaction. Use when the user asks how much context/room/budget is left, or wants a context-usage gauge.
 allowed-tools: Bash
 ---
 
@@ -22,6 +22,12 @@ echo '{"type":"hbar","data":{"Used (PCT%)":USED,"Free (RPCT%)":REMAINING},"title
 
 Replace `USED`, `REMAINING`, `TOTAL`, `PCT`, `RPCT`, and `MODEL` with actual values from the JSON output. Use `jq` to extract them.
 
-The command auto-detects the context window size from the model in the transcript (1M for Opus 4.6, 200k for others). Override with `CLAUDE_CONTEXT_WINDOW` env var.
+The command auto-detects the context window size from the model in the transcript (it varies by model). Override with `CLAUDE_CONTEXT_WINDOW` env var.
 
 If the remaining percentage is below 20%, mention that compaction is approaching and suggest wrapping up or prioritizing remaining work.
+
+## Not for
+
+- Changing the context window size or compaction threshold — that's `CLAUDE_CONTEXT_WINDOW` and the compaction settings, not this skill.
+- General session status — it reports the context window only.
+- A continuous watch — it's a one-shot snapshot; run it again for a fresh reading.

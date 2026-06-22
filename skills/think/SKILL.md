@@ -68,3 +68,7 @@ again for new problems:
 ```bash
 rm -f /tmp/.claude-think-session /tmp/.claude-way-meta-think-*"${CLAUDE_SESSION_ID:+-$CLAUDE_SESSION_ID}" 2>/dev/null
 ```
+
+## Not for
+
+- Routine work that doesn't need structured reasoning — the strategies add deliberation overhead. Reach for them on genuinely hard problems (branching approaches, competing objectives, high-stakes calls, being stuck), not every task.

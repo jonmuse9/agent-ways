@@ -1,87 +1,43 @@
 ---
 name: governance-cite
-description: Cite governance controls and justifications when making recommendations about code quality, security, commits, or documentation. Use when justifying why a practice matters, when a user asks "why do we do this?", when reviewing code against standards, or when recommending practices that align with NIST, OWASP, ISO, SOC 2, CIS, or IEEE controls.
+description: Look up governance controls and their justifications via the governance CLI, to ground a recommendation in a real standard (NIST, OWASP, ISO, SOC 2, CIS, IEEE). Use when you need the control IDs and justification text behind a practice. Not for deciding whether to cite or how to phrase it — that's the governance citation way.
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
-# Governance Citation
+# Governance Citation Lookup
 
-You have access to a governance traceability system that maps agent guidance (ways) to real regulatory controls with specific justification evidence. Use this to ground your recommendations in actual standards rather than general knowledge.
+A governance traceability system maps agent guidance (ways) to real regulatory
+controls with specific justification evidence. This skill is the **lookup** — run
+it to fetch the control IDs and justification text behind a practice. For *when*
+to cite and *how* to phrase it, see the **governance citation** way.
 
-## When to Cite
-
-Cite governance controls when:
-- Recommending a practice that has a governing control (commits, security, quality, documentation)
-- Answering "why do we do it this way?"
-- Reviewing code and flagging issues covered by a control
-- A user questions whether a practice matters
-
-Don't force citations into every response. Use them when they add authority or clarity.
-
-## How to Look Up Controls
+## Look up controls
 
 ### By topic
 
 ```bash
-ways governance control PATTERN
+ways governance control PATTERN          # e.g. NIST, OWASP, ISO, SOC, CIS, change
 ```
-
-Examples:
-- `control NIST` — all NIST controls
-- `control OWASP` — injection prevention
-- `control ISO` — all ISO standards
-- `control SOC` — SOC 2 controls
-- `control CIS` — CIS controls
-- `control change` — change management controls
 
 ### By way (full trace)
 
 ```bash
 ways governance trace softwaredev/commits
 ways governance trace softwaredev/security
-ways governance trace softwaredev/quality
-ways governance trace meta/knowledge
 ```
 
-### Machine-readable (for structured extraction)
+### Machine-readable
 
 ```bash
 ways governance control PATTERN --json
 ways governance trace WAY --json
+ways governance matrix --json            # the complete traceability matrix
 ```
 
-## Citation Format
+Read the governed ways and controls **from the data** — run `ways governance
+matrix` for the current set. Never cite from memory; provenance changes.
 
-When citing a control, reference the control ID and quote the specific justification:
+## Not for
 
-**Inline** (for brief references):
-> We use conventional commit format — per NIST CM-3, this "creates structured change records with type classification" for auditable configuration change control.
-
-**Detailed** (for explanations or reviews):
-> This aligns with **NIST SP 800-53 CM-3 (Configuration Change Control)**, which our commit guidance implements through:
-> - Conventional commit types (feat/fix/refactor) classify changes by nature
-> - Atomic single-concern commits make each change independently reviewable
-> - Commit message body captures rationale, satisfying change documentation requirements
-
-**Code review** (for flagging issues):
-> This SQL string concatenation violates **OWASP A03:Injection** — our security way requires parameterized queries as default for all database access. The detection table maps this exact pattern to the remediation: "Replace with parameterized queries."
-
-## What Controls Are Available
-
-The system currently tracks 13 controls across 4 governed ways:
-
-| Way | Standards |
-|-----|-----------|
-| **softwaredev/commits** | NIST CM-3, SOC 2 CC8.1, ISO 27001 A.8.32 |
-| **softwaredev/security** | OWASP A03, NIST IA-5, CIS v8 16.12, SOC 2 CC6.1 |
-| **softwaredev/quality** | ISO 25010, NIST SA-15, IEEE 730 |
-| **meta/knowledge** | ISO 9001 7.5, ISO 27001 5.2, NIST PL-2 |
-
-Run `ways governance matrix --json` for the complete traceability matrix.
-
-## Principles
-
-- **Quote the justification, not the standard.** "Parameterized queries required as default" is more useful than "per NIST IA-5."
-- **The justification is the evidence.** Each one maps a specific way directive to a specific control requirement. That's the chain.
-- **Don't over-cite.** One relevant control with its justification is better than listing every standard that tangentially applies.
-- **Cite from the data, not from memory.** Always run the governance operator to get current controls. The provenance metadata may have changed since your training data.
+- Deciding *whether* to cite, or *how* to phrase a citation — that's the **governance citation** way.
+- The full coverage/provenance report — that's the **governance** skill (`ways governance report`).
