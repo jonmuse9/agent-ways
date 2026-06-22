@@ -128,6 +128,7 @@ ways:
 		echo "Pre-built binary installed."; \
 	elif command -v cargo >/dev/null 2>&1; then \
 		echo "No pre-built binary, building from source..."; \
+		bash scripts/check-rust.sh || exit 1; \
 		cargo build --release --manifest-path tools/Cargo.toml -p ways; \
 		mkdir -p bin; \
 		$(LINK) "$(CURDIR)/tools/target/release/ways$(EXE)" $(WAYS_BIN); \
@@ -144,6 +145,7 @@ ways-rebuild:
 		echo "error: cargo not found. Install Rust: https://rustup.rs/"; \
 		exit 1; \
 	fi
+	@bash scripts/check-rust.sh
 	cargo build --release --manifest-path tools/Cargo.toml -p ways
 	@mkdir -p bin
 	@$(LINK) "$(CURDIR)/tools/target/release/ways$(EXE)" $(WAYS_BIN)
