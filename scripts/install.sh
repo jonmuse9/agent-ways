@@ -138,7 +138,9 @@ if [[ "$BOOTSTRAP" == "true" ]]; then
   done
 
   cd "$CLONE"
-  bash "$CLONE/scripts/install.sh" "${FORWARD_ARGS[@]}"
+  # Mark the inner run as bootstrapped so its conflict-options reference the
+  # re-runnable curl one-liner, not this temp clone (deleted by the EXIT trap).
+  AGENT_WAYS_BOOTSTRAPPED=1 bash "$CLONE/scripts/install.sh" "${FORWARD_ARGS[@]}"
   exit $?
 fi
 
@@ -232,19 +234,28 @@ if [[ -d "$DEST" ]]; then
       fi
     fi
 
+    # Re-runnable invocation. Under --bootstrap, $0 is an ephemeral temp clone
+    # that the EXIT trap deletes — so the options must reference the curl
+    # one-liner that re-fetches, not a path that won't exist when pasted.
+    if [[ "${AGENT_WAYS_BOOTSTRAPPED:-}" == "1" ]]; then
+      RERUN="curl -sL https://raw.githubusercontent.com/${UPSTREAM_REPO}/main/scripts/install.sh | bash -s -- --bootstrap"
+    else
+      RERUN="$0"
+    fi
+
     echo ""
     echo -e "${BOLD}You need to decide what to do with these files before installing.${RESET}"
     echo ""
     echo "  Options:"
     echo "    1. Back up and clobber:"
-    echo -e "       ${CYAN}$0 --dangerously-clobber${RESET}"
+    echo -e "       ${CYAN}${RERUN} --dangerously-clobber${RESET}"
     echo "       (backs up to ~/.claude-backup-YYYYMMDD/ first)"
     echo ""
     echo "    2. Merge manually (recommended if you have custom config):"
     echo -e "       See ${CYAN}${UPSTREAM_URL}/blob/main/docs/install-guide.md${RESET}"
     echo ""
     echo "    3. Start fresh:"
-    echo -e "       ${CYAN}mv ~/.claude ~/.claude-old && $0${RESET}"
+    echo -e "       ${CYAN}mv ~/.claude ~/.claude-old && ${RERUN}${RESET}"
     echo ""
     exit 1
   fi
