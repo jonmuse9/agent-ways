@@ -22,6 +22,21 @@ maj=${ver%%.*}
 min=${ver#*.}; min=${min%%.*}
 
 if [ "$maj" -lt "$MIN_MAJOR" ] || { [ "$maj" -eq "$MIN_MAJOR" ] && [ "$min" -lt "$MIN_MINOR" ]; }; then
+  # Tailor the fix to how Rust appears to be installed.
+  if command -v rustup >/dev/null 2>&1; then
+    fix="rustup update"
+  elif command -v pacman >/dev/null 2>&1; then
+    fix="sudo pacman -Syu rust     (or install rustup for the latest: https://rustup.rs)"
+  elif command -v brew >/dev/null 2>&1; then
+    fix="brew upgrade rust         (or install rustup: https://rustup.rs)"
+  elif command -v dnf >/dev/null 2>&1; then
+    fix="sudo dnf upgrade rust cargo   (or install rustup: https://rustup.rs)"
+  elif command -v apt-get >/dev/null 2>&1; then
+    fix="distro cargo is usually too old — install rustup: https://rustup.rs"
+  else
+    fix="install rustup: https://rustup.rs"
+  fi
+
   cat >&2 <<EOF
 
   ──────────────────────────────────────────────────────────────────────────
@@ -30,8 +45,7 @@ if [ "$maj" -lt "$MIN_MAJOR" ] || { [ "$maj" -eq "$MIN_MAJOR" ] && [ "$min" -lt 
     you have:  cargo ${ver}
     why:       a dependency (getrandom) uses Rust edition 2024 (stabilized in 1.85)
 
-    fix:       rustup update            # if Rust came from rustup
-               # or install rustup:     https://rustup.rs
+    fix:       ${fix}
 
     (A pre-built binary may also be available — see the releases page.)
   ──────────────────────────────────────────────────────────────────────────
