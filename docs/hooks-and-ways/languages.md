@@ -1,179 +1,129 @@
 # Multi-Language Support
 
-Ways supports multilingual matching and output across 52 languages. The system uses two embedding models: a precise English model and a broad multilingual model, routed automatically by the corpus builder.
+Ways runs in one of two **modes**, decided by a single switch. English is the
+**source of truth**; localization is *adopter-run* — a non-English speaker opts in and
+the framework translates itself, validated against the English root (ADR-139). This
+page is the reference; the lifecycle and rationale live in
+`docs/explanation/localization/` (`01.009.E`–`01.013.E`) and the design note
+`docs/design-notes/adopter-localization-lifecycle-and-tuning.md`.
 
-## Setting output language
+## The two modes
 
-The agent writes commit messages, comments, and documentation in the configured language. Resolution order:
+The switch is the resolved `Config.language`:
 
-1. **`ways.json`** `output_language` field — explicit override
-2. **Claude Code** `settings.json` `language` field — agent config (project then user)
-3. **System locale** (`$LC_ALL` → `$LC_MESSAGES` → `$LANG`)
-4. **Default**: `en`
+| Mode | When | What runs |
+|------|------|-----------|
+| **English** (default) | `language` is `en` / `auto` / unset | English corpus + English (384-dim) matching only. The 127MB multilingual model is **never downloaded or loaded**. No locale tuning. The intl pipeline is dormant — zero cost. |
+| **Localized** | `language` is a specific non-English code (e.g. `es`) | The multilingual corpus is built with the English root as anchor, the 768-dim multilingual lane runs as a *second* lane, and `ways tune --lang` audits the localization. |
 
-```json
-// ways.json — explicit override
-{"disabled": [], "output_language": "ja"}
-```
+Both modes match by embedding cosine — the difference is the model, not the method.
 
-```json
-// Claude Code settings.json — agent-level
-{"language": "japanese"}
-```
+### Setting the switch — two configs, one bridge
 
-Setting `output_language: "auto"` skips the override and cascades to Claude Code settings → system locale.
+There are **two** different language settings; conflating them is the common mistake:
 
-The output language directive is injected via `core.md` at session start. Way content (the guidance text) stays English — the agent reads it fine in any language. Only the file output changes.
+| Config | Controls | Set by |
+|--------|----------|--------|
+| `language` in `~/.config/ways/config.yaml` (overrides `output_language` in `~/.claude/ways.json`) | the **ways** intl mode + the output-language directive | `ways-localize` |
+| `language` in Claude Code `settings.json` (a NAME, e.g. `"spanish"`) | Claude Code's **response** language | the operator (or `ways-localize`) |
 
-## How matching works across languages
+`ways.json output_language` (Layer 1) is **overridden** by `config.yaml language`
+(Layer 2, default `auto`), so the *effective* switch is the user-scope `language` —
+the layer `ways-localize` writes. Merely setting Claude Code's `settings.json language`
+does **not** localize ways; that is deliberate work the `ways-localize` skill performs.
 
-Two embedding models handle different matching scenarios:
+When the two disagree — Claude Code is non-English but ways is still English — the
+`meta/localize` session-start macro surfaces the `ways-localize` recommendation, and
+self-silences once they match.
 
-| Model | File | Size | Languages | Use case |
-|-------|------|------|-----------|----------|
-| all-MiniLM-L6-v2 | `minilm-l6-v2.gguf` | 21MB | English | Precise EN matching (default) |
-| paraphrase-multilingual-MiniLM-L12-v2 | `multilingual-minilm-l12-v2-q8.gguf` | 127MB | 52 | Cross-language and same-language matching |
+## Localizing — the `ways-localize` skill
 
-Both are downloaded by `make setup` and stored in `~/.cache/claude-ways/user/`.
-
-Model routing is automatic — no frontmatter field needed:
-
-- **`.md` ways** → English model (all-MiniLM-L6-v2)
-- **`.locales.jsonl` entries** → multilingual model (paraphrase-multilingual-MiniLM-L12-v2)
-
-The corpus builder splits entries into `ways-corpus-en.jsonl` and `ways-corpus-multi.jsonl`, each embedded with the appropriate model.
-
-## Locale stubs — packed format
-
-Locale stubs provide native-language matching vocabulary for existing ways. They're stored as **packed JSONL**, one file per way, co-located with the way they belong to:
+Localization is one operation, run on demand:
 
 ```
-hooks/ways/softwaredev/code/security/
-  security.md                # English way — full body + frontmatter
-  security.locales.jsonl     # all language stubs (one line per language)
+"set up ways in Spanish"  →  ways-localize skill
 ```
 
-Each line in the `.locales.jsonl` is a self-contained locale entry:
+It interviews for the language, gets consent (the model download + all-ways pass is
+heavy), flips the switch, fetches the multilingual model on demand
+(`make -C tools/way-embed model-multilingual`), translates every way's
+`description`+`vocabulary` against the English root, rebuilds the corpus, runs
+`ways tune --lang <code>` until clean, and sets Claude Code's own language. See the
+skill (`skills/ways-localize/`) and scenario `01.011.E`.
+
+## The embedding models
+
+| Model | File | Size | Role |
+|-------|------|------|------|
+| all-MiniLM-L6-v2 | `minilm-l6-v2.gguf` | 21MB | English lane (384-dim) — always present |
+| paraphrase-multilingual-MiniLM-L12-v2 | `multilingual-minilm-l12-v2-q8.gguf` | 127MB | Multilingual lane (768-dim, 52 langs) — **on-demand**, localized mode only |
+
+`make setup` fetches only the English model. The multilingual model is fetched by
+`ways-localize` (or `make -C tools/way-embed model-multilingual`) when an adopter
+localizes — English installs never pay for it.
+
+## The English-root anchor
+
+In localized mode, each way contributes **two** kinds of entry to the multilingual
+corpus:
+
+- the **English root** — the way's English `description`+`vocabulary`, embedded with the
+  multilingual model. This is the per-way *anchor*, the source of truth in multilingual
+  space.
+- the **locale aliases** — one `.locales.jsonl` line per localized language, generated by
+  `ways-localize`.
+
+Every alias is scored *against the root*, never against sibling translations — which is
+what keeps a multilingual install from drifting into a free-for-all with no fixed
+meaning. A localized way matches a native-language prompt via its alias; the way's
+**English body** is still injected (the guidance text — Claude reads it in any language).
+
+### Locale stub format
+
+One `.locales.jsonl` file per way, co-located with its `.md`, one line per language:
 
 ```jsonl
-{"lang":"ja","description":"セキュリティ脆弱性スキャンと監査","vocabulary":"セキュリティ 脆弱性 CVE 監査","embed_threshold":0.74}
-{"lang":"de","description":"Sicherheitsüberblick, sichere Programmierstandards","vocabulary":"Sicherheit Schwachstelle schützen OWASP","embed_threshold":0.79}
-{"lang":"es","description":"Seguridad general, codificación segura","vocabulary":"seguridad vulnerable defensa OWASP","embed_threshold":0.78}
-{"lang":"ar","description":"نظرة عامة على الأمان والبرمجة الآمنة","vocabulary":"أمان برمجة آمنة حماية ثغرات","embed_threshold":0.84}
+{"lang":"es","description":"seguridad general, codificación segura","vocabulary":"seguridad vulnerable defensa owasp"}
 ```
 
-When a Japanese user types a prompt, the scanner:
-1. Scores the Japanese stub's description using the multilingual model
-2. Injects `security.md`'s English body (the guidance text)
+Just `lang`, `description`, `vocabulary` — no per-stub threshold (per ADR-125,
+thresholds are per-node on the English frontmatter, not per locale). A full
+native-language way can override a stub by existing as `security.es.md`. New/edited
+ways are authored **English-only**; `ways-localize` derives the locale layer.
 
-### Format rules
+## Tuning — the acceptance gate
 
-- **`embed_threshold`** is optional — omit it and the corpus generator defaults to 0.25. Use `ways tune --apply` to compute optimal values automatically.
-- **Model routing** is automatic — locale stubs always use the multilingual model (not stored in the file).
-- **No body content** — just the JSONL line. If someone writes a full native-language way, they create `security.ja.md` as a regular file, which overrides the packed entry.
-
-### Override mechanism
-
-If `security.ja.md` exists as a real file alongside `security.locales.jsonl`, the `.md` file wins for Japanese. This lets authors graduate a stub into a full native-language way with body content, without touching the packed file.
-
-### Why same-language stubs matter
-
-Cross-language matching (Japanese prompt → English description) scores ~0.69. Same-language matching (Japanese prompt → Japanese description) scores ~0.93. The native stub dramatically improves matching precision.
-
-| Scenario | Cosine similarity |
-|----------|----------------:|
-| EN prompt → EN description (baseline) | 0.76 |
-| JA prompt → EN description (cross-language) | 0.69 |
-| JA prompt → JA description (same-language stub) | 0.93 |
-
-See `docs/architecture/system/multilingual-model-evaluation.md` for full test results.
-
-## Tuning and auditing
-
-### Auto-tuning thresholds
-
-`ways tune` computes the optimal `embed_threshold` for each locale entry by scoring it against the full corpus and finding the discrimination boundary:
+`ways tune` is the localized-mode acceptance gate. Fidelity is **alignment to the
+English root**; discrimination is non-collision with other ways. It is never invoked in
+English mode.
 
 ```bash
-# Preview what would change (dry run)
-ways tune
-
-# Tune a specific way
-ways tune --way security
-
-# Apply tuned thresholds to .locales.jsonl files
-ways tune --apply
-
-# Regenerate corpus with tuned values
-ways corpus
+ways tune                    # audit the active localized language
+ways tune --lang es          # scope to one language
+ways tune --way security     # scope to one way
+ways tune --json
 ```
 
-The tuner runs in parallel (all cores minus 4). ~13 seconds for 328 entries on a 32-core machine.
+Re-author flagged stubs and re-run until clean. See the
+`meta/knowledge/optimization/tuning` way for the failure modes and fixes.
 
-### Discrimination audit
+## Output language
 
-`ways tune --audit` flags entries where the description doesn't clearly separate this way from others — no threshold can fix an ambiguous description:
+The effective `Config.language` also drives the *output*-language directive injected by
+`core.md`: in localized mode the agent writes commit messages, comments, and prose in
+that language. Way **content** stays English (the guidance text); only generated output
+changes.
+
+## Checking status
 
 ```bash
-# Flag entries with discrimination gap < 0.15
-ways tune --audit
-
-# Adjust the gap threshold
-ways tune --audit --audit-threshold 0.20
+ways language          # resolved language, model availability, per-way locale coverage
+ways language --json   # machine-readable (resolved_language, models, locales_found)
 ```
 
-The audit shows **confusers** — which ways the ambiguous entry is being confused with:
+## Architecture
 
-```
-documentation/mermaid
-  ar — gap 0.07  (self 1.00, noise 0.93)  confused with: softwaredev/visualization/diagrams (0.93)
-```
-
-This tells the author: "your Arabic mermaid description looks too similar to the diagrams way — revise the vocabulary to distinguish them."
-
-### Full authoring cycle
-
-```
-write stubs → compile → tune → audit → revise → repeat
-```
-
-1. Write/generate locale entries in `.locales.jsonl`
-2. `ways corpus` — compile into embeddings
-3. `ways tune --apply` — auto-set thresholds
-4. `ways tune --audit` — flag ambiguous descriptions
-5. Revise flagged descriptions, go to step 2
-
-Two dimensions to optimize:
-- **Discrimination** (gap): how clearly the description identifies this way vs others. Property of description quality.
-- **Sensitivity** (threshold): how much signal required before firing. Auto-tuned from discrimination data.
-
-## Supported languages
-
-Languages are defined in `tools/ways-cli/languages.json`. Each entry specifies:
-
-- **`name`** / **`native`** — display names for normalization
-
-The multilingual embedding model handles all supported languages uniformly through the alias model (see ADR-125) — there is no per-language stemmer or script-class fallback. Without the embedding engine, only keyword/regex patterns fire.
-
-## Checking language status
-
-```bash
-# Language coverage report
-ways language
-
-# Filter to a specific language
-ways language --filter ja
-
-# Machine-readable
-ways language --json
-
-# Engine status with corpus breakdown
-ways status
-```
-
-`ways status` warns if multilingual ways exist in the corpus but the multilingual model is missing.
-
-## Architecture decisions
-
-- **ADR-107**: Full design rationale — language cascade, dual model approach, matching tiers
-- **Evaluation report**: `docs/architecture/system/multilingual-model-evaluation.md` — test data across 11 languages × 3 domains
+- **ADR-139** — adopter-run localization (the two modes, the shelve, root-anchoring)
+- **ADR-125** — the coordinate-alias model (`description`+`vocabulary` as embedding-space alias)
+- **ADR-107** — original locale support and the dual-model approach (superseded in part)
+- `docs/design-notes/adopter-localization-lifecycle-and-tuning.md` — the mechanics
