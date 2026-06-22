@@ -179,15 +179,17 @@ pub(crate) fn update_status_text() -> String {
     let mut out = String::from("\n");
     match cached_type.as_str() {
         "clone" => {
-            out.push_str(&format!("**{behind} commit(s) behind origin/main.** Run: `cd ~/.claude && git pull`\n"));
+            out.push_str(&format!("**⚠ agent-ways is {behind} commit(s) behind — run `cd ~/.claude && make update`.**\n"));
+            out.push_str("`make update` pulls, rebuilds the binaries, and reinstalls. Don't use a bare `git pull`: it leaves stale binaries and aborts on machine-local config edits (settings.json) — `make update` handles both.\n");
         }
         "fork" | "renamed_clone" => {
             if has_upstream {
-                out.push_str(&format!("**Behind {upstream_repo}.** Run: `cd ~/.claude && git fetch upstream && git merge upstream/main`\n"));
+                out.push_str(&format!("**⚠ agent-ways is behind {upstream_repo}.** Sync upstream, then rebuild:\n"));
+                out.push_str("`cd ~/.claude && git fetch upstream && git merge upstream/main && make update-binaries && make install`\n");
             } else {
-                out.push_str(&format!("**Behind {upstream_repo}.** First add upstream, then sync:\n"));
+                out.push_str(&format!("**⚠ agent-ways is behind {upstream_repo}.** Add upstream, then sync + rebuild:\n"));
                 out.push_str(&format!("`git -C ~/.claude remote add upstream https://github.com/{upstream_repo}`\n"));
-                out.push_str("`cd ~/.claude && git fetch upstream && git merge upstream/main`\n");
+                out.push_str("`cd ~/.claude && git fetch upstream && git merge upstream/main && make update-binaries && make install`\n");
             }
         }
         "plugin" => {
