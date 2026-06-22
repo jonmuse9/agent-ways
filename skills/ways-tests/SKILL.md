@@ -99,7 +99,7 @@ match, list them and ask.
 ## Suggest — vocabulary gaps
 
 ```bash
-ways suggest --file "$wayfile" --min-freq 2
+ways suggest "$wayfile" --min-freq 2
 ```
 
 Sections: GAPS (body terms missing from vocabulary), COVERAGE, UNUSED, VOCABULARY.
