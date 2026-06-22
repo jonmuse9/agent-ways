@@ -123,6 +123,7 @@ hooks/ways/.obsidian/
 !scripts/audit-permissions.sh
 !scripts/gh-monitor-ci-watch.sh
 !scripts/gh-monitor-inbox-watch.sh
+!scripts/update.sh
 !docs/signal-analysis/
 !docs/signal-analysis/*.md
 !docs/signal-analysis/*.png
