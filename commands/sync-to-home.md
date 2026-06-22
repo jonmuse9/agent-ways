@@ -99,7 +99,8 @@ jq --slurpfile src "$SRC/settings.json" --argjson add "$ADD_PERMS" '
         else ((index(" ")) as $i
           | if $i == null then "\"\(.)\"" else "\"\(.[0:$i])\"\(.[$i:])" end)
         end
-      ))) | from_entries)
+      )))) | from_entries
+    )
 ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
 ```
 
