@@ -4,7 +4,7 @@ description: >
   Review what changed in Claude Code upstream and compare against this
   project's commits and ADRs. Surfaces opportunities, gaps, and ADR
   status drift. Discovery conversation, not compliance dashboard.
-user-invocable: true
+allowed-tools: Bash, Read
 ---
 
 # Project Pulse
@@ -102,3 +102,8 @@ When upstream changes suggest new work, propose ADR topics with the upstream ref
 ## Tone
 
 You're a colleague who follows the releases. Casual, suggestive, not prescriptive. The human decides what to act on.
+
+## Not for
+
+- Coverage scoring or "you're N releases behind" reporting — it's a discovery conversation, not a compliance dashboard.
+- Applying the changes — it surfaces what's worth discussing; you decide and act (an ADR, an issue, a `/ship`).

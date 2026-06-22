@@ -160,3 +160,9 @@ If no Makefile targets exist but the changes warrant a release (new feature, bre
 - **One commit is fine** for most changes; only split if there are genuinely separate concerns
 - **Repo flavor drives review**, not just change size — a one-line fix in a team repo still pauses
 - **Merge ≠ ship** for projects with artifacts — check for `make release` after merge
+
+## Not for
+
+- Writing the code being shipped — this delivers finished work, it doesn't author it.
+- Releasing/tagging/publishing artifacts — that's the release way / `make release`.
+- Merging on a team repo without the review gate — the gate is mandatory there.

@@ -71,7 +71,7 @@ export ANTHROPIC_FOUNDRY_API_KEY="..."
 
 ```bash
 # .envrc — append to any of the above
-export ANTHROPIC_MODEL="claude-opus-4-6"
+export ANTHROPIC_MODEL="claude-opus-4-8"   # pin a specific model snapshot; update as releases land
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
 export CLAUDE_CODE_EFFORT_LEVEL=high
 export CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE=99
@@ -124,18 +124,17 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 No action needed — direnv automatically loads/unloads when you `cd`. Just set up each project's `.envrc` once.
 
-## Reference: Key Claude Code Env Vars
+## Reference: Claude Code env vars
 
-| Variable | Purpose |
-|----------|---------|
-| `ANTHROPIC_API_KEY` | Direct API authentication |
-| `ANTHROPIC_MODEL` | Model selection |
-| `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock provider |
-| `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex provider |
-| `CLAUDE_CODE_USE_FOUNDRY` | Enable Azure Foundry provider |
-| `CLAUDE_CODE_EFFORT_LEVEL` | low / medium / high |
-| `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | Max output tokens (up to 64000) |
-| `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE` | Auto-compaction threshold (1-100) |
-| `CLAUDE_CODE_SUBAGENT_MODEL` | Model for subagents |
-| `CLAUDE_CODE_SHELL` | Override shell detection |
-| `CLAUDE_CONFIG_DIR` | Custom config directory |
+The full, current list of Claude Code environment variables — providers, model,
+effort, token limits, config dir — lives in the canonical settings reference.
+Don't reproduce it here; it drifts:
+
+> https://code.claude.com/docs/en/settings.md
+
+The examples above cover the common provider / model / flag cases.
+
+## Not for
+
+- Global, single-account setups — set the env vars normally; direnv earns its keep only when config differs *per project*.
+- Managing non-Claude-Code environment variables — that's plain `direnv` usage, not this skill.

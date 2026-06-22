@@ -101,3 +101,9 @@ For a full repo scaffold (ADRs + GitHub config + CODEOWNERS + project ways), run
 - **Run `domains` first** when working in an unfamiliar project — domain names and ranges vary
 - **Status lives in frontmatter** — edit the YAML `status:` field, not inline text
 - **Regenerate index** after any ADR changes with `docs/scripts/adr index -y`
+
+## Not for
+
+- Authoring catalog documentation pages — that's the **docs** skill (the decisions half vs. the prose half of the same graph).
+- Hand-editing `ADR-*.md` files directly — always go through the CLI.
+- Designing the decision itself — capture a made decision; deliberation is the human's and `system-architect`'s job.

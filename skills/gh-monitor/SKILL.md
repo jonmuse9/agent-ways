@@ -95,3 +95,9 @@ id.
 
 - `/gh-monitor ci [pr]` — watch a PR's checks until terminal (default: current branch)
 - `/gh-monitor inbox` — watch your GitHub notifications until stopped
+
+## Not for
+
+- A one-off check — just run `gh pr checks` once; the Monitor is for *not* stopping to poll.
+- Acting on what it sees — it only watches; respond to findings yourself.
+- Ambient local-world awareness (git, peers, processes) — that's the **attend** skill.

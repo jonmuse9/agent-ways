@@ -118,3 +118,8 @@ Use TaskStop with the Monitor's task ID. Attend exits cleanly on signal.
 
 - `/attend` — start the sensor loop via Monitor (default)
 - `/attend status` — run `attend status` via Bash
+
+## Not for
+
+- One-off status snapshots — just run `attend status`, `git status`, or `gh` checks directly; this starts a *persistent* sensor loop.
+- External, task-specific watching (a PR's CI, your GitHub inbox) — that's the **gh-monitor** skill. Attend is ambient local-world awareness, not endpoint polling.
