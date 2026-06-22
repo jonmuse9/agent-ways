@@ -6,7 +6,7 @@
 # Update:        make update
 
 .DEFAULT_GOAL := help
-.PHONY: setup install uninstall update update-binaries clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild hooks-install sync-home way-embed-rebuild lint test test-unit test-sim test-lang test-locales test-multilingual release purge-attend-state
+.PHONY: setup install uninstall update update-binaries clean help ways ways-rebuild attend attend-rebuild attend-chat attend-chat-rebuild hooks-install way-embed-rebuild lint test test-unit test-sim test-lang test-locales test-multilingual release purge-attend-state
 
 ifeq ($(OS),Windows_NT)
     SHELL := C:/Program Files/Git/usr/bin/bash.exe
@@ -38,7 +38,6 @@ help:
 	@echo "  make setup        Build ways CLI + attend + fetch embedding model + corpus"
 	@echo "  make install      Full first-time setup (hooks + tools + PATH)"
 	@echo "  make update       Pull latest changes and re-run install"
-	@echo "  make sync-home    Sync this clone into an existing ~/.claude (subdir installs)"
 	@echo "  make ways         Get ways binary (download or build from source)"
 	@echo "  make ways-rebuild Force rebuild ways from source"
 	@echo "  make attend       Build attend binary"
@@ -97,13 +96,6 @@ install: hooks-executable setup hooks-install
 hooks-install:
 	@$(INSTALL_HOOKS)
 	@echo "Hooks installed at $(HOME)/.claude/hooks/ways"
-
-# Surgical sync into an existing ~/.claude when this clone lives in a
-# subdirectory (not the canonical "~/.claude IS the repo" install). Copies
-# skills/agents/commands/hooks/binaries and merges the hooks block into the
-# user's settings.json. See scripts/sync-to-home.sh.
-sync-home:
-	@bash "$(CURDIR)/scripts/sync-to-home.sh"
 
 # Remove symlink from PATH.
 uninstall:
