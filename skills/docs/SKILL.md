@@ -9,7 +9,9 @@ allowed-tools: Bash, Read, Grep, Glob
 Operate catalog pages through the `docs/scripts/doc` CLI tool. **Never hand-write
 catalog frontmatter** — the tool computes the `DD.NNN.P` id, picks the next
 in-domain serial, and emits a lint-clean page. Reverse-engineering the id scheme
-from the linter is the smell this skill exists to remove.
+from the linter is the smell this skill exists to remove. If the tool isn't
+present in the project yet, vendor it first — see [Vendoring the tool into a
+project](#vendoring-the-tool-into-a-project).
 
 Docs and ADRs are **one typed graph** sharing domain bands (see the project's
 documentation-catalog ADR). This skill is the docs half; the `adr` skill is the
@@ -65,6 +67,33 @@ aliases: []
 
 # Title
 ```
+
+## Vendoring the tool into a project
+
+`docs/scripts/doc` is **not** part of a project by default — it's vendored from
+the agent-ways install. When it's missing (the `documentation` way's macro will
+observe this and remind you), install a standalone **copy** — never a symlink, as
+a symlink into `~/.claude` breaks for collaborators and CI:
+
+The tools are a **pair**: `doc` (the librarian) does `import doclint` and shells
+out to a sibling, so the linter **must be copied as a file named `doclint.py`
+beside `doc`** — not renamed, not symlinked into `~/.claude`.
+
+```bash
+mkdir -p docs/scripts
+cp ~/.claude/hooks/ways/documentation/linting/doc-tool docs/scripts/doc
+cp ~/.claude/hooks/ways/documentation/linting/doclint.py docs/scripts/doclint.py
+chmod +x docs/scripts/doc docs/scripts/doclint.py
+# Optional: a relative, in-repo symlink so `doclint` works as a bare command
+# (points at a sibling that travels with the repo — NOT into ~/.claude):
+ln -s doclint.py docs/scripts/doclint
+```
+
+The catalog **requires `docs/architecture/adr.yaml`** — it reuses the ADR domain
+bands. If that's missing, vendor the ADR half too (see the **adr** skill).
+Validate: `docs/scripts/doc coverage && docs/scripts/doc lint`. For a full repo
+scaffold, run `/project-init`. To decline the catalog for a project:
+`touch .claude/no-doc-tooling`.
 
 ## Key rules
 

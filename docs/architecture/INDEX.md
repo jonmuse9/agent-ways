@@ -58,6 +58,7 @@ _Ways architecture, matching, macros, hooks, session lifecycle_
 | [ADR-135](./system/ADR-135-content-aware-write-time-over-build-gate-with-a-self-extending-pattern-corpus.md) | Content-aware write-time over-build gate with a self-extending pattern corpus | Accepted |
 | [ADR-136](./system/ADR-136-split-addressed-messaging-from-the-sensor-observation-bus.md) | Split addressed messaging from the sensor-observation bus | Accepted |
 | [ADR-137](./system/ADR-137-boundedness-bounded-work-per-cycle.md) | Boundedness — a unit of work must be bounded within its cycle | Draft |
+| [ADR-138](./system/ADR-138-skills-own-the-how-ways-own-the-5w.md) | Skills own the how, ways own the 5W | Draft |
 
 ## Documentation
 _Documentation structure, tooling, coherence_

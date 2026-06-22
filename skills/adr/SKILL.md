@@ -6,7 +6,7 @@ allowed-tools: Bash, Read, Grep, Glob
 
 # ADR Management
 
-Operate ADRs through the `docs/scripts/adr` CLI tool. Never create ADR files manually.
+Operate ADRs through the `docs/scripts/adr` CLI tool. Never create ADR files manually. If the tool isn't present in the project yet, vendor it first — see [Vendoring the tool into a project](#vendoring-the-tool-into-a-project).
 
 ## Commands
 
@@ -72,6 +72,28 @@ related: []
 ### Neutral
 ## Alternatives Considered
 ```
+
+## Vendoring the tool into a project
+
+`docs/scripts/adr` is **not** part of a project by default — it's vendored from
+the agent-ways install. When it's missing (the `adr` way's macro will observe
+this and remind you), install a standalone **copy** — never a symlink, since a
+symlink into `~/.claude` breaks for collaborators and CI who don't have that
+directory:
+
+```bash
+mkdir -p docs/scripts docs/architecture
+cp ~/.claude/hooks/ways/documentation/adr/adr-tool docs/scripts/adr
+cp ~/.claude/hooks/ways/documentation/adr/adr.yaml.template docs/architecture/adr.yaml
+chmod +x docs/scripts/adr
+```
+
+Then edit `docs/architecture/adr.yaml` for the project's domains and ranges, and
+validate: `docs/scripts/adr domains && docs/scripts/adr lint`.
+
+For a full repo scaffold (ADRs + GitHub config + CODEOWNERS + project ways), run
+`/project-init` instead — it vendors this tool as one step of a larger setup. The
+**docs** skill is the catalog half and shares this `adr.yaml`.
 
 ## Key Rules
 

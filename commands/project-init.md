@@ -310,31 +310,24 @@ These are `subagent_type` values for the `Task` tool:
 
 ### ADR Setup
 
-Reference: `~/.claude/hooks/ways/documentation/adr/adr-tool` and `adr.yaml.template`
+**Vendoring is the `adr` skill's job** — invoke it for the canonical install
+(copy-not-symlink, `chmod`). This command's role is the *interview-driven*
+parts the skill can't know:
 
-1. Create directory structure:
-   ```bash
-   mkdir -p docs/architecture docs/scripts
-   ```
+1. Vendor the tool via the **adr** skill (it copies `adr-tool` → `docs/scripts/adr`
+   and seeds `docs/architecture/adr.yaml` from the template).
 
-2. Install the ADR tool — copy a standalone vendored copy (not a symlink, so it
-   works for collaborators and CI without `~/.claude`):
-   ```bash
-   cp ~/.claude/hooks/ways/documentation/adr/adr-tool docs/scripts/adr
-   chmod +x docs/scripts/adr
-   ```
-
-3. Create `docs/architecture/adr.yaml` from template, customized with interview answers:
+2. Customize `docs/architecture/adr.yaml` with the interview answers:
    - Project name
    - Domains with ranges (100-wide ranges, 1-99 for legacy)
    - Statuses list
    - Default deciders (from git/gh config)
 
-4. Create domain subdirectories under `docs/architecture/`
+3. Create domain subdirectories under `docs/architecture/`
 
-5. For brownfield: execute the appropriate migration strategy per the migration way
+4. For brownfield: execute the appropriate migration strategy per the migration way
 
-6. Validate:
+5. Validate:
    ```bash
    docs/scripts/adr domains
    docs/scripts/adr lint
@@ -344,15 +337,11 @@ Reference: `~/.claude/hooks/ways/documentation/adr/adr-tool` and `adr.yaml.templ
 
 The doc catalog treats prose docs and ADRs as one typed graph (ADR-302),
 classified by Diátaxis mode and sharing the ADR domain bands. Opt-in — install it
-when the project wants linted, classified documentation. Reference:
-`~/.claude/hooks/ways/documentation/linting/`.
+when the project wants linted, classified documentation.
 
-1. Install the tools — copy (project repos vendor; only `~/.claude` symlinks):
-   ```bash
-   cp ~/.claude/hooks/ways/documentation/linting/doc-tool docs/scripts/doc
-   cp ~/.claude/hooks/ways/documentation/linting/doclint.py docs/scripts/doclint.py
-   chmod +x docs/scripts/doc docs/scripts/doclint.py
-   ```
+1. Vendor the tools via the **docs** skill (it copies `doc` + `doclint.py` into
+   `docs/scripts/` with the correct pairing). The catalog reuses the `adr.yaml`
+   from ADR Setup above.
 
 2. Catalog pages carry frontmatter: `id: DD.NNN.P` (domain band · serial · mode
    pole), `domain` (an `adr.yaml` key), `mode`
