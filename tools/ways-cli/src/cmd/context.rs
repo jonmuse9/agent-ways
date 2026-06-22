@@ -37,6 +37,25 @@ pub fn get_context_for_session(session_id: &str) -> Result<ContextInfo> {
     get_context_inner(None, Some(session_id))
 }
 
+/// Accurate context-fill percentage (0–100) from a transcript file path.
+///
+/// Single source of truth shared with the `context-threshold` trigger in
+/// `scan/state.rs`: both read the same gauge — real API token counts
+/// (`read_token_usage`) divided by the model window (`model_to_window`) —
+/// never a transcript-byte heuristic. The transcript *file* is far larger
+/// than the live context (it holds full tool output, persisted-output blobs
+/// that aren't in context, and JSON envelope overhead), so byte-size badly
+/// over-counts and fires thresholds early.
+pub fn pct_used_from_transcript(transcript: &str) -> Option<u64> {
+    let content = std::fs::read_to_string(transcript).ok()?;
+    let window = model_to_window(&detect_model(&content));
+    if window == 0 {
+        return None;
+    }
+    let (tokens_used, _method) = read_token_usage(&content);
+    Some(tokens_used * 100 / window)
+}
+
 fn get_context_inner(project_dir: Option<&str>, session_id: Option<&str>) -> Result<ContextInfo> {
     let transcript = if let Some(sid) = session_id {
         find_transcript_by_session(sid).ok_or_else(|| {
@@ -286,3 +305,27 @@ fn find_newest_transcript(dir: &Path) -> Option<PathBuf> {
 }
 
 use crate::util::{detect_project_dir, home_dir};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn pct_used_from_transcript_is_token_based_not_byte_based() {
+        // A transcript whose FILE is tiny but whose API usage reports 500k
+        // tokens on a 1M (opus) window must read as 50% — the regression guard
+        // for the context-threshold byte-heuristic bug: the gauge is token
+        // counts ÷ model window, never transcript file size.
+        let path = std::env::temp_dir()
+            .join(format!("ways_pct_test_{}.jsonl", std::process::id()));
+        let line = r#"{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"cache_read_input_tokens":500000,"cache_creation_input_tokens":0,"input_tokens":0}}}"#;
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, "{line}").unwrap();
+        }
+        let pct = pct_used_from_transcript(path.to_str().unwrap());
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(pct, Some(50));
+    }
+}
