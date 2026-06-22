@@ -16,6 +16,14 @@ if [[ ! -x "$WAYS_BIN" ]]; then
   exit 1
 fi
 
+# Dormant per ADR-139: localization data is adopter-generated via ways-localize.
+# With no locale stubs present there is nothing to validate — skip cleanly so
+# run-all.sh and manual invocation stay green until a language is localized.
+if [[ -z "$(find "$SCRIPT_DIR/../hooks/ways" -name '*.locales.jsonl' -print -quit 2>/dev/null)" ]]; then
+  echo "SKIP: no locale data present — multilingual matching is dormant (ADR-139)"
+  exit 0
+fi
+
 PASS=0
 FAIL=0
 TOTAL=0

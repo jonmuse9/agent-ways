@@ -454,7 +454,7 @@ fn auto_embed(out_dir: &Path, engine_dir: &Path, corpus: &Path, log: &dyn Fn(&st
         }
     } else if multi_count > 0 && !multi_model.is_file() {
         log(&format!("  {multi_count} multilingual ways found but model not installed"));
-        log("  Run: make setup  (downloads multilingual model, 127MB)");
+        log("  Run: make -C tools/way-embed model-multilingual  (127MB, on-demand per ADR-139)");
     }
 
     // Also generate combined corpus for backward compatibility
