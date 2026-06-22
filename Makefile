@@ -95,9 +95,12 @@ uninstall:
 	@rm -f "$(XDG_BIN)/ways" "$(XDG_BIN)/attend" "$(XDG_BIN)/attend-chat"
 	@echo "Removed $(XDG_BIN)/ways $(XDG_BIN)/attend $(XDG_BIN)/attend-chat"
 
-# Pull upstream and re-setup.
+# Pull upstream and re-setup. scripts/update.sh wraps the pull so machine-local
+# changes (settings.json, stale build artifacts) and merged branches don't abort
+# the fast-forward — it autostashes, prunes, and surfaces conflicts instead of
+# clobbering. See the script for recovery behavior.
 update:
-	git pull --ff-only
+	@bash scripts/update.sh
 	$(MAKE) update-binaries
 	$(MAKE) install
 
