@@ -35,3 +35,4 @@ ADRs can reference design notes as foundational context. Design notes reference 
 
 - [Cognitive Loop and the Awareness Layer](./cognitive-loop-and-awareness-layer.md) — reading of the system's cognitive architecture: turn-based temporal accounting, substrate separation, the awareness layer, insistence as informational pressure, agency preservation
 - [Attend: Messaging Disclosure with Token-Gated Reheat](./attend-messaging-disclosure-reheat.md) — how attend re-teaches its own messaging affordances over a session's lifetime: spaced repetition over token distance, delivered through the existing sensor pipeline
+- [Autonomy as a Layered System: Goals, Signposts, and the Initiation Pattern](./autonomy-goals-signposts-initiation.md) — reading the autonomy surface: the built-in goal loop as primitive, the initiation pattern, signpost events, the substrate ladder, the gate taxonomy, and the three-layer safety stack
