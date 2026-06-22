@@ -1,6 +1,6 @@
 ---
 trigger: context-threshold
-threshold: 95
+threshold: 85
 scope: agent
 refire: 0.15
 ---
