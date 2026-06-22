@@ -34,7 +34,7 @@ graph TD
 - **See Also edges** — declared explicitly in a way's body prose
 - **Sibling edges** — computed by `ways siblings`, weighted by cosine similarity between canonical embeddings
 
-Every node carries one or more **coordinate aliases** — embeddings that route queries to it. The canonical alias comes from the English frontmatter (description + vocabulary); each active language has a locale alias in `.locales.jsonl`. All aliases on a node route to the same node's body content.
+Every node carries one or more **coordinate aliases** — embeddings that route queries to it. The canonical alias comes from the English frontmatter (description + vocabulary). In **localized mode** (ADR-139), the node also carries a locale alias per localized language in `.locales.jsonl` plus the English root re-embedded with the multilingual model as the anchor; English installs carry only the canonical alias. All aliases on a node route to the same node's body content.
 
 ```mermaid
 graph LR
@@ -80,7 +80,7 @@ flowchart TD
 
 **Channel 1 — explicit triggers.** `pattern:` (prompt text), `commands:` (bash commands), `files:` (file paths). Regex, case-insensitive, case-sensitive to match boundary anchors the author writes. These always fire if they match; they are the author's "I know exactly when this should fire" surface.
 
-**Channel 2 — embedding.** Sole semantic retrieval tier (ADR-125). The query is embedded by both models against their respective corpora; per-node score is the max across the node's aliases. Multilingual and English queries both land on the same nodes via whichever alias is closer. The embedding model is a hard dependency — if missing, no semantic matching happens.
+**Channel 2 — embedding.** Sole semantic retrieval tier (ADR-125). The query is embedded by the **English** (384-dim) model against the English corpus; per-node score is the max across the node's aliases. In **localized mode only** (ADR-139), the 768-dim multilingual lane runs *as well*, so a native-language query lands on the same node via its locale alias. English installs never load the multilingual model — the lane is gated on the mode switch, not on corpus presence. The embedding engine is a hard dependency — if missing, no semantic matching happens.
 
 **Channel 3 — state triggers.** Not content-based. `trigger: context-threshold` fires when transcript size exceeds the configured percentage; `file-exists` fires when a glob matches; `session-start` fires once per session. See the [State Triggers](#state-triggers) section.
 
@@ -169,7 +169,7 @@ At match time, the query is embedded once per model and scored against every ali
 
 ### Engine and setup
 
-The embedding engine is a hard dependency (ADR-125). `make setup` fetches the `way-embed` binary and the GGUF models (English + multilingual). If either is missing, ways with only semantic triggers will not fire — only `pattern:`, `commands:`, `files:` ways will. The `ways status` command reports whether the engine is installed.
+The embedding engine is a hard dependency (ADR-125). `make setup` fetches the `way-embed` binary and the **English** GGUF model; the 127MB multilingual model is on-demand, fetched by `ways-localize` (or `make -C tools/way-embed model-multilingual`) only when an adopter localizes (ADR-139). If the engine/English model is missing, ways with only semantic triggers will not fire — only `pattern:`, `commands:`, `files:` ways will. The `ways status` command reports whether the engine is installed.
 
 ### Vocabulary design
 
