@@ -41,6 +41,7 @@ After the user responds, combine your summary with their steering into a checkpo
 1. If active `TaskCreate` tasks exist, update their descriptions with the user's input
 2. If no task list, write a brief synthesis to the project's tracking file (`.claude/todo-*.md`)
 3. Include the user's priorities and direction — their words, not your paraphrase
+4. **Produce a copy-pastable continuance prompt** — a short block the user can paste into a *fresh* session if this one ends: the goal/intent, what's landed, the immediate next step, and the key files/branches in play. Compaction keeps the session alive; a continuance prompt is the handoff that survives even a hard reset.
 
 ## Step 4: Offer Directed Compaction
 
@@ -52,7 +53,21 @@ If the user agrees, run `/compact` (or let them trigger it). The synthesis is th
 
 This is the difference between controlled compaction (user-directed, synthesis-anchored) and uncontrolled compaction (generic, whatever the system decides to keep).
 
+## If a Goal Is Active
+
+A `/goal` survives compaction — it's session-scoped, and compaction doesn't end the
+session, so the evaluator keeps driving toward the condition on the other side.
+When a goal is active:
+
+- **Restate the goal condition in the synthesis** — it's the anchor the
+  post-compaction turns will steer by.
+- **Keep the checkpoint light** — the goal already carries the direction, so confirm
+  it still holds rather than re-deriving priorities from scratch.
+- **Consider finishing first** — if the goal's work is nearly done, completing it
+  *before* compacting beats carrying a near-complete loop across the boundary.
+
 ## See Also
 
 - tracking(meta) — tracking files survive compaction
 - todos(meta) — task state should be captured before compaction
+- goals(meta) — an active /goal anchors continuation across the checkpoint
