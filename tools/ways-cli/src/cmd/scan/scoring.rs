@@ -41,6 +41,17 @@ fn best_score(rows: Option<&[(String, f64)]>, way_id: &str) -> Option<f64> {
         .fold(None, |acc, s| Some(acc.map_or(s, |a: f64| a.max(s))))
 }
 
+/// Whether the multilingual matching lane is enabled.
+///
+/// The lane runs only in **localized mode** — `output_language` in ways.json set
+/// to a specific non-English language. English mode (`en` / `auto` / unset, the
+/// default) never loads the 768-dim multilingual model, regardless of whether a
+/// multi corpus is present (ADR-139). Both modes still match by embedding cosine;
+/// English mode just runs the 384-dim English lane alone.
+pub(crate) fn multilingual_enabled(output_language: &str) -> bool {
+    !matches!(output_language, "en" | "auto" | "")
+}
+
 /// Run both models against `query` and return per-model scores independently.
 /// Either or both may be None if their engine/model is unavailable.
 pub(crate) fn batch_embed_score(query: &str) -> EmbedScores {
@@ -53,9 +64,16 @@ pub(crate) fn batch_embed_score(query: &str) -> EmbedScores {
     let en_model = xdg.join("minilm-l6-v2.gguf");
     let en = run_if_ready(&embed_bin, &en_corpus, &en_model, query, "EN");
 
-    let multi_corpus = xdg.join("ways-corpus-multi.jsonl");
-    let multi_model = xdg.join("multilingual-minilm-l12-v2-q8.gguf");
-    let multi = run_if_ready(&embed_bin, &multi_corpus, &multi_model, query, "multilingual");
+    // Mode gate (ADR-139): the multilingual lane runs only in localized mode, so
+    // English-mode installs never load the heavier 768-dim model on a match —
+    // gated on output_language, not on corpus-file presence.
+    let multi = if multilingual_enabled(&crate::config::global().language) {
+        let multi_corpus = xdg.join("ways-corpus-multi.jsonl");
+        let multi_model = xdg.join("multilingual-minilm-l12-v2-q8.gguf");
+        run_if_ready(&embed_bin, &multi_corpus, &multi_model, query, "multilingual")
+    } else {
+        None
+    };
 
     // Legacy fallback: combined corpus + EN model if neither ran.
     if en.is_none() && multi.is_none() {
@@ -177,3 +195,23 @@ pub(crate) fn default_project() -> String {
 }
 
 pub(crate) use crate::util::home_dir;
+
+#[cfg(test)]
+mod tests {
+    use super::multilingual_enabled;
+
+    #[test]
+    fn english_mode_disables_multilingual_lane() {
+        // en / auto / unset are all English mode — the 768-dim model never loads.
+        assert!(!multilingual_enabled("en"));
+        assert!(!multilingual_enabled("auto"));
+        assert!(!multilingual_enabled(""));
+    }
+
+    #[test]
+    fn localized_mode_enables_multilingual_lane() {
+        assert!(multilingual_enabled("es"));
+        assert!(multilingual_enabled("zh"));
+        assert!(multilingual_enabled("pt-br"));
+    }
+}
